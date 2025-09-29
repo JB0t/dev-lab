@@ -22,56 +22,30 @@ spec:
     interval: 30s
     path: /metrics
 ---
-# ServiceMonitor for Linkerd Proxy metrics (from all namespaces)
+# ServiceMonitor for Linkerd Control Plane Services
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: linkerd-proxy
+  name: linkerd-control-plane
   namespace: monitoring
   labels:
-    app.kubernetes.io/name: linkerd-proxy
+    app.kubernetes.io/name: linkerd-control-plane
     app.kubernetes.io/part-of: linkerd
     release: kube-prometheus-stack
 spec:
-  namespaceSelector: {}  # All namespaces
+  namespaceSelector:
+    matchNames:
+    - linkerd
   selector:
     matchLabels:
-      linkerd.io/control-plane-ns: linkerd
+      linkerd.io/control-plane-component: destination
   endpoints:
-  - port: linkerd-admin
+  - port: dest-admin
     interval: 30s
-    path: /stats/prometheus
+    path: /metrics
+
 ---
-# ServiceMonitor for Linkerd Data Plane (mesh services)
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: linkerd-data-plane
-  namespace: monitoring
-  labels:
-    app.kubernetes.io/name: linkerd-data-plane
-    app.kubernetes.io/part-of: linkerd
-    release: kube-prometheus-stack
-    release: kube-prometheus-stack
-spec:
-  namespaceSelector: {}  # All namespaces
-  selector:
-    matchExpressions:
-    - key: linkerd.io/control-plane-ns
-      operator: Exists
-  endpoints:
-  - port: linkerd-admin
-    interval: 30s
-    path: /stats/prometheus
-    relabelings:
-    - sourceLabels: [__meta_kubernetes_pod_container_name]
-      action: keep
-      regex: linkerd-proxy
-    - sourceLabels: [__meta_kubernetes_pod_container_port_name]
-      action: keep
-      regex: linkerd-admin
----
-# PodMonitor for Linkerd Proxy metrics (alternative approach)
+# PodMonitor for Linkerd Proxy metrics - the primary source of proxy metrics
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -82,7 +56,7 @@ metadata:
     app.kubernetes.io/part-of: linkerd
     release: kube-prometheus-stack
 spec:
-  namespaceSelector: {}  # All namespaces
+  namespaceSelector: {}  # Monitor all namespaces
   selector:
     matchLabels:
       linkerd.io/control-plane-ns: linkerd
@@ -91,6 +65,14 @@ spec:
     interval: 30s
     path: /stats/prometheus
     relabelings:
+    # Only scrape linkerd-proxy containers
     - sourceLabels: [__meta_kubernetes_pod_container_name]
       action: keep
       regex: linkerd-proxy
+    # Add useful labels
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_label_app]
+      targetLabel: app
