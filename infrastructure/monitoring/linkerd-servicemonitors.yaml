@@ -63,7 +63,7 @@ spec:
   podMetricsEndpoints:
   - port: linkerd-admin
     interval: 30s
-    path: /stats/prometheus
+    path: /metrics
     relabelings:
     # Only scrape linkerd-proxy containers
     - sourceLabels: [__meta_kubernetes_pod_container_name]
