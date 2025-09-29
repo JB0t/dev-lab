@@ -170,14 +170,15 @@ app.get('/', async (req, res) => {
     }
 
     res.json({
-      message: '🚀 Service Mesh Test Application v2 - Enhanced Edition',
+      message: '🌟 Service Mesh Test Application v3 - Premium Edition',
       version: version,
       counter: counter + 1,
       startup_time: startupTime,
       timestamp: new Date().toISOString(),
       hostname: require('os').hostname(),
       redis_connected: redisConnected,
-      features: ['Enhanced UI', 'Improved Performance', 'Canary Deployment']
+      features: ['Premium UI', 'Advanced Analytics', 'Zero-Downtime Deployment', 'A/B Testing'],
+      environment: 'production-ready'
     });
   } catch (error) {
     res.status(500).json({
