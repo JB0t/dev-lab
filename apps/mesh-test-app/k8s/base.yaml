@@ -29,6 +29,9 @@ spec:
       labels:
         app: mesh-test-app
         version: v1
+      annotations:
+        # Force restart to retry canary with loadtester available
+        kubectl.kubernetes.io/restartedAt: "2025-09-29T21:00:00Z"
     spec:
       containers:
       - name: mesh-test-app
