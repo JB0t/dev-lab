@@ -9,7 +9,6 @@ metadata:
     app.kubernetes.io/name: flagger-loadtester
     app.kubernetes.io/part-of: flagger
     release: kube-prometheus-stack
-    release: kube-prometheus-stack
 spec:
   namespaceSelector:
     matchNames:

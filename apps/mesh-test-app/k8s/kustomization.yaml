@@ -11,8 +11,7 @@ resources:
   - monitoring.yaml
   # Linkerd configuration
   - linkerd-httproute.yaml
-  - linkerd-metric-templates.yaml
-  - linkerd-metrics.yaml
+  - linkerd-metric-templates.yaml  # Contains all metric templates
   - linkerd-podmonitor.yaml
   - linkerd-servicemonitor.yaml
   # Flagger canary deployment (uncomment to enable progressive delivery)
