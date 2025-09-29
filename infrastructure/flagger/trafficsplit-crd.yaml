@@ -1,0 +1,61 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: trafficsplits.split.smi-spec.io
+  labels:
+    app.kubernetes.io/name: smi
+spec:
+  group: split.smi-spec.io
+  scope: Namespaced
+  names:
+    kind: TrafficSplit
+    listKind: TrafficSplitList
+    shortNames:
+    - ts
+    plural: trafficsplits
+    singular: trafficsplit
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - service
+            - backends
+            properties:
+              service:
+                description: The root service that clients use to connect to the destination application.
+                type: string
+              backends:
+                description: The backend services that compose the split destination.
+                type: array
+                items:
+                  type: object
+                  required:
+                  - service
+                  properties:
+                    service:
+                      description: Name of the Kubernetes service.
+                      type: string
+                    weight:
+                      description: Traffic weight assigned to a backend.
+                      type: string
+              matches:
+                description: The HTTP route matching rules.
+                type: array
+                items:
+                  type: object
+                  properties:
+                    kind:
+                      description: Kind of the match.
+                      type: string
+                    name:
+                      description: Name of the match.
+                      type: string
+          status:
+            type: object

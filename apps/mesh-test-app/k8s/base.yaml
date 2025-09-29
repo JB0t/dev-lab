@@ -1,0 +1,107 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mesh-test
+  labels:
+    name: mesh-test
+  annotations:
+    # This annotation enables automatic Linkerd proxy injection
+    linkerd.io/inject: enabled
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-test-app
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mesh-test-app
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: mesh-test-app
+        version: v1
+    spec:
+      containers:
+      - name: mesh-test-app
+        image: localhost:5000/mesh-test-app:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: APP_VERSION
+          value: "v1"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-test-app-service
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+spec:
+  selector:
+    app: mesh-test-app
+  ports:
+  - port: 80
+    targetPort: 3000
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mesh-test-app-ingress
+  namespace: mesh-test
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: mesh-test.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mesh-test-app-service
+            port:
+              number: 80

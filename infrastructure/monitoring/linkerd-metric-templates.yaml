@@ -1,0 +1,87 @@
+---
+# Linkerd success rate metric template for Flagger
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-success-rate
+  namespace: mesh-test
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  query: |
+    sum(
+      rate(
+        response_total{
+          classification!="failure",
+          direction="inbound",
+          dst_service_name="{{name}}",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) 
+    / 
+    sum(
+      rate(
+        response_total{
+          direction="inbound",
+          dst_service_name="{{name}}",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) * 100
+---
+# Linkerd request duration metric template for Flagger
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-request-duration
+  namespace: mesh-test
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  query: |
+    histogram_quantile(0.99,
+      sum(
+        rate(
+          response_latency_ms_bucket{
+            direction="inbound",
+            dst_service_name="{{name}}",
+            dst_service_namespace="{{namespace}}"
+          }[{{interval}}]
+        )
+      ) by (le)
+    )
+---
+# Traffic-based success rate (for canary vs primary comparison)
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-traffic-success-rate
+  namespace: mesh-test
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  query: |
+    sum(
+      rate(
+        response_total{
+          classification!="failure",
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name)
+    / 
+    sum(
+      rate(
+        response_total{
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name) * 100

@@ -1,0 +1,119 @@
+---
+# ServiceMonitor for Linkerd Controller metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: linkerd-controller
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: linkerd-controller
+    app.kubernetes.io/part-of: linkerd
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - linkerd
+    - linkerd-viz
+  selector:
+    matchLabels:
+      linkerd.io/control-plane-component: controller
+  endpoints:
+  - port: admin
+    interval: 30s
+    path: /metrics
+---
+# ServiceMonitor for Linkerd Proxy metrics (from all namespaces)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: linkerd-proxy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: linkerd-proxy
+    app.kubernetes.io/part-of: linkerd
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector: {}  # All namespaces
+  selector:
+    matchLabels:
+      linkerd.io/control-plane-ns: linkerd
+  endpoints:
+  - port: linkerd-admin
+    interval: 30s
+    path: /stats/prometheus
+---
+# ServiceMonitor for Linkerd Data Plane (mesh services)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: linkerd-data-plane
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: linkerd-data-plane
+    app.kubernetes.io/part-of: linkerd
+    release: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector: {}  # All namespaces
+  selector:
+    matchExpressions:
+    - key: linkerd.io/control-plane-ns
+      operator: Exists
+  endpoints:
+  - port: linkerd-admin
+    interval: 30s
+    path: /stats/prometheus
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_container_name]
+      action: keep
+      regex: linkerd-proxy
+    - sourceLabels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: linkerd-admin
+---
+# PodMonitor for Linkerd Proxy metrics (alternative approach)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: linkerd-proxy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: linkerd-proxy
+    app.kubernetes.io/part-of: linkerd
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector: {}  # All namespaces
+  selector:
+    matchLabels:
+      linkerd.io/control-plane-ns: linkerd
+  podMetricsEndpoints:
+  - port: linkerd-admin
+    interval: 30s
+    path: /stats/prometheus
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_container_name]
+      action: keep
+      regex: linkerd-proxy
+---
+# ServiceMonitor for Flagger load tester (for canary metrics)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flagger-loadtester
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: flagger-loadtester
+    app.kubernetes.io/part-of: flagger
+    release: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - mesh-test
+  selector:
+    matchLabels:
+      app: flagger-loadtester
+  endpoints:
+  - port: http
+    interval: 15s
+    path: /metrics

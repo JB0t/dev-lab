@@ -1,0 +1,18 @@
+# Optional: ServiceMonitor for Prometheus metrics collection
+# Requires Prometheus Operator to be installed
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mesh-test-app-monitor
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+spec:
+  selector:
+    matchLabels:
+      app: mesh-test-app
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s

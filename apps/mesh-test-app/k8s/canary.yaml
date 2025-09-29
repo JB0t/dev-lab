@@ -1,0 +1,139 @@
+---
+# Mesh Test App Canary Configuration
+# This enables progressive deployment with comprehensive testing
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: mesh-test-app
+  namespace: mesh-test
+spec:
+  # Target deployment
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mesh-test-app
+  
+  # Service configuration
+  service:
+    port: 80
+    targetPort: 3000
+    portDiscovery: true
+    
+  # Progressive delivery configuration
+  analysis:
+    # Check every 30 seconds
+    interval: 30s
+    # Rollback threshold (number of failed checks)
+    threshold: 5
+    # Maximum weight for canary (50% traffic)
+    maxWeight: 50
+    # Weight increase step (10% increments)
+    stepWeight: 10
+    # Minimum number of pods for primary deployment
+    primaryReadyThreshold: 1
+    # Minimum number of pods for canary deployment
+    canaryReadyThreshold: 1
+    
+    # Linkerd success rate and latency metrics combined with webhook tests
+    # This provides both quantitative metrics and functional validation
+    metrics:
+    - name: success-rate
+      templateRef:
+        name: linkerd-success-rate
+        namespace: mesh-test
+      thresholdRange:
+        min: 95
+      interval: 1m
+    - name: latency
+      templateRef:
+        name: linkerd-request-duration
+        namespace: mesh-test
+      thresholdRange:
+        max: 500
+      interval: 1m
+    
+    # Comprehensive load testing webhooks
+    webhooks:
+    
+    # 1. Basic UI Health Check
+    - name: ui-health-check
+      type: pre-rollout
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 15s
+      metadata:
+        type: bash
+        cmd: |
+          curl -sf http://mesh-test-app-canary.mesh-test/ > /dev/null && 
+          curl -sf http://mesh-test-app-canary.mesh-test/health/live > /dev/null &&
+          curl -sf http://mesh-test-app-canary.mesh-test/health/ready > /dev/null
+    
+    # 2. Redis Connectivity Test  
+    - name: redis-connectivity-test
+      type: pre-rollout
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 15s
+      metadata:
+        type: bash
+        cmd: |
+          # Test Redis connectivity through the app
+          response=$(curl -sf http://mesh-test-app-canary.mesh-test/)
+          echo "$response" | grep -q "counter"
+    
+    # 3. Load Test - UI Functionality
+    - name: ui-load-test
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 5s
+      metadata:
+        type: cmd
+        cmd: "hey -z 30s -q 10 -c 2 -H 'User-Agent: Flagger' http://mesh-test-app-canary.mesh-test/"
+    
+    # 4. Load Test - Health Endpoints
+    - name: health-endpoints-test
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 5s  
+      metadata:
+        type: cmd
+        cmd: "hey -z 30s -q 5 -c 1 http://mesh-test-app-canary.mesh-test/health/live && hey -z 30s -q 5 -c 1 http://mesh-test-app-canary.mesh-test/health/ready"
+    
+    # 5. Comprehensive End-to-End Test
+    - name: e2e-functionality-test
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 30s
+      metadata:
+        type: bash
+        cmd: |
+          # Test multiple endpoints and verify Redis data persistence
+          for i in {1..10}; do
+            # Test main endpoint (should increment counter in Redis)
+            curl -sf http://mesh-test-app-canary.mesh-test/ > /dev/null || exit 1
+            # Small delay between requests
+            sleep 1
+          done
+          
+          # Verify counter increased (Redis working)
+          final_response=$(curl -sf http://mesh-test-app-canary.mesh-test/)
+          counter=$(echo "$final_response" | jq -r '.counter // 0')
+          
+          # Counter should be at least 5 (some requests processed)
+          if [ "$counter" -lt 5 ]; then
+            echo "Counter too low: $counter. Redis connectivity issue?"
+            exit 1
+          fi
+          
+          echo "E2E test passed. Counter: $counter"
+    
+    # 6. Concurrent Load Test (Stress Test)
+    - name: concurrent-stress-test
+      url: http://flagger-loadtester.mesh-test/
+      timeout: 60s
+      metadata:
+        type: bash
+        cmd: |
+          # Run concurrent load on both UI and health endpoints
+          hey -z 45s -q 15 -c 3 http://mesh-test-app-canary.mesh-test/ &
+          hey -z 45s -q 10 -c 2 http://mesh-test-app-canary.mesh-test/health/live &
+          hey -z 45s -q 10 -c 2 http://mesh-test-app-canary.mesh-test/health/ready &
+          wait
+          
+          # Final verification that app is still responsive
+          curl -sf http://mesh-test-app-canary.mesh-test/ > /dev/null

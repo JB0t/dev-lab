@@ -1,0 +1,232 @@
+# Linkerd Service Mesh for dev-lab
+# This will install Linkerd control plane and Viz extension via Flux
+
+---
+# Linkerd Helm Repository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: linkerd
+  namespace: linkerd
+spec:
+  interval: 24h
+  url: https://helm.linkerd.io/stable
+
+---
+# Linkerd namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd
+  labels:
+    linkerd.io/control-plane-ns: linkerd
+    config.linkerd.io/admission-webhooks: disabled
+  annotations:
+    linkerd.io/inject: disabled
+
+---
+# Linkerd Viz namespace  
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd-viz
+  labels:
+    linkerd.io/extension: viz
+  annotations:
+    linkerd.io/inject: enabled
+
+---
+# Gateway API CRDs (required for Linkerd HTTPRoute support)
+apiVersion: source.toolkit.fluxcd.io/v1beta1
+kind: GitRepository
+metadata:
+  name: gateway-api
+  namespace: linkerd
+spec:
+  interval: 24h
+  ref:
+    tag: v1.2.1
+  url: https://github.com/kubernetes-sigs/gateway-api
+
+---
+# Apply Gateway API CRDs
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gateway-api-crds
+  namespace: linkerd
+spec:
+  interval: 10m
+  timeout: 2m
+  sourceRef:
+    kind: GitRepository
+    name: gateway-api
+  path: ./config/crd/standard
+  prune: true
+  wait: true
+
+---
+# Linkerd Control Plane CRDs
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: linkerd-crds
+  namespace: linkerd
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: linkerd-crds
+      version: ">=1.8.0"
+      sourceRef:
+        kind: HelmRepository
+        name: linkerd
+        namespace: linkerd
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+
+---
+# Linkerd Control Plane
+apiVersion: helm.toolkit.fluxcd.io/v2beta1  
+kind: HelmRelease
+metadata:
+  name: linkerd-control-plane
+  namespace: linkerd
+spec:
+  interval: 30m
+  dependsOn:
+    - name: linkerd-crds
+  chart:
+    spec:
+      chart: linkerd-control-plane
+      version: ">=1.16.0"
+      sourceRef:
+        kind: HelmRepository
+        name: linkerd
+        namespace: linkerd
+      interval: 12h
+  values:
+    # Control plane configuration for dev environment
+    controllerReplicas: 1
+    
+    # Identity configuration - use existing certificates
+    identity:
+      issuer:
+        scheme: kubernetes.io/tls
+        clockSkewAllowance: 20s
+        issuanceLifetime: 24h0m0s
+    
+    # Proxy configuration
+    proxy:
+      resources:
+        cpu:
+          request: 100m
+        memory:
+          request: 20Mi
+          limit: 250Mi
+    
+    # Proxy injector configuration  
+    proxyInjector:
+      resources:
+        cpu:
+          request: 100m
+        memory:
+          request: 50Mi
+          limit: 250Mi
+
+---
+# Linkerd Viz Extension
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: linkerd-viz
+  namespace: linkerd-viz
+spec:
+  interval: 30m
+  dependsOn:
+    - name: linkerd-control-plane
+      namespace: linkerd
+  chart:
+    spec:
+      chart: linkerd-viz
+      version: ">=30.12.0"
+      sourceRef:
+        kind: HelmRepository
+        name: linkerd
+        namespace: linkerd
+      interval: 12h
+  values:
+    # Viz configuration for dev environment
+    dashboard:
+      resources:
+        cpu:
+          request: 100m
+        memory:
+          request: 50Mi
+    
+    # Prometheus configuration
+    prometheus:
+      resources:
+        cpu:
+          request: 100m
+        memory:
+          request: 300Mi
+    
+    # Grafana configuration
+    grafana:
+      resources:
+        cpu:
+          request: 100m
+        memory: 
+          request: 50Mi
+
+---
+# TrafficSplit CRD for SMI compatibility
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: trafficsplits.split.smi-spec.io
+  labels:
+    app.kubernetes.io/managed-by: flux
+spec:
+  group: split.smi-spec.io
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - service
+            properties:
+              service:
+                description: The apex service of this split.
+                type: string
+              backends:
+                description: The backend services of this split.
+                type: array
+                items:
+                  type: object
+                  required:
+                  - service
+                  properties:
+                    service:
+                      description: Name of the Kubernetes service.
+                      type: string
+                    weight:
+                      description: Traffic weight value of this backend.
+                      type: integer
+          status:
+            type: object
+  scope: Namespaced
+  names:
+    plural: trafficsplits
+    singular: trafficsplit
+    kind: TrafficSplit

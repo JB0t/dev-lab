@@ -1,0 +1,84 @@
+---
+# Flagger HelmRepository and HelmRelease for Linkerd integration
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: flagger
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://flagger.app
+  type: default
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: flagger
+  namespace: flux-system
+spec:
+  interval: 5m
+  releaseName: flagger
+  targetNamespace: linkerd
+  install:
+    crds: CreateReplace
+    createNamespace: false  # linkerd namespace already exists
+  upgrade:
+    crds: CreateReplace
+  chart:
+    spec:
+      chart: flagger
+      version: "1.37.x"  # Latest stable version
+      interval: 1h
+      sourceRef:
+        kind: HelmRepository
+        name: flagger
+  values:
+    # Linkerd integration
+    meshProvider: linkerd
+    metricsServer: http://kube-prometheus-stack-prometheus.monitoring:9090
+    
+    # Resource configuration
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    
+    # Security context
+    securityContext:
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 10001
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+    
+    # Logging
+    logLevel: info
+    
+    # Slack integration (can be configured later)
+    slack:
+      url: ""
+      channel: ""
+      username: "flagger"
+    
+    # Pod disruption budget
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    
+    # Node selector (optional - for specific node scheduling)
+    nodeSelector:
+      kubernetes.io/os: linux
+    
+    # Tolerations (optional)
+    tolerations: []
+    
+    # Service monitor for Prometheus scraping
+    serviceMonitor:
+      enabled: true
+      interval: 30s

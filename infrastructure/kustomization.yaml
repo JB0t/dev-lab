@@ -1,0 +1,28 @@
+# Main infrastructure kustomization for dev-lab
+# This orchestrates the deployment of all infrastructure components in the correct order
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: dev-lab-infrastructure
+  namespace: flux-system
+
+resources:
+  # Core services (metrics-server, namespaces, etc.) - deployed first
+  - base/
+  
+  # Networking (ingress controller) - needed for service access
+  - networking/
+  
+  # Container registry - needed for custom images
+  - container-registry/
+  
+  # Service mesh - will be installed via script after Flux completes
+  # - service-mesh/
+  
+  # Flagger (progressive delivery) - requires Linkerd and Prometheus
+  - flagger/
+  
+  # Monitoring stack - deployed last to monitor everything
+  - monitoring/

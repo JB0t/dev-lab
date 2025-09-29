@@ -1,0 +1,59 @@
+# Linkerd native canary deployment using HTTPRoute (Gateway API)
+# This is the most modern approach
+
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: mesh-test-app-canary-route
+  namespace: mesh-test
+  annotations:
+    linkerd.io/inject: enabled
+spec:
+  parentRefs:
+  - name: mesh-test-app-service
+    kind: Service
+    group: ""
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    # 90% traffic to stable version
+    - name: mesh-test-app-service-v1
+      port: 80
+      weight: 90
+    # 10% traffic to canary version  
+    - name: mesh-test-app-service-v2
+      port: 80
+      weight: 10
+
+---
+# Alternative: Using HTTPRoute with header-based routing for safer canary
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: mesh-test-app-header-canary
+  namespace: mesh-test
+spec:
+  parentRefs:
+  - name: mesh-test-app-service
+    kind: Service
+  rules:
+  # Route with canary header to v2
+  - matches:
+    - headers:
+      - name: x-canary
+        value: "true"
+    backendRefs:
+    - name: mesh-test-app-service-v2
+      port: 80
+  # Default route to v1
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: mesh-test-app-service-v1
+      port: 80

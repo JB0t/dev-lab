@@ -1,0 +1,22 @@
+---
+# ServiceMonitor for Flagger controller metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flagger
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: flagger
+    app.kubernetes.io/part-of: flagger
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+    - linkerd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flagger
+  endpoints:
+  - port: http
+    interval: 30s
+    path: /metrics

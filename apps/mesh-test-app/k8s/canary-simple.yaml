@@ -1,0 +1,101 @@
+# Alternative canary deployment using Ingress-based traffic splitting
+# This approach is more compatible across different service mesh implementations
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-test-app-v2
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+    version: v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mesh-test-app
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: mesh-test-app
+        version: v2
+    spec:
+      containers:
+      - name: mesh-test-app
+        image: mesh-test-app:v2
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: APP_VERSION
+          value: "v2"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+
+---
+# Service for v1 (stable)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-test-app-service-v1
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+    version: v1
+spec:
+  selector:
+    app: mesh-test-app
+    version: v1
+  ports:
+  - port: 80
+    targetPort: 3000
+    name: http
+  type: ClusterIP
+
+---
+# Service for v2 (canary)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-test-app-service-v2
+  namespace: mesh-test
+  labels:
+    app: mesh-test-app
+    version: v2
+spec:
+  selector:
+    app: mesh-test-app
+    version: v2
+  ports:
+  - port: 80
+    targetPort: 3000
+    name: http
+  type: ClusterIP

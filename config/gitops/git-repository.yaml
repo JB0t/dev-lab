@@ -1,0 +1,20 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: dev-lab-repo
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 1m0s
+  ref:
+    branch: main
+  url: ssh://git@github.com/jbotstevens/dev-lab.git
+  secretRef:
+    name: flux-system-auth
+  ignore: |
+    # Ignore non-kubernetes files
+    *.md
+    # Ignore other directories not related to this cluster
+    /scripts/

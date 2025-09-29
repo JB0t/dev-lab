@@ -1,0 +1,45 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-infrastructure
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 10m0s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./dev-lab/infrastructure"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: kube-prometheus-stack-operator
+      namespace: monitoring
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-apps
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 10m0s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./dev-lab/apps"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-infrastructure
