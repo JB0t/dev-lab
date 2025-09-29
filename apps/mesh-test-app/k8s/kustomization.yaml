@@ -11,6 +11,10 @@ resources:
   - monitoring.yaml
   # Linkerd configuration
   - linkerd-httproute.yaml
+  - linkerd-metric-templates.yaml
+  - linkerd-metrics.yaml
+  - linkerd-podmonitor.yaml
+  - linkerd-servicemonitor.yaml
   # Flagger canary deployment (uncomment to enable progressive delivery)
   # IMPORTANT: Only enable this AFTER Flagger is installed and mesh-test-app is running
   - canary.yaml
