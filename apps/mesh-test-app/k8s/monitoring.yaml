@@ -8,6 +8,7 @@ metadata:
   namespace: mesh-test
   labels:
     app: mesh-test-app
+    release: kube-prometheus-stack
 spec:
   selector:
     matchLabels:
