@@ -11,7 +11,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
-  path: "./dev-lab/infrastructure"
+  path: "./infrastructure"
   prune: true
   wait: true
   timeout: 5m0s
@@ -37,7 +37,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
-  path: "./dev-lab/apps"
+  path: "./apps"
   prune: true
   wait: true
   timeout: 5m0s
