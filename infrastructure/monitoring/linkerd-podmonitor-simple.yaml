@@ -20,24 +20,3 @@ spec:
   - port: linkerd-admin
     interval: 30s
     path: /stats/prometheus
----
-# Also create a basic test ServiceMonitor for mesh-test-app service metrics
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: mesh-test-service
-  namespace: monitoring
-  labels:
-    app.kubernetes.io/name: mesh-test-service
-    release: kube-prometheus-stack
-spec:
-  namespaceSelector:
-    matchNames:
-    - mesh-test
-  selector:
-    matchLabels:
-      app: mesh-test-app
-  endpoints:
-  - port: http
-    interval: 30s
-    path: /metrics
