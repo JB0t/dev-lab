@@ -2,7 +2,6 @@
 
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
-> **📖 For detailed setup instructions, see [DEPLOYMENT-GUIDE.md](./DEPLOYMENT-GUIDE.md)**
 > **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
 
 ## Features
