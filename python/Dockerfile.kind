@@ -1,0 +1,17 @@
+FROM alpine:latest
+
+# Install curl, docker, and other utilities
+RUN apk add --no-cache curl ca-certificates docker-cli
+
+# Download and install KinD CLI
+RUN curl -L https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 -o /usr/local/bin/kind && \
+  chmod +x /usr/local/bin/kind
+
+# Verify installation
+RUN kind version
+
+# Set working directory
+WORKDIR /workspace
+
+# Default entrypoint
+ENTRYPOINT ["kind"]

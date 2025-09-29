@@ -1,0 +1,216 @@
+# Lightweight configuration for dev environment
+defaultRules:
+  create: true
+  rules:
+    alertmanager: false
+    etcd: false
+    configReloaders: false
+    general: false
+    k8s: false
+    kubeApiserverAvailability: false
+    kubeApiserverBurnrate: false
+    kubeApiserverHistogram: false
+    kubeApiserverSlos: false
+    kubelet: false
+    kubeProxy: false
+    kubePrometheusGeneral: false
+    kubePrometheusNodeRecording: false
+    kubernetesApps: false
+    kubernetesResources: true
+    kubernetesStorage: false
+    kubernetesSystem: false
+    kubeScheduler: false
+    kubeStateMetrics: false
+    network: false
+    node: true
+    nodeExporterAlerting: false
+    nodeExporterRecording: false
+    prometheus: false
+    prometheusOperator: false
+
+alertmanager:
+  enabled: true
+  config:
+    global:
+      smtp_smarthost: 'localhost:587'
+      smtp_from: 'dev-lab@localhost'
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'web.hook'
+    receivers:
+    - name: 'web.hook'
+      webhook_configs:
+      - url: 'http://127.0.0.1:5001/'
+  ingress:
+    enabled: false
+  serviceMonitor:
+    selfMonitor: false
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+grafana:
+  enabled: true
+  adminPassword: admin123
+  ingress:
+    enabled: false
+  persistence:
+    enabled: false
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+      kubernetes-pods:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+      linkerd-top-line:
+        gnetId: 15474
+        revision: 3
+        datasource: Prometheus
+      linkerd-deployment:
+        gnetId: 15475
+        revision: 5
+        datasource: Prometheus
+
+kubeApiServer:
+  enabled: false
+
+kubelet:
+  enabled: true
+  serviceMonitor:
+    metricRelabelings:
+    # Drop high cardinality labels
+    - sourceLabels: [__name__]
+      regex: (apiserver_audit|apiserver_client|apiserver_delegated|apiserver_envelope|apiserver_storage|apiserver_webhooks|authentication_token|cadvisor_version|container_blkio|container_cpu|container_fs|container_last|container_memory|container_network|container_oom|container_processes|container_sock|container_start|container_task|cadvisor_version|get_token|go_info|grpc_client|http_request|http_requests|kubelet_certificate|kubelet_cgroup|kubelet_container|kubelet_containers|kubelet_cpu|kubelet_device|kubelet_graceful|kubelet_http|kubelet_lifecycle|kubelet_managed|kubelet_node|kubelet_pleg|kubelet_pod|kubelet_run|kubelet_running|kubelet_runtime|kubelet_server|kubelet_started|kubelet_volume|kubernetes_build|kubernetes_feature|machine_cpu|machine_memory|machine_nvm|machine_scrape|node_boot|node_context|node_cpu|node_disk|node_entropy|node_filefd|node_filesystem|node_forks|node_intr|node_ipvs|node_load|node_md|node_memory|node_netdev|node_network|node_nf|node_nvme|node_power|node_pressure|node_rapl|node_schedstat|node_scrape|node_sockstat|node_textfile|node_thermal|node_time|node_timex|node_update|node_uname|node_vmstat|process_cpu|process_max|process_open|process_resident|process_start|process_virtual|registered_metric|rest_client|scrape_duration|scrape_samples|scrape_series|up{job="kubelet"})
+      action: drop
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: true
+  metricLabelsAllowlist:
+    - pods=[*]
+    - deployments=[*]
+    - services=[*]
+
+nodeExporter:
+  enabled: true
+  operatingSystems:
+    linux:
+      enabled: true
+    darwin:
+      enabled: false
+
+prometheusOperator:
+  enabled: true
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+prometheus:
+  enabled: true
+  prometheusSpec:
+    retention: 1d
+    retentionSize: 2GB
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+    additionalScrapeConfigs:
+    - job_name: 'linkerd-controller'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+          - 'linkerd'
+          - 'linkerd-viz'
+      relabel_configs:
+      - source_labels:
+        - __meta_kubernetes_pod_container_name
+        action: keep
+        regex: ^(controller|grafana|identity|proxy|tap|web)$
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: admin-http
+      - source_labels: [__meta_kubernetes_pod_ip]
+        action: replace
+        target_label: __address__
+        regex: (.+)
+        replacement: ${1}:4191
+    - job_name: 'linkerd-proxy'
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels:
+        - __meta_kubernetes_pod_container_name
+        action: keep
+        regex: ^linkerd-proxy$
+      - source_labels: [__meta_kubernetes_pod_annotation_linkerd_io_proxy_job_name]
+        action: keep
+        regex: .+
+      - source_labels: [__meta_kubernetes_pod_ip]
+        action: replace
+        target_label: __address__
+        regex: (.+)
+        replacement: ${1}:4191
+      - source_labels: [__meta_kubernetes_pod_annotation_linkerd_io_proxy_job_name]
+        action: replace
+        target_label: job
