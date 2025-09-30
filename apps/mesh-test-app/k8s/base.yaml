@@ -19,7 +19,7 @@ metadata:
     app: mesh-test-app
     version: v1
 spec:
-  replicas: 3
+  replicas: 5
   strategy:
     rollingUpdate:
       maxSurge: 1          # Only create 1 extra pod at a time
@@ -35,7 +35,7 @@ spec:
         app: mesh-test-app
         version: v1
       annotations:
-        flagger.app/restart: "2025-09-30-robust-dns-solution"
+        flagger.app/restart: "2025-09-30-canary-test-v5"
     spec:
       containers:
       - name: mesh-test-app
@@ -46,7 +46,7 @@ spec:
           name: http
         env:
         - name: APP_VERSION
-          value: "v4"  # ← Update version env var too
+          value: "v5"  # ← Update version to trigger canary
         - name: REDIS_URL
           value: "redis://redis-service:6379"
         resources:
