@@ -5,3 +5,6 @@ nameReference:
   - path: spec/valuesFrom/name
     kind: HelmRelease
     group: helm.toolkit.fluxcd.io
+  - path: spec/ca/secretName
+    kind: Issuer
+    group: cert-manager.io
