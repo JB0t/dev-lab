@@ -5,6 +5,7 @@ This guide demonstrates a complete GitOps canary deployment workflow using Flagg
 ## Overview
 
 The mesh-test-app demonstrates zero-downtime deployments with:
+
 - **Flagger**: Progressive delivery controller
 - **Linkerd**: Service mesh for traffic management and metrics
 - **Local Registry**: `localhost:5000` for container images
@@ -13,6 +14,7 @@ The mesh-test-app demonstrates zero-downtime deployments with:
 ## Prerequisites
 
 1. **Environment Setup**:
+
    ```bash
    # Bootstrap the dev-lab environment
    ./devlab bootstrap
@@ -21,7 +23,8 @@ The mesh-test-app demonstrates zero-downtime deployments with:
    ./devlab deploy-gitops
    ```
 
-2. **Verify Flagger and Registry**:
+1. **Verify Flagger and Registry**:
+
    ```bash
    # Check Flagger is running
    kubectl get pods -n flagger-system
@@ -61,6 +64,7 @@ curl -s http://localhost:5000/v2/mesh-test-app/tags/list
 ```
 
 Expected output:
+
 ```json
 {"name":"mesh-test-app","tags":["v1","v2"]}
 ```
@@ -76,6 +80,7 @@ cd /home/jstevens/git/jbotstevens/dev-lab
 ```
 
 Update `apps/mesh-test-app/k8s/base.yaml`:
+
 ```yaml
 containers:
 - name: mesh-test-app
@@ -166,16 +171,16 @@ kubectl logs -n flagger-system deployment/flagger -f
    - Redis connectivity test
    - Basic functionality verification
 
-2. **Load Tests** (per traffic step):
+1. **Load Tests** (per traffic step):
    - UI functionality testing (`hey` load generator)
    - Health endpoint stress testing
    - Concurrent request handling
 
-3. **Metrics Validation**:
+1. **Metrics Validation**:
    - **Success Rate**: ≥95% (from Linkerd metrics)
    - **Latency**: ≤500ms (P99 response time)
 
-4. **End-to-End Tests**:
+1. **End-to-End Tests**:
    - Redis data persistence
    - Counter increment functionality
    - Multi-endpoint validation
@@ -192,7 +197,7 @@ kubectl port-forward -n linkerd-viz svc/web 50750:8084 --address=0.0.0.0
 ./devlab kubectl -- port-forward -n linkerd-viz svc/web 50750:8084 --address=0.0.0.0
 ```
 
-Visit: http://localhost:50750
+Visit: `<http://localhost:50750>`
 
 ### 5.2 Key Metrics to Watch
 
@@ -213,6 +218,7 @@ kubectl get canary mesh-test-app -n mesh-test
 ```
 
 **What happens**:
+
 1. All health checks pass
 2. Metrics stay within thresholds
 3. Canary becomes the new primary
@@ -229,6 +235,7 @@ kubectl get canary mesh-test-app -n mesh-test
 ```
 
 **Common failure reasons**:
+
 - Success rate drops below 95%
 - Latency exceeds 500ms
 - Load test failures
@@ -254,6 +261,7 @@ curl http://localhost:8080/
 ### 7.2 Verify Version Distribution
 
 During the canary, you should see both versions responding:
+
 - ~90% requests show "v1" (primary)  
 - ~10% requests show "v2" (canary)
 
@@ -274,6 +282,7 @@ done
 ### 8.1 Monitor Cleanup
 
 After successful promotion:
+
 ```bash
 # Check that old pods are terminated
 kubectl get pods -n mesh-test
@@ -300,12 +309,14 @@ docker push localhost:5000/mesh-test-app:v3
 ### Common Issues
 
 1. **Image Pull Errors**:
+
    ```bash
    # Verify local registry connectivity
    docker pull localhost:5000/mesh-test-app:v2
    ```
 
-2. **Flagger Not Detecting Changes**:
+1. **Flagger Not Detecting Changes**:
+
    ```bash
    # Force Flux sync
    flux reconcile ks dev-lab-apps
@@ -314,14 +325,16 @@ docker push localhost:5000/mesh-test-app:v3
    kubectl logs -n flagger-system deployment/flagger
    ```
 
-3. **Load Test Failures**:
+1. **Load Test Failures**:
+
    ```bash
    # Check loadtester pod
    kubectl get pods -n mesh-test | grep loadtester
    kubectl logs -n mesh-test deployment/flagger-loadtester
    ```
 
-4. **Metrics Issues**:
+1. **Metrics Issues**:
+
    ```bash
    # Verify Prometheus connectivity
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
@@ -362,6 +375,7 @@ kubectl annotate canary mesh-test-app -n mesh-test flagger.app/restart=$(date +%
 ```
 
 This GitOps canary deployment process provides:
+
 - ✅ **Zero-downtime deployments**
 - ✅ **Automated rollback on failures**  
 - ✅ **Comprehensive testing at each step**

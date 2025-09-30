@@ -18,10 +18,12 @@ The devlab tool automatically builds a local KinD container image when needed. T
 ### Automatic Build (Recommended)
 
 The KinD container image is built automatically when:
+
 - KinD is not found on the host system
 - The local `devlab-kind:latest` image doesn't exist
 
 **Build Process:**
+
 1. Creates `Dockerfile.kind` with Alpine Linux + curl + docker-cli + KinD binary
 2. Builds the image as `devlab-kind:latest`
 3. Uses this image for all KinD operations
@@ -38,6 +40,7 @@ docker build -f Dockerfile.kind -t devlab-kind:latest .
 ### KinD Image Components
 
 The `devlab-kind:latest` image contains:
+
 - **Base**: Alpine Linux (minimal, secure)
 - **Dependencies**: curl, docker-cli
 - **KinD Binary**: Downloaded from GitHub releases (v0.20.0)
@@ -68,6 +71,7 @@ ENTRYPOINT ["kind"]
 **Problem**: KinD creates kubeconfig with `127.0.0.1:6443`, but containers can't reach each other's localhost.
 
 **Solution**: Automatic IP address translation
+
 1. **KinD creates cluster**: Writes kubeconfig to shared `.kube/` directory
 2. **Detect container IP**: Find KinD control plane IP on `kind` network (e.g., `172.18.0.3`)
 3. **Update kubeconfig**: Replace `127.0.0.1:6443` with `172.18.0.3:6443`
@@ -76,6 +80,7 @@ ENTRYPOINT ["kind"]
 ### Tool Container Configuration
 
 All Kubernetes tools run with:
+
 - **Network**: `--network kind` (access to KinD cluster)
 - **Kubeconfig**: Shared directory at `/root/.kube`
 - **Workspace**: Project files at `/workspace`
@@ -90,6 +95,7 @@ All Kubernetes tools run with:
 | linkerd | `cr.l5d.io/linkerd/cli-bin:stable-2.14.5` | Official Linkerd registry |
 | flux | `fluxcd/flux-cli:latest` | Official Flux registry |
 | kind | `devlab-kind:latest` | Built locally |
+
 - **Virtual Environment**: Isolated Python dependencies
 
 ## Prerequisites

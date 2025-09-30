@@ -3,6 +3,7 @@
 ## Problem Solved
 
 The original cleanup command failed with:
+
 ```
 docker: Error response from daemon: manifest for kindest/node:v0.20.0 not found: manifest unknown: manifest unknown
 ```
@@ -12,15 +13,18 @@ docker: Error response from daemon: manifest for kindest/node:v0.20.0 not found:
 ## Solution Implemented
 
 ### 1. **Hybrid Execution Strategy**
+
 - **Primary**: Use host `kind` binary if available (fastest)
 - **Fallback**: Use pre-built local container image (robust & platform-agnostic)
 
 ### 2. **Local Container Image Approach**
+
 - **Pre-built image**: `devlab-kind:latest` (~20MB Alpine + KinD CLI)
 - **One-time setup**: Built once, cached for future use
 - **No runtime downloads**: Fast execution after initial build
 
 ### 3. **Automatic Image Management**
+
 - **Auto-detection**: Checks if image exists before using
 - **Auto-building**: Builds image automatically when needed
 - **Manual rebuild**: `./devlab build-tools` command for updates
@@ -28,21 +32,25 @@ docker: Error response from daemon: manifest for kindest/node:v0.20.0 not found:
 ## Key Benefits
 
 ### ⚡ **Performance**
+
 - Host binary: **Zero overhead** (when available)
 - Container image: **Fast startup** (~200ms vs 5+ seconds download)
 - Cached builds: **No network dependency** during runtime
 
 ### 🌍 **Platform Independence**
+
 - **Works everywhere**: Windows, macOS, Linux
 - **Single dependency**: Only Docker required
 - **Consistent behavior**: Same experience across platforms
 
 ### 🛡️ **Robustness**
+
 - **Network resilient**: No runtime downloads
 - **Version consistency**: Fixed KinD version in container
 - **Graceful fallback**: Automatic detection and switching
 
 ### 🧑‍💻 **Developer Experience**
+
 - **Transparent**: Users don't need to know which method is used
 - **No setup required**: Tools work out of the box
 - **Easy maintenance**: Single command to rebuild images
@@ -50,6 +58,7 @@ docker: Error response from daemon: manifest for kindest/node:v0.20.0 not found:
 ## Technical Implementation
 
 ### Dockerfile (`python/Dockerfile.kind`)
+
 ```dockerfile
 FROM alpine:latest
 RUN apk add --no-cache curl ca-certificates
@@ -60,6 +69,7 @@ ENTRYPOINT ["kind"]
 ```
 
 ### Python Logic Flow
+
 ```python
 def kind(self, args):
     # 1. Try host binary first
@@ -103,11 +113,13 @@ def kind(self, args):
 ## Maintenance
 
 ### Update KinD Version
+
 1. Edit `TOOL_VERSIONS['kind']` in `devlab.py`
 2. Update URL in `Dockerfile.kind`
 3. Run `./devlab build-tools`
 
 ### Troubleshooting
+
 ```bash
 # Check image exists
 docker images | grep devlab-kind
@@ -122,6 +134,7 @@ docker run --rm devlab-kind:latest version
 ## Future Enhancements
 
 This pattern can be extended to other tools:
+
 - **Custom kubectl image** with specific version
 - **Multi-tool images** (kubectl + helm + flux)
 - **Platform-specific optimizations** (ARM64 support)

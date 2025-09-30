@@ -30,12 +30,14 @@ dev-lab/
 ## Resource Ownership
 
 ### Infrastructure/Monitoring Namespace
+
 - **ServiceMonitors**: For cross-cutting services (Flagger, Linkerd control plane)
 - **PodMonitors**: Global proxy monitoring across all namespaces
 - **Grafana Dashboards**: Visualization for canary deployments
 - **Prometheus Stack**: Core monitoring infrastructure
 
 ### Application Namespace  
+
 - **Canary Definitions**: Application-specific progressive delivery
 - **MetricTemplates**: Custom Prometheus queries for canary analysis
 - **Application PodMonitors**: Detailed monitoring for specific apps
@@ -44,12 +46,14 @@ dev-lab/
 ## Deployment Commands
 
 ### Deploy Infrastructure (Monitoring)
+
 ```bash
 cd dev-lab/infrastructure/monitoring
 kubectl apply -k .
 ```
 
 ### Deploy Application
+
 ```bash  
 cd dev-lab/apps/mesh-test-app/k8s
 kubectl apply -k .

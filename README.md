@@ -185,7 +185,7 @@ The dev-lab includes a comprehensive service mesh testing environment with Linke
 - **Production-Ready Test App**: Node.js application with health checks, metrics, and Redis backend
 
 ### Canary Deployment Methods
-<!-- TODO: update canary tests (include flagger) -->
+`<!-- TODO: update canary tests (include flagger) -->`
 
 #### Method 1: Linkerd Native HTTPRoute (Recommended)
 
