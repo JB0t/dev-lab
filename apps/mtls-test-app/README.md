@@ -1,6 +1,12 @@
 # Standalone mTLS Testing
 
-This directory contains a **standalone mTLS demonstration** that doesn't depend on any existing infrastructure or loadtester pods.
+## Overview
+
+mTLS, or mutual TLS, is simply “regular TLS” with the extra stipulation that the client is also authenticated. TLS guarantees authenticity, but by default this only happens in one direction–the client authenticates the server but the server doesn’t authenticate the client. mTLS makes the authenticity symmetric.
+
+By default, Linkerd automatically enables mutually-authenticated Transport Layer Security (mTLS) for all TCP traffic between meshed pods.
+
+This directory contains a **standalone mTLS demonstration** that doesn't depend on any existing infrastructure other than the `Linkerd` service-mesh with default configuration.
 
 ## Files
 
