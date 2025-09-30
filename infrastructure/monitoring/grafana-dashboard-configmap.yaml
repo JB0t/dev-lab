@@ -348,6 +348,143 @@ data:
             }
           },
           "gridPos": {"h": 4, "w": 12, "x": 12, "y": 30}
+        },
+        {
+          "id": 14,
+          "title": "Load Balancing Distribution by Pod",
+          "type": "piechart",
+          "targets": [
+            {
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "reqps"
+            }
+          },
+          "options": {
+            "pieType": "pie",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "displayLabels": ["name", "value", "percent"]
+          },
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 34}
+        },
+        {
+          "id": 15,
+          "title": "Request Rate per Pod (Primary)",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "reqps"
+            }
+          },
+          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 34}
+        },
+        {
+          "id": 16,
+          "title": "Pod Response Times Distribution",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(response_latency_ms_bucket{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod, le))",
+              "legendFormat": "{{pod}} p99",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(response_latency_ms_bucket{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod, le))",
+              "legendFormat": "{{pod}} p50",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "ms"
+            }
+          },
+          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 34}
+        },
+        {
+          "id": 17,
+          "title": "Service Endpoint Health Check",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"}",
+              "legendFormat": "{{pod}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {"color": "red", "value": 0},
+                  {"color": "green", "value": 1}
+                ]
+              },
+              "mappings": [
+                {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+                {"options": {"1": {"text": "UP"}}, "type": "value"}
+              ]
+            }
+          },
+          "gridPos": {"h": 4, "w": 12, "x": 0, "y": 42}
+        },
+        {
+          "id": 18,
+          "title": "Load Balance Evenness Score",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "1 - (stddev(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)) / avg(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)))",
+              "legendFormat": "Evenness Score",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {"color": "red", "value": 0},
+                  {"color": "yellow", "value": 0.8},
+                  {"color": "green", "value": 0.95}
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "gridPos": {"h": 4, "w": 12, "x": 12, "y": 42}
         }
       ],
       "time": {
