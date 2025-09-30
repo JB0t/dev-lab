@@ -22,21 +22,25 @@ The implementation follows a layered approach with proper dependency management:
 ## Components
 
 ### Trust Anchor Certificate
+
 - **File**: `ca.crt` and `ca.key`
 - **Purpose**: Root certificate for Linkerd's identity system
 - **Generated with**: `openssl req -x509 -new -newkey rsa:4096 ...`
 - **Lifecycle**: Pre-generated and stored in Git (valid for 10 years)
 
 ### Kustomize Secret Generator
+
 - **Purpose**: Creates `linkerd-trust-anchor` secret from ca.crt/ca.key files
 - **Usage**: Referenced by the control plane Helm chart via `valuesFrom`
 
 ### Helm Charts
+
 - **linkerd-crds**: Installs Linkerd Custom Resource Definitions
 - **linkerd-control-plane**: Installs the main Linkerd service mesh
 - **linkerd-viz**: Installs observability dashboard and tools
 
 ### cert-manager Integration
+
 - **Issuer**: Creates CA issuer from the trust anchor secret
 - **Certificate**: Generates identity issuer certificate for Linkerd
 
@@ -88,6 +92,7 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 ## Troubleshooting
 
 ### Certificate Issues
+
 ```bash
 # Check trust anchor secret
 kubectl get secret linkerd-trust-anchor -n linkerd -o yaml
@@ -97,6 +102,7 @@ kubectl logs -n cert-manager deployment/cert-manager
 ```
 
 ### Helm Release Issues
+
 ```bash
 # Check Helm release status
 helm list -n linkerd
@@ -107,6 +113,7 @@ flux logs --level=debug
 ```
 
 ### Control Plane Issues
+
 ```bash
 # Check Linkerd status (requires CLI)
 linkerd check
