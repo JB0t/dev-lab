@@ -61,15 +61,8 @@ check_bootstrap() {
     fi
     success "KinD cluster is accessible"
     
-    # Check if Linkerd is installed
-    if ! kubectl get ns linkerd >/dev/null 2>&1; then
-        error "Linkerd not found"
-        echo ""
-        echo "Please run bootstrap first:"
-        echo "  ./scripts/bootstrap.sh"
-        exit 1
-    fi
-    success "Linkerd is installed"
+    # Check if Linkerd is installed (it should be installed via GitOps now)
+    info "Linkerd will be installed automatically via GitOps"
     
     # Check if registry is running
     if ! kubectl get pods -n dev-lab-registry -l app=docker-registry --field-selector=status.phase=Running >/dev/null 2>&1; then
@@ -220,6 +213,8 @@ wait_for_deployment() {
     log "Monitoring infrastructure deployment..."
     echo ""
     info "This may take several minutes as Flux deploys:"
+    echo "  • cert-manager for certificate management"
+    echo "  • Linkerd service mesh (CRDs + control plane + viz)"
     echo "  • NGINX Ingress Controller"
     echo "  • Prometheus Monitoring Stack"
     echo "  • Container Registry UI"
@@ -266,7 +261,7 @@ show_gitops_info() {
     echo "  • Prometheus:     kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090"
     echo "  • Grafana:        kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80 (admin/admin123)"
     echo "  • AlertManager:   kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093"
-    echo "  • Linkerd Viz:    linkerd viz dashboard"
+    echo "  • Linkerd Viz:    kubectl port-forward -n linkerd-viz svc/web 8084:8084"
     echo "  • Registry UI:    kubectl port-forward -n dev-lab-registry svc/docker-registry-ui 5001:80"
     echo ""
     echo "🔧 **GitOps Monitoring Commands:**"
@@ -274,6 +269,7 @@ show_gitops_info() {
     echo "  flux logs --all-namespaces          # Controller logs"
     echo "  watch flux get kustomizations -A    # Watch reconciliation"
     echo "  kubectl get events -n flux-system   # System events"
+    echo "  kubectl get events -n linkerd       # Linkerd events"
     echo ""
     echo "🚀 **Sample Application (once apps are deployed):**"
     echo "  • Add to /etc/hosts: 127.0.0.1 sample-app.local"

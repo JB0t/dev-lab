@@ -355,8 +355,8 @@ main() {
             echo "  help       Show this help"
             echo ""
             echo "After bootstrap, choose your deployment method:"
-            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment"
-            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment"
+            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment (includes Linkerd)"
+            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment (Linkerd via Flux)"
             echo ""
             ;;
         *)
