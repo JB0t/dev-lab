@@ -1,0 +1,57 @@
+---
+# Proper Linkerd Proxy PodMonitor based on official Linkerd configuration
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: linkerd-proxy-proper
+  namespace: mesh-test
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector: {}  # All namespaces
+  selector:
+    matchLabels:
+      linkerd.io/control-plane-ns: linkerd
+  podMetricsEndpoints:
+  - port: linkerd-admin
+    interval: 30s
+    path: /metrics
+    relabelings:
+    # Keep only linkerd-proxy containers with linkerd-admin port in linkerd namespace
+    - sourceLabels: 
+        - __meta_kubernetes_pod_container_name
+        - __meta_kubernetes_pod_container_port_name
+        - __meta_kubernetes_pod_label_linkerd_io_control_plane_ns
+      action: keep
+      regex: ^linkerd-proxy;linkerd-admin;linkerd$
+    # Add namespace label
+    - sourceLabels: [__meta_kubernetes_namespace]
+      action: replace
+      targetLabel: namespace
+    # Add pod label  
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      action: replace
+      targetLabel: pod
+    # Map linkerd.io/proxy_deployment to deployment
+    - sourceLabels: [__meta_kubernetes_pod_label_linkerd_io_proxy_deployment]
+      action: replace
+      targetLabel: deployment
+    # Map all linkerd.io_ labels without the prefix
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_linkerd_io_(.+)
+      replacement: $1
+    # Copy all pod labels to tmp labels
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+      replacement: __tmp_pod_label_$1
+    # Take linkerd_io_ prefixed labels and copy them without the prefix
+    - action: labelmap
+      regex: __tmp_pod_label_linkerd_io_(.+)
+      replacement: __tmp_pod_label_$1
+    # Drop the linkerd_io_ originals
+    - action: labeldrop
+      regex: __tmp_pod_label_linkerd_io_(.+)
+    # Copy tmp labels into real labels
+    - action: labelmap
+      regex: __tmp_pod_label_(.+)
+      replacement: $1

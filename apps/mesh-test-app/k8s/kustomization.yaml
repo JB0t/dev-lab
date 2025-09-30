@@ -6,15 +6,14 @@ metadata:
   namespace: mesh-test
 
 resources:
+  # Core application components
   - base.yaml
   - redis.yaml
-  - monitoring.yaml
-  # Linkerd configuration
-  - linkerd-httproute.yaml
-  - linkerd-metric-templates.yaml  # Contains all metric templates
-  - linkerd-podmonitor.yaml
-  - linkerd-servicemonitor.yaml
-  - loadtester.yaml
-  # Flagger canary deployment (uncomment to enable progressive delivery)
-  # IMPORTANT: Only enable this AFTER Flagger is installed and mesh-test-app is running
+  
+  # Flagger progressive delivery
   - canary.yaml
+  - loadtester.yaml
+  
+  # Linkerd + Prometheus integration  
+  - linkerd-metric-templates.yaml
+  - linkerd-podmonitor-debug.yaml

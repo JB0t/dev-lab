@@ -8,26 +8,26 @@ metadata:
 spec:
   provider:
     type: prometheus
-    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
   query: |
     sum(
       rate(
         response_total{
-          classification!="failure",
+          namespace="{{ namespace }}",
           direction="inbound",
-          dst_service_name="{{name}}",
-          dst_service_namespace="{{namespace}}"
-        }[{{interval}}]
+          target_port="3000",
+          classification!="failure"
+        }[{{ interval }}]
       )
     ) 
     / 
     sum(
       rate(
         response_total{
+          namespace="{{ namespace }}",
           direction="inbound",
-          dst_service_name="{{name}}",
-          dst_service_namespace="{{namespace}}"
-        }[{{interval}}]
+          target_port="3000"
+        }[{{ interval }}]
       )
     ) * 100
 ---
@@ -40,16 +40,16 @@ metadata:
 spec:
   provider:
     type: prometheus
-    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
   query: |
     histogram_quantile(0.99,
       sum(
         rate(
           response_latency_ms_bucket{
+            namespace="{{ namespace }}",
             direction="inbound",
-            dst_service_name="{{name}}",
-            dst_service_namespace="{{namespace}}"
-          }[{{interval}}]
+            target_port="3000"
+          }[{{ interval }}]
         )
       ) by (le)
     )
@@ -63,7 +63,7 @@ metadata:
 spec:
   provider:
     type: prometheus
-    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
   query: |
     sum(
       rate(
