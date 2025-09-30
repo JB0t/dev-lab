@@ -282,8 +282,8 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) * 100",
-              "legendFormat": "mTLS %",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\",dst_service_name!~\".*health.*\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",dst_service_name!~\".*health.*\"}[1m])) * 100",
+              "legendFormat": "mTLS % (App Traffic Only)",
               "refId": "A"
             }
           ],
@@ -355,7 +355,7 @@ data:
           "type": "piechart",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1",
               "legendFormat": "{{pod}}",
               "refId": "A"
             }
@@ -385,7 +385,7 @@ data:
           "type": "timeseries",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1",
               "legendFormat": "{{pod}}",
               "refId": "A"
             }
@@ -462,7 +462,7 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "1 - (stddev(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)) / avg(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod)))",
+              "expr": "1 - (stddev(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m]) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1) by (pod)) / avg(sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m]) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1) by (pod)))",
               "legendFormat": "Evenness Score",
               "refId": "A"
             }
