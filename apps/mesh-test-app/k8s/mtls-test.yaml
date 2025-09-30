@@ -1,0 +1,115 @@
+---
+# Test namespace WITHOUT Linkerd injection
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mtls-test-plain
+  # Note: NO linkerd.io/inject annotation
+---
+# Test namespace WITH Linkerd injection  
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mtls-test-secure
+  annotations:
+    linkerd.io/inject: enabled
+---
+# Plain HTTP test app (no sidecar)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app-plain
+  namespace: mtls-test-plain
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app-plain
+  template:
+    metadata:
+      labels:
+        app: test-app-plain
+    spec:
+      containers:
+      - name: test-app
+        image: ghcr.io/stefanprodan/podinfo:6.4.0
+        ports:
+        - containerPort: 9898
+          name: http
+        env:
+        - name: PODINFO_UI_COLOR
+          value: "#ff0000"  # Red for plain
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-app-plain-svc
+  namespace: mtls-test-plain
+spec:
+  selector:
+    app: test-app-plain
+  ports:
+  - port: 9898
+    targetPort: 9898
+    name: http
+---
+# Secure mTLS test app (with sidecar)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app-secure
+  namespace: mtls-test-secure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app-secure
+  template:
+    metadata:
+      labels:
+        app: test-app-secure
+    spec:
+      containers:
+      - name: test-app
+        image: ghcr.io/stefanprodan/podinfo:6.4.0
+        ports:
+        - containerPort: 9898
+          name: http
+        env:
+        - name: PODINFO_UI_COLOR
+          value: "#00ff00"  # Green for secure
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-app-secure-svc
+  namespace: mtls-test-secure
+spec:
+  selector:
+    app: test-app-secure
+  ports:
+  - port: 9898
+    targetPort: 9898
+    name: http
+---
+# Client pod WITH Linkerd injection for testing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-client
+  namespace: mtls-test-secure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-client
+  template:
+    metadata:
+      labels:
+        app: test-client
+    spec:
+      containers:
+      - name: client
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do sleep 3600; done"]
