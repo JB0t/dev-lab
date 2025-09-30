@@ -214,13 +214,13 @@ wait_for_deployment() {
     echo ""
     info "This may take several minutes as Flux deploys components in order:"
     echo "  • Base infrastructure (namespaces, metrics-server)"
-    echo "  • Prometheus stack + Linkerd service mesh + Container registry"
-    echo "  • Service mesh certificates + Networking + Monitoring extras + Flagger"
+    echo "  • Prometheus stack + Container registry + Certificate management"
+    echo "  • Linkerd service mesh + Networking + Monitoring extras + Flagger"
     echo "  • Sample Applications"
     echo ""
     
     # Component kustomizations to monitor
-    local components=("dev-lab-base" "dev-lab-prometheus" "dev-lab-service-mesh" "dev-lab-registry" "dev-lab-service-mesh-certs" "dev-lab-networking" "dev-lab-monitoring" "dev-lab-flagger" "dev-lab-apps")
+    local components=("dev-lab-base" "dev-lab-prometheus" "dev-lab-registry" "dev-lab-cert-manager" "dev-lab-service-mesh" "dev-lab-networking" "dev-lab-monitoring" "dev-lab-flagger" "dev-lab-apps")
     
     local timeout=900  # 15 minutes
     local elapsed=0

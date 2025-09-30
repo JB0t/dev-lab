@@ -65,7 +65,41 @@ spec:
     - name: dev-lab-base
 
 ---
-# Service mesh - Linkerd + cert-manager
+# Certificate management - cert-manager + Linkerd certificates
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-cert-manager
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 10m0s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/linkerd-cert-manager"
+  prune: true
+  wait: true
+  timeout: 10m0s
+  dependsOn:
+    - name: dev-lab-base
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager-webhook
+      namespace: linkerd
+    - apiVersion: cert-manager.io/v1
+      kind: Certificate
+      name: linkerd-identity-issuer
+      namespace: linkerd
+
+---
+# Service mesh - Linkerd only (depends on cert-manager)
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -83,12 +117,8 @@ spec:
   wait: true
   timeout: 10m0s
   dependsOn:
-    - name: dev-lab-base
+    - name: dev-lab-cert-manager
   healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: linkerd-cert-manager
-      namespace: linkerd
     - apiVersion: apps/v1
       kind: Deployment
       name: linkerd-destination
@@ -96,32 +126,6 @@ spec:
     - apiVersion: apps/v1
       kind: Deployment
       name: linkerd-proxy-injector
-      namespace: linkerd
-
----
-# Service mesh certificates (depends on cert-manager being ready)
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: dev-lab-service-mesh-certs
-  namespace: flux-system
-  labels:
-    app.kubernetes.io/part-of: flux
-spec:
-  interval: 10m0s
-  sourceRef:
-    kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/service-mesh-post"
-  prune: true
-  wait: true
-  timeout: 5m0s
-  dependsOn:
-    - name: dev-lab-service-mesh
-  healthChecks:
-    - apiVersion: cert-manager.io/v1
-      kind: Certificate
-      name: linkerd-identity-issuer
       namespace: linkerd
     - apiVersion: apps/v1
       kind: Deployment
@@ -217,7 +221,7 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-service-mesh-certs
+    - name: dev-lab-service-mesh
     - name: dev-lab-networking
     - name: dev-lab-prometheus
     - name: dev-lab-monitoring
