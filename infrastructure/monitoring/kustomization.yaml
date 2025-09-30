@@ -7,3 +7,13 @@ metadata:
 
 resources:
   - prometheus-stack.yaml
+  
+  # Linkerd service mesh monitoring
+  - linkerd-servicemonitors.yaml
+  - linkerd-podmonitor-simple.yaml
+  
+  # Flagger progressive delivery monitoring
+  - flagger-servicemonitor.yaml
+  
+  # Grafana dashboards
+  - grafana-dashboard-configmap.yaml

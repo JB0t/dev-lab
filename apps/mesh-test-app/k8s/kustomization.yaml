@@ -14,6 +14,6 @@ resources:
   - canary.yaml
   - loadtester.yaml
   
-  # Linkerd + Prometheus integration  
+  # Application-specific Linkerd metrics collection 
   - linkerd-metric-templates.yaml
   - linkerd-podmonitor-debug.yaml
