@@ -28,60 +28,22 @@ spec:
         namespace: linkerd
       interval: 12h
   values:
-    # CRDs management - set to false if shared CRDs exist
+    # Install CRDs as part of this deployment
     crds:
       enabled: true
-      keep: false  # Don't keep CRDs if this instance is removed
+      keep: false
     
+    # Deploy to linkerd namespace
     namespace: linkerd
     
-    # Restrictive RBAC - only for Linkerd certificates
-    rbac:
-      create: true
-      # Limit permissions to linkerd namespace only
-      aggregateClusterRoles: false
-    
-    # Global RBAC restrictions
-    global:
-      rbac:
-        create: true
-        # Prevent this cert-manager from managing cluster-wide resources
-        aggregateClusterRoles: false
-    
-    # Scope cert-manager to only watch linkerd namespace
+    # Scope cert-manager to only manage linkerd namespace certificates
     extraArgs:
       - --namespace=linkerd
       - --enable-certificate-owner-ref=false
       - --cluster-resource-namespace=linkerd
     
-    # Webhook configuration with different name to avoid conflicts
-    webhook:
-      replicaCount: 1
-      nameOverride: "linkerd-cert-manager-webhook"
-      resources:
-        requests:
-          cpu: 100m
-          memory: 128Mi
-        limits:
-          cpu: 500m
-          memory: 512Mi
-      # Use different port to avoid conflicts
-      securePort: 10251
-      
-    # CA Injector with different name
-    cainjector:
-      replicaCount: 1
-      nameOverride: "linkerd-cert-manager-cainjector"
-      resources:
-        requests:
-          cpu: 100m
-          memory: 128Mi
-        limits:
-          cpu: 500m
-          memory: 512Mi
-    
-    # Controller with different name and restricted scope
-    nameOverride: "linkerd-cert-manager"
+    # Controller configuration
+    replicaCount: 1
     resources:
       requests:
         cpu: 100m
@@ -90,8 +52,26 @@ spec:
         cpu: 500m
         memory: 512Mi
     
-    # Feature flags for isolation
-    featureGates: ""
-    
-    # Logging for debugging
-    logLevel: 2
+    # Webhook configuration
+    webhook:
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      # Use non-default port to avoid conflicts
+      securePort: 10251
+      
+    # CA Injector configuration  
+    cainjector:
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
