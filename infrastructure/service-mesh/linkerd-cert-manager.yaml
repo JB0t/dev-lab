@@ -93,10 +93,5 @@ spec:
     # Feature flags for isolation
     featureGates: ""
     
-    # Only watch linkerd namespace
-    extraArgs:
-      - --namespace=linkerd
-      - --enable-certificate-owner-ref=false
-    
     # Logging for debugging
     logLevel: 2
