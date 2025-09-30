@@ -355,7 +355,7 @@ data:
           "type": "piechart",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and increase(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[2m]) > 0",
               "legendFormat": "{{pod}}",
               "refId": "A"
             }
@@ -385,7 +385,7 @@ data:
           "type": "timeseries",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and on(pod) group_left() up{job=\"mesh-test/linkerd-proxy-proper\", deployment=\"mesh-test-app-primary\"} == 1",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[1m])) by (pod) and increase(response_total{namespace=\"mesh-test\", deployment=\"mesh-test-app-primary\", direction=\"inbound\"}[2m]) > 0",
               "legendFormat": "{{pod}}",
               "refId": "A"
             }
