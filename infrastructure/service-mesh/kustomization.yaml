@@ -32,3 +32,6 @@ patches:
         value:
           name: linkerd-cert-manager
           namespace: linkerd
+
+configurations:
+  - kustomizeconfig.yaml
