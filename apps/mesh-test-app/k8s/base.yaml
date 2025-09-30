@@ -59,14 +59,20 @@ spec:
         livenessProbe:
           httpGet:
             path: /health/live
-            port: 3000
+            port: 4191  # Use Linkerd proxy admin port for mTLS health checks
+            httpHeaders:
+            - name: l5d-dst-override
+              value: "mesh-test-app.mesh-test.svc.cluster.local:3000"
           initialDelaySeconds: 30
           periodSeconds: 10
           failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health/ready
-            port: 3000
+            port: 4191  # Use Linkerd proxy admin port for mTLS health checks
+            httpHeaders:
+            - name: l5d-dst-override
+              value: "mesh-test-app.mesh-test.svc.cluster.local:3000"
           initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 3
