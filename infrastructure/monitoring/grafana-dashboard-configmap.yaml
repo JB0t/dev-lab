@@ -252,15 +252,28 @@ data:
         },
         {
           "id": 10,
-          "title": "Canary Events Log",
-          "type": "logs",
+          "title": "Primary vs Canary Traffic Distribution",
+          "type": "timeseries",
           "targets": [
             {
-              "expr": "{namespace=\"linkerd\", app_kubernetes_io_name=\"flagger\"}",
-              "legendFormat": "",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",target_port=\"3000\",pod=~\".*primary.*\"}[1m]))",
+              "legendFormat": "Primary Requests/sec",
               "refId": "A"
+            },
+            {
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",target_port=\"3000\",pod!~\".*primary.*\"}[1m]))",
+              "legendFormat": "Canary Requests/sec",
+              "refId": "B"
             }
           ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "reqps"
+            }
+          },
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22}
         }
       ],
