@@ -6,4 +6,30 @@ metadata:
   namespace: linkerd
 
 resources:
-  - linkerd.yaml
+  - namespaces.yaml
+  - repositories.yaml
+  - linkerd-cert-manager.yaml
+  - linkerd-crds.yaml
+  - linkerd-control-plane.yaml
+  - linkerd-viz.yaml
+  - linkerd-certs.yaml
+
+secretGenerator:
+  - name: linkerd-trust-anchor
+    namespace: linkerd
+    type: kubernetes.io/tls
+    files:
+      - tls.crt=ca.crt
+      - tls.key=ca.key
+
+patches:
+  # Patch Linkerd control plane to wait for linkerd-cert-manager
+  - target:
+      kind: HelmRelease
+      name: linkerd-control-plane
+    patch: |-
+      - op: add
+        path: /spec/dependsOn/-
+        value:
+          name: linkerd-cert-manager
+          namespace: linkerd

@@ -1,0 +1,102 @@
+---
+# Linkerd-specific cert-manager Helm Repository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: jetstack-linkerd
+  namespace: linkerd
+spec:
+  interval: 1h
+  url: https://charts.jetstack.io
+
+---
+# Linkerd cert-manager deployment
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: linkerd-cert-manager
+  namespace: linkerd
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: cert-manager
+      version: ">=1.15.0"
+      sourceRef:
+        kind: HelmRepository
+        name: jetstack-linkerd
+        namespace: linkerd
+      interval: 12h
+  values:
+    # CRDs management - set to false if shared CRDs exist
+    crds:
+      enabled: true
+      keep: false  # Don't keep CRDs if this instance is removed
+    
+    namespace: linkerd
+    
+    # Restrictive RBAC - only for Linkerd certificates
+    rbac:
+      create: true
+      # Limit permissions to linkerd namespace only
+      aggregateClusterRoles: false
+    
+    # Global RBAC restrictions
+    global:
+      rbac:
+        create: true
+        # Prevent this cert-manager from managing cluster-wide resources
+        aggregateClusterRoles: false
+    
+    # Scope cert-manager to only watch linkerd namespace
+    extraArgs:
+      - --namespace=linkerd
+      - --enable-certificate-owner-ref=false
+      - --cluster-resource-namespace=linkerd
+    
+    # Webhook configuration with different name to avoid conflicts
+    webhook:
+      replicaCount: 1
+      nameOverride: "linkerd-cert-manager-webhook"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      # Use different port to avoid conflicts
+      securePort: 10251
+      
+    # CA Injector with different name
+    cainjector:
+      replicaCount: 1
+      nameOverride: "linkerd-cert-manager-cainjector"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    
+    # Controller with different name and restricted scope
+    nameOverride: "linkerd-cert-manager"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    
+    # Feature flags for isolation
+    featureGates: ""
+    
+    # Only watch linkerd namespace
+    extraArgs:
+      - --namespace=linkerd
+      - --enable-certificate-owner-ref=false
+    
+    # Logging for debugging
+    logLevel: 2
