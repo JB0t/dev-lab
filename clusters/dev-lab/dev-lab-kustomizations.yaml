@@ -18,6 +18,22 @@ spec:
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
+      name: linkerd-cert-manager
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-destination
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-identity
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-proxy-injector
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
       name: ingress-nginx-controller
       namespace: ingress-nginx
     - apiVersion: apps/v1
