@@ -95,10 +95,6 @@ spec:
       namespace: linkerd
     - apiVersion: apps/v1
       kind: Deployment
-      name: linkerd-identity
-      namespace: linkerd
-    - apiVersion: apps/v1
-      kind: Deployment
       name: linkerd-proxy-injector
       namespace: linkerd
 
@@ -126,6 +122,10 @@ spec:
     - apiVersion: cert-manager.io/v1
       kind: Certificate
       name: linkerd-identity-issuer
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-identity
       namespace: linkerd
 
 ---

@@ -7,3 +7,6 @@ metadata:
 
 resources:
   - linkerd-certs.yaml
+
+configurations:
+  - kustomizeconfig.yaml
