@@ -282,7 +282,7 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\",dst_service_name!~\".*health.*\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",dst_service_name!~\".*health.*\"}[1m])) * 100",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\",target_port=\"3000\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",target_port=\"3000\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) * 100",
               "legendFormat": "mTLS % (App Traffic Only)",
               "refId": "A"
             }
@@ -312,7 +312,7 @@ data:
           "type": "piechart",
           "targets": [
             {
-              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) by (tls)",
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",target_port=\"3000\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) by (tls)",
               "legendFormat": "{{tls}}",
               "refId": "A"
             }
