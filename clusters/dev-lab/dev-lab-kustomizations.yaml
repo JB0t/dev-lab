@@ -65,7 +65,7 @@ spec:
     - name: dev-lab-base
 
 ---
-# Certificate management - cert-manager + Linkerd certificates
+# Certificate management - cert-manager installation only
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -93,6 +93,32 @@ spec:
       kind: Deployment
       name: linkerd-cert-manager-webhook
       namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager-cainjector
+      namespace: linkerd
+
+---
+# Linkerd certificates (depends on cert-manager being ready)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-linkerd-certs
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 10m0s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/linkerd-certificates"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-cert-manager
+  healthChecks:
     - apiVersion: cert-manager.io/v1
       kind: Certificate
       name: linkerd-identity-issuer
@@ -117,7 +143,7 @@ spec:
   wait: true
   timeout: 10m0s
   dependsOn:
-    - name: dev-lab-cert-manager
+    - name: dev-lab-linkerd-certs
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment

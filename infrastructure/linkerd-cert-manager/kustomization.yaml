@@ -9,15 +9,9 @@ resources:
   - namespaces.yaml
   - repositories.yaml
   - linkerd-cert-manager.yaml
-  - linkerd-certs.yaml
 
-secretGenerator:
-  - name: linkerd-trust-anchor
-    namespace: linkerd
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=ca.crt
-      - tls.key=ca.key
+# Note: Certificates moved to separate linkerd-certificates component
+# to avoid CRD chicken-and-egg problem
 
 configurations:
   - kustomizeconfig.yaml
