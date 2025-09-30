@@ -12,6 +12,7 @@ resources:
   - linkerd-crds.yaml
   - linkerd-control-plane.yaml
   - linkerd-viz.yaml
+  - linkerd-certs.yaml
 
 secretGenerator:
   - name: linkerd-trust-anchor
