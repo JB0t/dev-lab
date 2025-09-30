@@ -275,6 +275,79 @@ data:
             }
           },
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22}
+        },
+        {
+          "id": 11,
+          "title": "mTLS Security Status",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) * 100",
+              "legendFormat": "mTLS %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {"color": "red", "value": 0},
+                  {"color": "yellow", "value": 50},
+                  {"color": "green", "value": 90}
+                ]
+              },
+              "unit": "percent",
+              "min": 0,
+              "max": 100
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 30}
+        },
+        {
+          "id": 12,
+          "title": "TLS Connection Breakdown",
+          "type": "piechart",
+          "targets": [
+            {
+              "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) by (tls)",
+              "legendFormat": "{{tls}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {"options": {"true": {"text": "mTLS Secured"}}, "type": "value"},
+                {"options": {"no_identity": {"text": "No Identity"}}, "type": "value"},
+                {"options": {"false": {"text": "Plain HTTP"}}, "type": "value"}
+              ]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 30}
+        },
+        {
+          "id": 13,
+          "title": "Identity Certificate Status",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "control_identity_cert_expiration_timestamp_seconds - time()",
+              "legendFormat": "Cert TTL (seconds)",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "s"
+            }
+          },
+          "gridPos": {"h": 4, "w": 12, "x": 12, "y": 30}
         }
       ],
       "time": {

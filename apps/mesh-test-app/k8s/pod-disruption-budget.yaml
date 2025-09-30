@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mesh-test-app-pdb
+  namespace: mesh-test
+spec:
+  minAvailable: 2  # Keep at least 2 pods running during disruptions
+  selector:
+    matchLabels:
+      app: mesh-test-app-primary  # Protects the primary deployment
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mesh-test-app-canary-pdb
+  namespace: mesh-test
+spec:
+  minAvailable: 1  # Keep at least 1 canary pod during testing
+  selector:
+    matchLabels:
+      app: mesh-test-app  # Protects the canary deployment
