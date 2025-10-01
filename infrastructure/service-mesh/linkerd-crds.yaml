@@ -5,7 +5,7 @@ metadata:
   name: linkerd-crds
   namespace: linkerd
 spec:
-  interval: 30m
+  interval: 1m
   targetNamespace: linkerd
   releaseName: linkerd-crds
   chart:

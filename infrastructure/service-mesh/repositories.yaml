@@ -5,5 +5,5 @@ metadata:
   name: linkerd
   namespace: linkerd
 spec:
-  interval: 1h
+  interval: 5m
   url: https://helm.linkerd.io/stable

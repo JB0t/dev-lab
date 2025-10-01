@@ -5,7 +5,7 @@ metadata:
   name: linkerd-control-plane
   namespace: linkerd
 spec:
-  interval: 30m
+  interval: 1m
   targetNamespace: linkerd
   dependsOn:
     - name: linkerd-crds
