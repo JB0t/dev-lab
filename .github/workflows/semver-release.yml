@@ -159,33 +159,40 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.bump_type.outputs.bump_type != 'none'
-        uses: actions/create-release@v1
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          BUMP_TYPE="${{ steps.bump_type.outputs.bump_type }}"
+          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          ## Release $NEW_VERSION
+          
+          **Bump Type:** $BUMP_TYPE
+          **Previous Version:** $LATEST_TAG
+          
+          ### Changes
+          This release includes all commits since $LATEST_TAG.
+          
+          ### Dev Lab Components
+          - 🔄 GitOps-based Linkerd service mesh
+          - 📊 Prometheus monitoring stack  
+          - 🚀 Flagger progressive delivery
+          - 📦 Container registry
+          - 🌐 Ingress networking
+          - 🧪 Sample mesh applications
+          
+          ---
+          *Auto-generated release from semantic versioning workflow*
+          EOF
+          
+          # Create GitHub release using gh CLI
+          gh release create "$NEW_VERSION" \
+            --title "Release $NEW_VERSION" \
+            --notes-file release_notes.md \
+            --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.new_version.outputs.new_version }}
-          release_name: Release ${{ steps.new_version.outputs.new_version }}
-          body: |
-            ## Release ${{ steps.new_version.outputs.new_version }}
-            
-            **Bump Type:** ${{ steps.bump_type.outputs.bump_type }}
-            **Previous Version:** ${{ steps.get_tag.outputs.latest_tag }}
-            
-            ### Changes
-            This release includes all commits since ${{ steps.get_tag.outputs.latest_tag }}.
-            
-            ### Dev Lab Components
-            - 🔄 GitOps-based Linkerd service mesh
-            - 📊 Prometheus monitoring stack  
-            - 🚀 Flagger progressive delivery
-            - 📦 Container registry
-            - 🌐 Ingress networking
-            - 🧪 Sample mesh applications
-            
-            ---
-            *Auto-generated release from semantic versioning workflow*
-          draft: false
-          prerelease: false
 
   version-info:
     runs-on: ubuntu-latest
