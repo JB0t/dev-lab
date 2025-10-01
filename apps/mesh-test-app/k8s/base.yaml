@@ -45,7 +45,7 @@ spec:
           name: http
         env:
         - name: APP_VERSION
-          value: "v6"  # ← Update version to trigger canary
+          value: "v7"  # ← Update version to trigger canary
         - name: REDIS_URL
           value: "redis://redis-service:6379"
         resources:
