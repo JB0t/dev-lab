@@ -1,6 +1,6 @@
 # Local Kubernetes Development Lab
 
-![Version](https://img.shields.io/badge/Version-v0.1.0-blue)
+![Version](https://img.shields.io/badge/Version-v0.5.1-blue)
 
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
