@@ -42,15 +42,7 @@ The implementation follows a layered approach with proper dependency management:
 ### cert-manager Integration
 
 - **Issuer**: Creates CA issuer from the trust anchor secret
-- **Certificate**: Generates identity issuer certificate for Linkerd
-
-## Key Features
-
-✅ **Fully Declarative**: No CLI tools required after initial certificate generation  
-✅ **Proper Dependencies**: cert-manager → Linkerd CRDs → Control Plane → Viz  
-✅ **Certificate Automation**: cert-manager handles identity issuer lifecycle  
-✅ **GitOps Native**: All configuration stored in Git with Flux reconciliation  
-✅ **Dev Optimized**: Resource-constrained settings for local development  
+- **Certificate**: Generates identity issuer certificate for Linkerd 
 
 ## Deployment Flow
 
