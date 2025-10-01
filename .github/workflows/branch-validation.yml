@@ -4,6 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   validate-branch:
     runs-on: ubuntu-latest
@@ -68,6 +73,8 @@ jobs:
         if: success()
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          retries: 3
           script: |
             const branch = '${{ github.head_ref }}';
             const target = '${{ github.base_ref }}';
@@ -99,9 +106,60 @@ jobs:
             
             ${versionImpact !== 'No version bump' ? '⚠️ **Note:** Version will be automatically tagged when this PR is merged.' : ''}`;
             
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+            try {
+              const result = await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              
+              console.log('✅ PR comment created successfully');
+              console.log('Comment URL:', result.data.html_url);
+              
+            } catch (error) {
+              console.error('❌ Failed to create PR comment:', error.message);
+              console.error('Error details:', error);
+              
+              // Set as warning instead of failure since branch validation already passed
+              core.warning(`Could not create PR comment: ${error.message}`);
+            }
+
+      - name: Fallback comment via GitHub CLI
+        if: failure()
+        run: |
+          echo "Attempting to create comment via GitHub CLI as fallback..."
+          
+          BRANCH_NAME="${{ github.head_ref }}"
+          TARGET_BRANCH="${{ github.base_ref }}"
+          
+          # Determine version impact
+          VERSION_IMPACT="No version bump"
+          EMOJI="📝"
+          
+          if [[ "$BRANCH_NAME" =~ ^feature/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+            VERSION_IMPACT="MINOR version bump"
+            EMOJI="🚀"
+          elif [[ "$BRANCH_NAME" =~ ^patch/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+            VERSION_IMPACT="PATCH version bump"
+            EMOJI="🔧"
+          elif [[ "$BRANCH_NAME" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
+            VERSION_IMPACT="MAJOR version bump"
+            EMOJI="🎉"
+          fi
+          
+          # Create comment via gh CLI
+          gh pr comment ${{ github.event.number }} --body "## ${EMOJI} Semantic Versioning Impact
+
+          **Branch:** \`${BRANCH_NAME}\` → \`${TARGET_BRANCH}\`
+          **Version Impact:** ${VERSION_IMPACT}
+          
+          ### Versioning Rules
+          - \`feature/*\` → \`dev\` = Minor version bump
+          - \`patch/*\` → \`dev\` = Patch version bump  
+          - \`dev\` → \`main\` = Major version bump
+          - Other branches = No version bump
+          
+          ⚠️ **Note:** Created via fallback method due to API authentication issue."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
