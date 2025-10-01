@@ -9,7 +9,7 @@ metadata:
 spec:
   interval: 1m0s
   ref:
-    branch: main
+    branch: dev
   url: ssh://git@github.com/jbotstevens/dev-lab.git
   secretRef:
     name: flux-system-auth
