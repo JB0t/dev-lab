@@ -45,6 +45,79 @@ section() {
     echo ""
 }
 
+# Check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Install Linkerd CLI if needed
+install_linkerd_cli() {
+    if ! command_exists linkerd; then
+        log "Installing Linkerd CLI..."
+        curl -sL https://run.linkerd.io/install | sh
+        export PATH=$PATH:$HOME/.linkerd2/bin
+        
+        if ! command_exists linkerd; then
+            error "Failed to install Linkerd CLI"
+            exit 1
+        fi
+        success "Linkerd CLI installed"
+    fi
+}
+
+# Setup Linkerd service mesh
+setup_linkerd() {
+    section "Setting up Linkerd Service Mesh"
+    
+    install_linkerd_cli
+    
+    log "Installing Gateway API CRDs (required for Linkerd)..."
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+    
+    log "Waiting for Gateway API CRDs to be ready..."
+    kubectl wait --for condition=established --timeout=60s crd/gateways.gateway.networking.k8s.io
+    kubectl wait --for condition=established --timeout=60s crd/httproutes.gateway.networking.k8s.io
+    
+    success "Gateway API CRDs installed successfully"
+    
+    log "Checking Linkerd pre-flight..."
+    if ! linkerd check --pre; then
+        error "Linkerd pre-flight checks failed"
+        exit 1
+    fi
+    
+    log "Installing Linkerd CRDs..."
+    linkerd install --crds | kubectl apply -f -
+    
+    log "Installing Linkerd control plane..."
+    linkerd install | kubectl apply -f -
+    
+    log "Waiting for Linkerd to be ready..."
+    # Wait for deployments to be available
+    kubectl wait --for=condition=available deployment -n linkerd --all --timeout=300s
+    
+    # Run Linkerd health checks
+    if ! linkerd check; then
+        error "Linkerd health checks failed"
+        exit 1
+    fi
+    
+    success "Linkerd control plane installed successfully"
+    
+    log "Installing Linkerd Viz extension..."
+    linkerd viz install | kubectl apply -f -
+    
+    log "Waiting for Linkerd Viz to be ready..."
+    kubectl wait --for=condition=available deployment -n linkerd-viz --all --timeout=300s
+    
+    if ! linkerd viz check; then
+        error "Linkerd Viz health checks failed"
+        exit 1
+    fi
+    
+    success "Linkerd Viz installed successfully"
+}
+
 # Check if bootstrap was completed
 check_bootstrap() {
     section "Checking Bootstrap Prerequisites"
@@ -59,15 +132,8 @@ check_bootstrap() {
     fi
     success "KinD cluster is accessible"
     
-    # Check if Linkerd is installed
-    if ! kubectl get ns linkerd >/dev/null 2>&1; then
-        error "Linkerd not found"
-        echo ""
-        echo "Please run bootstrap first:"
-        echo "  ./scripts/bootstrap.sh"
-        exit 1
-    fi
-    success "Linkerd is installed"
+    # Linkerd will be installed by this script
+    info "Linkerd will be installed by traditional deployment"
     
     # Check if registry is running
     if ! kubectl get pods -n dev-lab-registry -l app=docker-registry --field-selector=status.phase=Running >/dev/null 2>&1; then
@@ -177,9 +243,13 @@ main() {
         "deploy"|"")
             log "Starting traditional deployment..."
             check_bootstrap
+            setup_linkerd
             install_nginx_ingress
             deploy_monitoring
             show_access_info
+            ;;
+        "linkerd")
+            setup_linkerd
             ;;
         "ingress")
             install_nginx_ingress
@@ -194,12 +264,14 @@ main() {
             echo "Dev Lab Traditional Deployment Script"
             echo ""
             echo "This script deploys infrastructure using direct kubectl/helm commands."
-            echo "It requires bootstrap.sh to have been run first."
+            echo "It includes Linkerd service mesh installation via CLI."
+            echo "It requires bootstrap.sh to have been run first (without Linkerd)."
             echo ""
             echo "Usage: $0 [COMMAND]"
             echo ""
             echo "Commands:"
             echo "  deploy     Complete traditional deployment (default)"
+            echo "  linkerd    Install Linkerd service mesh only"
             echo "  ingress    Install NGINX ingress only"
             echo "  monitoring Deploy monitoring stack only"
             echo "  info       Show access information"

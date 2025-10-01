@@ -1,30 +1,235 @@
 ---
+# Base infrastructure - core services, namespaces, metrics-server
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: dev-lab-infrastructure
+  name: dev-lab-base
   namespace: flux-system
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 10m0s
+  interval: 30s
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
-  path: "./infrastructure"
+  path: "./infrastructure/base"
   prune: true
   wait: true
   timeout: 5m0s
+
+---
+# Prometheus monitoring stack with CRDs
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-prometheus
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/prometheus-stack"
+  prune: true
+  wait: true
+  timeout: 10m0s
+  dependsOn:
+    - name: dev-lab-base
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: kube-prometheus-stack-operator
+      namespace: monitoring
+
+---
+# Container registry (independent)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-registry
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/container-registry"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-base
+
+---
+# Certificate management - cert-manager installation only
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-cert-manager
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/linkerd-cert-manager"
+  prune: true
+  wait: true
+  timeout: 10m0s
+  dependsOn:
+    - name: dev-lab-base
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager-webhook
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-cert-manager-cainjector
+      namespace: linkerd
+
+---
+# Linkerd certificates (depends on cert-manager being ready)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-linkerd-certs
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/linkerd-certificates"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-cert-manager
+  healthChecks:
+    - apiVersion: cert-manager.io/v1
+      kind: Certificate
+      name: linkerd-identity-issuer
+      namespace: linkerd
+
+---
+# Service mesh - Linkerd only (depends on cert-manager)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-service-mesh
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/service-mesh"
+  prune: true
+  wait: true
+  timeout: 10m0s
+  dependsOn:
+    - name: dev-lab-linkerd-certs
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-destination
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-proxy-injector
+      namespace: linkerd
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: linkerd-identity
+      namespace: linkerd
+
+---
+# Networking - ingress controller (gets injected with Linkerd proxy)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-networking
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/networking"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-service-mesh
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
       name: ingress-nginx-controller
       namespace: ingress-nginx
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: kube-prometheus-stack-operator
-      namespace: monitoring
+
 ---
+# Flagger - progressive delivery (needs Linkerd + Prometheus)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-flagger
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/flagger"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-service-mesh
+    - name: dev-lab-prometheus
+
+---
+# Monitoring extras - ServiceMonitors, PodMonitors (needs Prometheus CRDs + Linkerd)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-monitoring
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  path: "./infrastructure/monitoring"
+  prune: true
+  wait: true
+  timeout: 5m0s
+  dependsOn:
+    - name: dev-lab-prometheus
+    - name: dev-lab-service-mesh
+
+---
+# Applications (depends on everything being ready)
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -33,7 +238,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 10m0s
+  interval: 30s
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -42,4 +247,9 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-infrastructure
+    - name: dev-lab-service-mesh
+    - name: dev-lab-networking
+    - name: dev-lab-prometheus
+    - name: dev-lab-monitoring
+    - name: dev-lab-registry
+    - name: dev-lab-flagger
