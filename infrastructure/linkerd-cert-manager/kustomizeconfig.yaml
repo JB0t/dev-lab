@@ -1,0 +1,10 @@
+nameReference:
+- kind: Secret
+  version: v1
+  fieldSpecs:
+  - path: spec/valuesFrom/name
+    kind: HelmRelease
+    group: helm.toolkit.fluxcd.io
+  - path: spec/ca/secretName
+    kind: Issuer
+    group: cert-manager.io

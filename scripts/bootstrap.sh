@@ -2,7 +2,7 @@
 
 # Dev Lab Bootstrap Script
 # Common initialization steps required for both script-based and GitOps deployments
-# This script handles: cluster creation, Linkerd, registry, and basic setup
+# This script handles: cluster creation, registry, and basic setup
 
 set -euo pipefail
 
@@ -77,13 +77,6 @@ check_prerequisites() {
         missing_tools+=("docker-running")
     fi
     
-    # Check Linkerd CLI
-    if command_exists linkerd; then
-        success "Linkerd CLI is installed"
-    else
-        warn "Linkerd CLI not found, will install it automatically"
-    fi
-    
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
         error "Missing required tools: ${missing_tools[*]}"
         info "Please run: $SCRIPT_DIR/install-prerequisites.sh"
@@ -91,21 +84,6 @@ check_prerequisites() {
     fi
     
     success "All prerequisites met"
-}
-
-# Install Linkerd CLI if needed
-install_linkerd_cli() {
-    if ! command_exists linkerd; then
-        log "Installing Linkerd CLI..."
-        curl -sL https://run.linkerd.io/install | sh
-        export PATH=$PATH:$HOME/.linkerd2/bin
-        
-        if ! command_exists linkerd; then
-            error "Failed to install Linkerd CLI"
-            exit 1
-        fi
-        success "Linkerd CLI installed"
-    fi
 }
 
 # Create KinD cluster with proper configuration
@@ -157,59 +135,6 @@ create_cluster() {
     # Display cluster info
     info "Cluster nodes:"
     kubectl get nodes -o wide
-}
-
-# Setup Linkerd service mesh
-setup_linkerd() {
-    section "Setting up Linkerd Service Mesh"
-    
-    install_linkerd_cli
-    
-    log "Installing Gateway API CRDs (required for Linkerd)..."
-    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
-    
-    log "Waiting for Gateway API CRDs to be ready..."
-    kubectl wait --for condition=established --timeout=60s crd/gateways.gateway.networking.k8s.io
-    kubectl wait --for condition=established --timeout=60s crd/httproutes.gateway.networking.k8s.io
-    
-    success "Gateway API CRDs installed successfully"
-    
-    log "Checking Linkerd pre-flight..."
-    if ! linkerd check --pre; then
-        error "Linkerd pre-flight checks failed"
-        exit 1
-    fi
-    
-    log "Installing Linkerd CRDs..."
-    linkerd install --crds | kubectl apply -f -
-    
-    log "Installing Linkerd control plane..."
-    linkerd install | kubectl apply -f -
-    
-    log "Waiting for Linkerd to be ready..."
-    # Wait for deployments to be available
-    kubectl wait --for=condition=available deployment -n linkerd --all --timeout=300s
-    
-    # Run Linkerd health checks
-    if ! linkerd check; then
-        error "Linkerd health checks failed"
-        exit 1
-    fi
-    
-    success "Linkerd control plane installed successfully"
-    
-    log "Installing Linkerd Viz extension..."
-    linkerd viz install | kubectl apply -f -
-    
-    log "Waiting for Linkerd Viz to be ready..."
-    kubectl wait --for=condition=available deployment -n linkerd-viz --all --timeout=300s
-    
-    if ! linkerd viz check; then
-        error "Linkerd Viz health checks failed"
-        exit 1
-    fi
-    
-    success "Linkerd Viz installed successfully"
 }
 
 # Setup local registry
@@ -279,8 +204,6 @@ show_bootstrap_info() {
     echo ""
     echo " **Core Infrastructure Ready:**"
     echo "  • KinD cluster with proper node labels"
-    echo "  • Gateway API CRDs installed"
-    echo "  • Linkerd service mesh (control plane + viz)"
     echo "  • Local container registry at http://localhost:5000"
     echo "  • Metrics server for autoscaling"
     echo ""
@@ -288,6 +211,7 @@ show_bootstrap_info() {
     echo ""
     echo " **Script-based deployment (traditional):**"
     echo "  ./scripts/deploy-traditional.sh"
+    echo "  • Installs Linkerd service mesh via CLI"
     echo "  • Installs monitoring via Helm commands"
     echo "  • Installs NGINX ingress via kubectl"
     echo "  • Manual app deployment"
@@ -296,11 +220,10 @@ show_bootstrap_info() {
     echo "  ./scripts/deploy-gitops.sh"
     echo "  • Installs Flux controllers"
     echo "  • Sets up SSH deploy key"
-    echo "  • Automatic infrastructure + app deployment via Git"
+    echo "  • Automatic Linkerd + infrastructure + app deployment via Git"
     echo ""
     echo " **Verification Commands:**"
     echo "  kubectl get nodes                     # Check cluster"
-    echo "  linkerd check                        # Check service mesh"
     echo "  curl http://localhost:5000/v2/       # Check registry"
     echo "  kubectl top nodes                    # Check metrics server"
     echo ""
@@ -318,16 +241,12 @@ main() {
             log "Starting Dev Lab bootstrap process..."
             check_prerequisites
             create_cluster
-            setup_linkerd
             setup_registry
             setup_metrics_server
             show_bootstrap_info
             ;;
         "cluster")
             create_cluster
-            ;;
-        "linkerd")
-            setup_linkerd
             ;;
         "registry")
             setup_registry
@@ -340,7 +259,6 @@ main() {
             echo ""
             echo "This script handles common initialization for both deployment methods:"
             echo "  • KinD cluster creation with proper configuration"
-            echo "  • Linkerd service mesh installation"
             echo "  • Local container registry setup"
             echo "  • Metrics server installation"
             echo ""
@@ -349,14 +267,13 @@ main() {
             echo "Commands:"
             echo "  bootstrap  Complete bootstrap process (default)"
             echo "  cluster    Create KinD cluster only"
-            echo "  linkerd    Setup Linkerd service mesh only"
             echo "  registry   Setup local registry only"
             echo "  metrics    Setup metrics server only"
             echo "  help       Show this help"
             echo ""
             echo "After bootstrap, choose your deployment method:"
-            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment"
-            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment"
+            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment (includes Linkerd)"
+            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment (Linkerd via Flux)"
             echo ""
             ;;
         *)

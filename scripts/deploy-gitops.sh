@@ -61,15 +61,8 @@ check_bootstrap() {
     fi
     success "KinD cluster is accessible"
     
-    # Check if Linkerd is installed
-    if ! kubectl get ns linkerd >/dev/null 2>&1; then
-        error "Linkerd not found"
-        echo ""
-        echo "Please run bootstrap first:"
-        echo "  ./scripts/bootstrap.sh"
-        exit 1
-    fi
-    success "Linkerd is installed"
+    # Check if Linkerd is installed (it should be installed via GitOps now)
+    info "Linkerd will be installed automatically via GitOps"
     
     # Check if registry is running
     if ! kubectl get pods -n dev-lab-registry -l app=docker-registry --field-selector=status.phase=Running >/dev/null 2>&1; then
@@ -217,27 +210,41 @@ apply_git_kustomizations() {
 wait_for_deployment() {
     section "Waiting for GitOps Deployment"
     
-    log "Monitoring infrastructure deployment..."
+    log "Monitoring component deployment..."
     echo ""
-    info "This may take several minutes as Flux deploys:"
-    echo "  • NGINX Ingress Controller"
-    echo "  • Prometheus Monitoring Stack"
-    echo "  • Container Registry UI"
+    info "This may take several minutes as Flux deploys components in order:"
+    echo "  • Base infrastructure (namespaces, metrics-server)"
+    echo "  • Prometheus stack + Container registry + Certificate management"
+    echo "  • Linkerd certificates + Service mesh + Networking + Monitoring + Flagger"
     echo "  • Sample Applications"
     echo ""
     
-    # Monitor infrastructure kustomization
+    # Component kustomizations to monitor
+    local components=("dev-lab-base" "dev-lab-prometheus" "dev-lab-registry" "dev-lab-cert-manager" "dev-lab-linkerd-certs" "dev-lab-service-mesh" "dev-lab-networking" "dev-lab-monitoring" "dev-lab-flagger" "dev-lab-apps")
+    
     local timeout=900  # 15 minutes
     local elapsed=0
     local interval=10
     
     while [[ $elapsed -lt $timeout ]]; do
-        local infra_ready=$(kubectl get kustomization dev-lab-infrastructure -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
-        local apps_ready=$(kubectl get kustomization dev-lab-apps -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+        local ready_count=0
+        local status_line=""
         
-        echo -ne "\r${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Infrastructure: ${infra_ready}, Apps: ${apps_ready} (${elapsed}s elapsed)\n"
+        for component in "${components[@]}"; do
+            local ready=$(kubectl get kustomization "$component" -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "N/A")
+            if [[ "$ready" == "True" ]]; then
+                ((ready_count++))
+                status_line+="✅ $component "
+            elif [[ "$ready" == "False" ]]; then
+                status_line+="❌ $component "
+            else
+                status_line+="🔄 $component "
+            fi
+        done
         
-        if [[ "$infra_ready" == "True" && "$apps_ready" == "True" ]]; then
+        echo -ne "\r${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} Ready: ${ready_count}/${#components[@]} - ${status_line} (${elapsed}s)\n"
+        
+        if [[ $ready_count -eq ${#components[@]} ]]; then
             echo ""
             success "GitOps deployment completed successfully!"
             return 0
@@ -249,7 +256,7 @@ wait_for_deployment() {
     
     echo ""
     warn "Deployment is taking longer than expected, but may still be in progress"
-    warn "Use 'flux get kustomizations -A' to monitor status"
+    warn "Use 'kubectl get kustomizations -n flux-system' to monitor individual component status"
 }
 
 # Show GitOps status and access info
@@ -266,14 +273,16 @@ show_gitops_info() {
     echo "  • Prometheus:     kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090"
     echo "  • Grafana:        kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80 (admin/admin123)"
     echo "  • AlertManager:   kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093"
-    echo "  • Linkerd Viz:    linkerd viz dashboard"
+    echo "  • Linkerd Viz:    kubectl port-forward -n linkerd-viz svc/web 8084:8084"
     echo "  • Registry UI:    kubectl port-forward -n dev-lab-registry svc/docker-registry-ui 5001:80"
     echo ""
     echo "🔧 **GitOps Monitoring Commands:**"
-    echo "  flux get all -A                      # Overview of all Flux resources"
-    echo "  flux logs --all-namespaces          # Controller logs"
-    echo "  watch flux get kustomizations -A    # Watch reconciliation"
-    echo "  kubectl get events -n flux-system   # System events"
+    echo "  kubectl get kustomizations -n flux-system     # All component status"
+    echo "  flux get all -A                              # Overview of all Flux resources"
+    echo "  flux logs --all-namespaces                   # Controller logs"
+    echo "  watch kubectl get kustomizations -n flux-system  # Watch component reconciliation"
+    echo "  kubectl get events -n flux-system            # System events"
+    echo "  kubectl get events -n linkerd                # Linkerd events"
     echo ""
     echo "🚀 **Sample Application (once apps are deployed):**"
     echo "  • Add to /etc/hosts: 127.0.0.1 sample-app.local"
