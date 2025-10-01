@@ -12,6 +12,14 @@ resources:
   
   # Flagger progressive delivery monitoring
   - flagger-servicemonitor.yaml
-  
-  # Grafana dashboards
-  - grafana-dashboard-configmap.yaml
+
+# Generate ConfigMaps from external files
+configMapGenerator:
+  - name: linkerd-canary-dashboard
+    namespace: monitoring
+    files:
+      - linkerd-canary-dashboard.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+        release: kube-prometheus-stack
