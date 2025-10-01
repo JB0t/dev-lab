@@ -9,7 +9,7 @@ metadata:
 spec:
   interval: 1m0s
   ref:
-    branch: dev
+    branch: feature/linkerd-trust-anchor-external-secrets-operator-integration
   url: ssh://git@github.com/jbotstevens/dev-lab.git
   secretRef:
     name: flux-system-auth

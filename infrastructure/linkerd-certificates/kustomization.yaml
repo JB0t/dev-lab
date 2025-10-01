@@ -8,13 +8,8 @@ metadata:
 resources:
   - linkerd-certs.yaml
 
-secretGenerator:
-  - name: linkerd-trust-anchor
-    namespace: linkerd
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=ca.crt
-      - tls.key=ca.key
+# Note: The linkerd-trust-anchor secret is now managed by external-secrets
+# via ExternalSecret resource defined in the external-secrets component
 
 configurations:
   - kustomizeconfig.yaml
