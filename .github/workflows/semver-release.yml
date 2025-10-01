@@ -1,10 +1,6 @@
 name: Semantic Version Release
 
 on:
-  push:
-    branches:
-      - main
-      - dev
   pull_request:
     types: [closed]
     branches:
@@ -19,9 +15,7 @@ jobs:
   version-bump:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'Merge pull request')) ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/dev' && !contains(github.event.head_commit.message, 'Merge pull request'))
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     
     steps:
       - name: Checkout repository
@@ -64,16 +58,11 @@ jobs:
             elif [[ "$SOURCE_BRANCH" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
               BUMP_TYPE="major"
               echo "Dev merged to main: MAJOR version bump"
+            else
+              echo "No version bump for: $SOURCE_BRANCH -> $TARGET_BRANCH"
             fi
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            # Direct push to main or dev
-            if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-              BUMP_TYPE="major"
-              echo "Direct push to main: MAJOR version bump"
-            elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
-              BUMP_TYPE="minor"
-              echo "Direct push to dev: MINOR version bump"
-            fi
+          else
+            echo "Skipping version bump for push events - only PR merges trigger version bumps"
           fi
           
           echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
@@ -196,7 +185,7 @@ jobs:
 
   version-info:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == false)
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == false
     
     steps:
       - name: Checkout repository
