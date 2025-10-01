@@ -34,7 +34,7 @@ spec:
     metadata:
       labels:
         app: mesh-test-app
-        version: v6
+        version: v1
     spec:
       containers:
       - name: mesh-test-app
