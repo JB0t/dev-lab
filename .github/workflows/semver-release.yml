@@ -19,9 +19,9 @@ jobs:
   version-bump:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'Merge pull request')) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev' && !contains(github.event.head_commit.message, 'Merge pull request'))
     
     steps:
       - name: Checkout repository
