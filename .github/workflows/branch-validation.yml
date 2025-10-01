@@ -1,0 +1,165 @@
+name: Branch Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate-branch:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Validate branch naming
+        run: |
+          BRANCH_NAME="${{ github.head_ref }}"
+          TARGET_BRANCH="${{ github.base_ref }}"
+          
+          echo "Validating branch: $BRANCH_NAME -> $TARGET_BRANCH"
+          
+          # Define valid patterns
+          VALID_BRANCH=false
+          REASON=""
+          
+          # Check branch naming conventions
+          if [[ "$BRANCH_NAME" =~ ^feature/.+ ]]; then
+            if [[ "$TARGET_BRANCH" == "dev" ]]; then
+              VALID_BRANCH=true
+              REASON="✅ Feature branch targeting dev (will trigger MINOR version bump)"
+            else
+              REASON="❌ Feature branches must target 'dev' branch"
+            fi
+          elif [[ "$BRANCH_NAME" =~ ^patch/.+ ]]; then
+            if [[ "$TARGET_BRANCH" == "dev" ]]; then
+              VALID_BRANCH=true
+              REASON="✅ Patch branch targeting dev (will trigger PATCH version bump)"
+            else
+              REASON="❌ Patch branches must target 'dev' branch"
+            fi
+          elif [[ "$BRANCH_NAME" == "dev" ]]; then
+            if [[ "$TARGET_BRANCH" == "main" ]]; then
+              VALID_BRANCH=true
+              REASON="✅ Dev branch targeting main (will trigger MAJOR version bump)"
+            else
+              REASON="❌ Dev branch must target 'main' branch"
+            fi
+          elif [[ "$BRANCH_NAME" =~ ^(hotfix|docs|ci)/.+ ]]; then
+            VALID_BRANCH=true
+            REASON="✅ Utility branch (no version bump)"
+          else
+            REASON="❌ Invalid branch name. Use: feature/, patch/, hotfix/, docs/, or ci/"
+          fi
+          
+          echo "Branch validation result: $REASON"
+          
+          if [[ "$VALID_BRANCH" != "true" ]]; then
+            echo "::error::$REASON"
+            echo ""
+            echo "Valid branch naming patterns:"
+            echo "  - feature/description  -> dev   (minor version bump)"
+            echo "  - patch/description    -> dev   (patch version bump)" 
+            echo "  - dev                  -> main  (major version bump)"
+            echo "  - hotfix/description   -> any   (no version bump)"
+            echo "  - docs/description     -> any   (no version bump)"
+            echo "  - ci/description       -> any   (no version bump)"
+            exit 1
+          fi
+
+      - name: Add PR comment with version info
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          retries: 3
+          script: |
+            const branch = '${{ github.head_ref }}';
+            const target = '${{ github.base_ref }}';
+            
+            let versionImpact = 'No version bump';
+            let emoji = '📝';
+            
+            if (branch.startsWith('feature/') && target === 'dev') {
+              versionImpact = 'MINOR version bump';
+              emoji = '🚀';
+            } else if (branch.startsWith('patch/') && target === 'dev') {
+              versionImpact = 'PATCH version bump';
+              emoji = '🔧';
+            } else if (branch === 'dev' && target === 'main') {
+              versionImpact = 'MAJOR version bump';
+              emoji = '🎉';
+            }
+            
+            const comment = `## ${emoji} Semantic Versioning Impact
+            
+            **Branch:** \`${branch}\` → \`${target}\`
+            **Version Impact:** ${versionImpact}
+            
+            ### Versioning Rules
+            - \`feature/*\` → \`dev\` = Minor version bump (e.g., v1.2.0 → v1.3.0)
+            - \`patch/*\` → \`dev\` = Patch version bump (e.g., v1.2.0 → v1.2.1)
+            - \`dev\` → \`main\` = Major version bump (e.g., v1.2.0 → v2.0.0)
+            - Other branches = No version bump
+            
+            ${versionImpact !== 'No version bump' ? '⚠️ **Note:** Version will be automatically tagged when this PR is merged.' : ''}`;
+            
+            try {
+              const result = await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              
+              console.log('✅ PR comment created successfully');
+              console.log('Comment URL:', result.data.html_url);
+              
+            } catch (error) {
+              console.error('❌ Failed to create PR comment:', error.message);
+              console.error('Error details:', error);
+              
+              // Set as warning instead of failure since branch validation already passed
+              core.warning(`Could not create PR comment: ${error.message}`);
+            }
+
+      - name: Fallback comment via GitHub CLI
+        if: failure()
+        run: |
+          echo "Attempting to create comment via GitHub CLI as fallback..."
+          
+          BRANCH_NAME="${{ github.head_ref }}"
+          TARGET_BRANCH="${{ github.base_ref }}"
+          
+          # Determine version impact
+          VERSION_IMPACT="No version bump"
+          EMOJI="📝"
+          
+          if [[ "$BRANCH_NAME" =~ ^feature/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+            VERSION_IMPACT="MINOR version bump"
+            EMOJI="🚀"
+          elif [[ "$BRANCH_NAME" =~ ^patch/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+            VERSION_IMPACT="PATCH version bump"
+            EMOJI="🔧"
+          elif [[ "$BRANCH_NAME" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
+            VERSION_IMPACT="MAJOR version bump"
+            EMOJI="🎉"
+          fi
+          
+          # Create comment via gh CLI
+          gh pr comment ${{ github.event.number }} --body "## ${EMOJI} Semantic Versioning Impact
+
+          **Branch:** \`${BRANCH_NAME}\` → \`${TARGET_BRANCH}\`
+          **Version Impact:** ${VERSION_IMPACT}
+          
+          ### Versioning Rules
+          - \`feature/*\` → \`dev\` = Minor version bump
+          - \`patch/*\` → \`dev\` = Patch version bump  
+          - \`dev\` → \`main\` = Major version bump
+          - Other branches = No version bump
+          
+          ⚠️ **Note:** Created via fallback method due to API authentication issue."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

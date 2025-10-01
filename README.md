@@ -1,5 +1,7 @@
 # Local Kubernetes Development Lab
 
+![Version](https://img.shields.io/badge/Version-v0.1.0-blue)
+
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
 > **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
@@ -185,6 +187,7 @@ The dev-lab includes a comprehensive service mesh testing environment with Linke
 - **Production-Ready Test App**: Node.js application with health checks, metrics, and Redis backend
 
 ### Canary Deployment Methods
+
 `<!-- TODO: update canary tests (include flagger) -->`
 
 #### Method 1: Linkerd Native HTTPRoute (Recommended)
@@ -534,6 +537,22 @@ Edit `cluster/kind-config.yaml` to:
 - Adjust resource limits
 - Configure networking
 - Add extra mounts
+
+## Versioning
+
+This project uses **automated semantic versioning** based on branch naming conventions:
+
+- 🚀 `feature/*` → `dev` = Minor version bump
+- 🔧 `patch/*` → `dev` = Patch version bump  
+- 🎉 `dev` → `main` = Major version bump
+
+Check current version and rules:
+```bash
+./scripts/version-info.sh        # Show version info
+./scripts/version-info.sh rules  # Show versioning rules
+```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed workflow guidelines.
 
 ## Performance Tips
 

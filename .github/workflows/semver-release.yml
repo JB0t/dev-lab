@@ -1,0 +1,230 @@
+name: Semantic Version Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          # Get the latest tag, default to v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: $LATEST_TAG"
+
+      - name: Determine version bump type
+        id: bump_type
+        run: |
+          BUMP_TYPE="none"
+          
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # PR was merged - check source branch
+            SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
+            TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+            
+            echo "PR merged: $SOURCE_BRANCH -> $TARGET_BRANCH"
+            
+            if [[ "$SOURCE_BRANCH" == feature/* ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+              BUMP_TYPE="minor"
+              echo "Feature branch merged to dev: MINOR version bump"
+            elif [[ "$SOURCE_BRANCH" == patch/* ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+              BUMP_TYPE="patch"
+              echo "Patch branch merged to dev: PATCH version bump"
+            elif [[ "$SOURCE_BRANCH" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
+              BUMP_TYPE="major"
+              echo "Dev merged to main: MAJOR version bump"
+            fi
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Direct push to main or dev
+            if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+              BUMP_TYPE="major"
+              echo "Direct push to main: MAJOR version bump"
+            elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
+              BUMP_TYPE="minor"
+              echo "Direct push to dev: MINOR version bump"
+            fi
+          fi
+          
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "Determined bump type: $BUMP_TYPE"
+
+      - name: Calculate new version
+        id: new_version
+        if: steps.bump_type.outputs.bump_type != 'none'
+        run: |
+          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          BUMP_TYPE="${{ steps.bump_type.outputs.bump_type }}"
+          
+          # Remove 'v' prefix for calculation
+          VERSION=${LATEST_TAG#v}
+          
+          # Split version into components
+          IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
+          MAJOR=${VERSION_PARTS[0]:-0}
+          MINOR=${VERSION_PARTS[1]:-0}
+          PATCH=${VERSION_PARTS[2]:-0}
+          
+          # Bump version based on type
+          case $BUMP_TYPE in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Create version file
+        if: steps.bump_type.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          echo "Creating version file with $NEW_VERSION"
+          
+          # Create a VERSION file in the root
+          echo "$NEW_VERSION" > VERSION
+          
+          # Update any version references in key files
+          if [ -f "README.md" ]; then
+            sed -i "s/Version: v[0-9]\+\.[0-9]\+\.[0-9]\+/Version: $NEW_VERSION/g" README.md || true
+          fi
+
+      - name: Commit version changes
+        if: steps.bump_type.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          
+          # Add changes
+          git add VERSION
+          git add README.md || true
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore: bump version to $NEW_VERSION"
+            git push origin ${{ github.ref_name }}
+          fi
+
+      - name: Create Git tag
+        if: steps.bump_type.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          
+          # Create and push tag
+          git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
+          git push origin "$NEW_VERSION"
+          
+          echo "Created and pushed tag: $NEW_VERSION"
+
+      - name: Create GitHub Release
+        if: steps.bump_type.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          BUMP_TYPE="${{ steps.bump_type.outputs.bump_type }}"
+          LATEST_TAG="${{ steps.get_tag.outputs.latest_tag }}"
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          ## Release $NEW_VERSION
+          
+          **Bump Type:** $BUMP_TYPE
+          **Previous Version:** $LATEST_TAG
+          
+          ### Changes
+          This release includes all commits since $LATEST_TAG.
+          
+          ### Dev Lab Components
+          - 🔄 GitOps-based Linkerd service mesh
+          - 📊 Prometheus monitoring stack  
+          - 🚀 Flagger progressive delivery
+          - 📦 Container registry
+          - 🌐 Ingress networking
+          - 🧪 Sample mesh applications
+          
+          ---
+          *Auto-generated release from semantic versioning workflow*
+          EOF
+          
+          # Create GitHub release using gh CLI
+          gh release create "$NEW_VERSION" \
+            --title "Release $NEW_VERSION" \
+            --notes-file release_notes.md \
+            --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  version-info:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == false)
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show current version info
+        run: |
+          echo "### Version Information"
+          
+          # Get current version
+          CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Current Version: $CURRENT_VERSION"
+          
+          # Show what would happen based on branch
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            SOURCE_BRANCH="${{ github.head_ref }}"
+            TARGET_BRANCH="${{ github.base_ref }}"
+            echo "PR: $SOURCE_BRANCH -> $TARGET_BRANCH"
+            
+            if [[ "$SOURCE_BRANCH" == feature/* ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+              echo "Would trigger: MINOR version bump (feature -> dev)"
+            elif [[ "$SOURCE_BRANCH" == patch/* ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
+              echo "Would trigger: PATCH version bump (patch -> dev)"
+            elif [[ "$SOURCE_BRANCH" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
+              echo "Would trigger: MAJOR version bump (dev -> main)"
+            else
+              echo "Would trigger: No version bump"
+            fi
+          fi
