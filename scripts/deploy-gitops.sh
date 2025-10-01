@@ -64,15 +64,8 @@ check_bootstrap() {
     # Check if Linkerd is installed (it should be installed via GitOps now)
     info "Linkerd will be installed automatically via GitOps"
     
-    # Check if registry is running
-    if ! kubectl get pods -n dev-lab-registry -l app=docker-registry --field-selector=status.phase=Running >/dev/null 2>&1; then
-        error "Local registry not running"
-        echo ""
-        echo "Please run bootstrap first:"
-        echo "  ./scripts/bootstrap.sh"
-        exit 1
-    fi
-    success "Local registry is running"
+    # Registry will be installed automatically via GitOps
+    info "Registry will be installed automatically via GitOps"
     
     info "Bootstrap prerequisites verified"
 }
