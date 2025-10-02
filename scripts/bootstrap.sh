@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Capture start time
+BOOTSTRAP_START_TIME=$(date +%s)
+BOOTSTRAP_START_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+
 # Configuration
 CLUSTER_NAME="dev-lab"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -205,11 +209,30 @@ cleanup() {
 main() {
     case "${1:-bootstrap}" in
         "bootstrap"|"setup"|"")
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${PURPLE}🚀 Dev Lab Bootstrap Process Started${NC}"
+            echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
+            echo ""
+            
             log "Starting Dev Lab bootstrap process..."
             check_prerequisites
             create_cluster
             setup_metrics_server
             show_bootstrap_info
+            
+            # Calculate and display timing
+            BOOTSTRAP_END_TIME=$(date +%s)
+            BOOTSTRAP_DURATION=$((BOOTSTRAP_END_TIME - BOOTSTRAP_START_TIME))
+            BOOTSTRAP_END_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+            
+            echo ""
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${GREEN}✅ Dev Lab Bootstrap Process Completed${NC}"
+            echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
+            echo -e "${PURPLE}   End Time:   $BOOTSTRAP_END_FORMATTED${NC}"
+            echo -e "${CYAN}   Duration:   ${BOOTSTRAP_DURATION} seconds${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
             ;;
         "cluster")
             create_cluster

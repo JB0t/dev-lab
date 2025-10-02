@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# Capture start time
+GITOPS_START_TIME=$(date +%s)
+GITOPS_START_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 KEY_PATH="/tmp/flux-deploy-key"
@@ -298,6 +302,12 @@ cleanup() {
 main() {
     case "${1:-deploy}" in
         "deploy"|"")
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${PURPLE}🚀 GitOps Deployment Process Started${NC}"
+            echo -e "${PURPLE}   Start Time: $GITOPS_START_FORMATTED${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
+            echo ""
+            
             log "Starting GitOps deployment..."
             check_bootstrap
             install_flux_cli
@@ -309,6 +319,19 @@ main() {
             apply_git_kustomizations
             wait_for_deployment
             show_gitops_info
+            
+            # Calculate and display timing
+            GITOPS_END_TIME=$(date +%s)
+            GITOPS_DURATION=$((GITOPS_END_TIME - GITOPS_START_TIME))
+            GITOPS_END_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+            
+            echo ""
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${GREEN}✅ GitOps Deployment Process Completed${NC}"
+            echo -e "${PURPLE}   Start Time: $GITOPS_START_FORMATTED${NC}"
+            echo -e "${PURPLE}   End Time:   $GITOPS_END_FORMATTED${NC}"
+            echo -e "${CYAN}   Duration:   ${GITOPS_DURATION} seconds${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
             ;;
         "flux")
             install_flux_cli
