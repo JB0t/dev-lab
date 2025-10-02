@@ -42,7 +42,6 @@ flux reconcile source helm grafana -n monitoring 2>/dev/null || true
 
 # Force reconcile helm releases
 echo "  → Reconciling Helm releases..."
-flux reconcile helmrelease linkerd-cert-manager -n linkerd 2>/dev/null || true
 flux reconcile helmrelease linkerd-crds -n linkerd 2>/dev/null || true
 flux reconcile helmrelease linkerd-control-plane -n linkerd 2>/dev/null || true
 flux reconcile helmrelease linkerd-viz -n linkerd-viz 2>/dev/null || true

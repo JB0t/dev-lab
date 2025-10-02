@@ -13,6 +13,7 @@ GITOPS_START_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 KEY_PATH="/tmp/flux-deploy-key"
+SERVICE_MESH_KEY_PATH="/tmp/flux-service-mesh-layer-key"
 REPO_URL="ssh://git@github.com/jbotstevens/notes.git"
 
 # Colors for output
@@ -108,27 +109,42 @@ install_flux_controllers() {
     success "Flux controllers installed and ready"
 }
 
-# Generate SSH deploy key
+# Generate SSH deploy keys
 generate_deploy_key() {
-    section "Setting up SSH Deploy Key"
+    section "Setting up SSH Deploy Keys"
     
+    # Generate main repository deploy key
     if [[ -f "${KEY_PATH}" ]]; then
-        warn "Deploy key already exists. Removing old key..."
+        warn "Main deploy key already exists. Removing old key..."
         rm -f "${KEY_PATH}" "${KEY_PATH}.pub"
     fi
     
-    log "Generating new SSH key pair..."
+    log "Generating SSH key pair for main repository..."
     ssh-keygen -t ed25519 -f "${KEY_PATH}" -N "" -C "flux-dev-lab-$(date +%Y%m%d)"
     
     if [[ ! -f "${KEY_PATH}" ]]; then
-        error "Failed to generate SSH key"
+        error "Failed to generate main SSH key"
         exit 1
     fi
+    success "Main SSH key pair generated"
     
-    success "SSH key pair generated"
+    # Generate service mesh layer deploy key
+    if [[ -f "${SERVICE_MESH_KEY_PATH}" ]]; then
+        warn "Service mesh layer deploy key already exists. Removing old key..."
+        rm -f "${SERVICE_MESH_KEY_PATH}" "${SERVICE_MESH_KEY_PATH}.pub"
+    fi
+    
+    log "Generating SSH key pair for service mesh layer repository..."
+    ssh-keygen -t ed25519 -f "${SERVICE_MESH_KEY_PATH}" -N "" -C "flux-service-mesh-layer-$(date +%Y%m%d)"
+    
+    if [[ ! -f "${SERVICE_MESH_KEY_PATH}" ]]; then
+        error "Failed to generate service mesh layer SSH key"
+        exit 1
+    fi
+    success "Service mesh layer SSH key pair generated"
 }
 
-# Create Flux system secret
+# Create Flux system secrets
 create_flux_secret() {
     log "Creating flux-system secret with SSH deploy key..."
     
@@ -144,14 +160,30 @@ create_flux_secret() {
     
     # Label the secret
     kubectl label secret flux-system-auth -n flux-system app.kubernetes.io/part-of=flux
-    
     success "flux-system-auth secret created"
+    
+    log "Creating service mesh layer secret with SSH deploy key..."
+    
+    # Delete existing secret if it exists
+    kubectl delete secret flux-service-mesh-layer-auth -n flux-system --ignore-not-found=true
+    
+    # Create new secret with SSH key
+    kubectl create secret generic flux-service-mesh-layer-auth \
+        --from-file=identity="${SERVICE_MESH_KEY_PATH}" \
+        --from-file=identity.pub="${SERVICE_MESH_KEY_PATH}.pub" \
+        --from-literal=known_hosts="$(ssh-keyscan github.com)" \
+        -n flux-system
+    
+    # Label the secret
+    kubectl label secret flux-service-mesh-layer-auth -n flux-system app.kubernetes.io/part-of=flux
+    success "flux-service-mesh-layer-auth secret created"
 }
 
-# Display deploy key for GitHub setup
+# Display deploy keys for GitHub setup
 show_deploy_key() {
-    log "Add this public key as a deploy key to your GitHub repository:"
+    log "Add these public keys as deploy keys to your GitHub repositories:"
     echo ""
+    echo -e "${CYAN}=== MAIN REPOSITORY ===${NC}"
     echo -e "${CYAN}Repository:${NC} https://github.com/jbotstevens/dev-lab"
     echo -e "${CYAN}Settings → Deploy keys → Add deploy key${NC}"
     echo ""
@@ -160,33 +192,51 @@ show_deploy_key() {
     cat "${KEY_PATH}.pub"
     echo "----------------------------------------"
     echo ""
+    echo -e "${CYAN}=== SERVICE MESH LAYER REPOSITORY ===${NC}"
+    echo -e "${CYAN}Repository:${NC} https://github.com/example-org/flux-service-mesh-layer"
+    echo -e "${CYAN}Settings → Deploy keys → Add deploy key${NC}"
+    echo ""
+    echo -e "${YELLOW}Public Key:${NC}"
+    echo "----------------------------------------"
+    cat "${SERVICE_MESH_KEY_PATH}.pub"
+    echo "----------------------------------------"
+    echo ""
     warn "Make sure to:"
-    echo "  1. Give the key a descriptive title (e.g., 'flux-dev-lab-$(date +%Y%m%d)')"
-    echo "  2. Paste the public key above"
+    echo "  1. Give each key a descriptive title (e.g., 'flux-dev-lab-$(date +%Y%m%d)' and 'flux-service-mesh-layer-$(date +%Y%m%d)')"
+    echo "  2. Paste the respective public key above"
     echo "  3. Leave 'Allow write access' UNCHECKED (read-only)"
     echo "  4. Click 'Add key'"
     echo ""
-    echo -e "${BLUE}Press any key when you've added the deploy key to GitHub...${NC}"
+    echo -e "${BLUE}Press any key when you've added both deploy keys to GitHub...${NC}"
     read -n 1 -s
 }
 
-# Create GitRepository source
+# Create GitRepository sources
 create_git_source() {
-    section "Creating Git Source"
+    section "Creating Git Sources"
     
-    log "Creating GitRepository source from external config..."
+    log "Creating main GitRepository source from external config..."
     # Update the repository URL in the template
     sed "s|url: ssh://git@github.com/jbotstevens/notes.git|url: ${REPO_URL}|" \
         "$PROJECT_ROOT/config/gitops/git-repository.yaml" | kubectl apply -f -
 
+    log "Creating service mesh layer GitRepository source..."
+    kubectl apply -f "$PROJECT_ROOT/config/gitops/service-mesh-layer-repository.yaml"
+
     # Wait for GitRepository to sync
-    log "Waiting for GitRepository to sync..."
+    log "Waiting for GitRepositories to sync..."
     sleep 10
     
     if kubectl wait --for=condition=ready gitrepository dev-lab-repo -n flux-system --timeout=120s; then
-        success "GitRepository synced successfully"
+        success "Main GitRepository synced successfully"
     else
-        warn "GitRepository may not be ready yet. Continuing..."
+        warn "Main GitRepository may not be ready yet. Continuing..."
+    fi
+    
+    if kubectl wait --for=condition=ready gitrepository flux-service-mesh-layer -n flux-system --timeout=120s; then
+        success "Service mesh layer GitRepository synced successfully"
+    else
+        warn "Service mesh layer GitRepository may not be ready yet. Continuing..."
     fi
 }
 
@@ -211,13 +261,14 @@ wait_for_deployment() {
     echo ""
     info "This may take several minutes as Flux deploys components in order:"
     echo "  • Base infrastructure (namespaces, metrics-server)"
-    echo "  • Prometheus stack + Container registry + Certificate management"
-    echo "  • Linkerd certificates + Service mesh + Networking + Monitoring + Flagger"
+    echo "  • Prometheus stack + Container registry"
+    echo "  • Service mesh layer (cert-manager + certificates + Linkerd)"
+    echo "  • Networking + Monitoring + Flagger"
     echo "  • Sample Applications"
     echo ""
     
     # Component kustomizations to monitor
-    local components=("dev-lab-base" "dev-lab-prometheus" "dev-lab-registry" "dev-lab-cert-manager" "dev-lab-linkerd-certs" "dev-lab-service-mesh" "dev-lab-networking" "dev-lab-monitoring" "dev-lab-flagger" "dev-lab-apps")
+    local components=("dev-lab-base" "dev-lab-prometheus" "dev-lab-registry" "dev-lab-service-mesh-layer" "dev-lab-networking" "dev-lab-monitoring" "dev-lab-flagger" "dev-lab-apps")
     
     local timeout=900  # 15 minutes
     local elapsed=0
@@ -296,6 +347,7 @@ show_gitops_info() {
 cleanup() {
     log "Cleaning up temporary files..."
     rm -f "${KEY_PATH}" "${KEY_PATH}.pub"
+    rm -f "${SERVICE_MESH_KEY_PATH}" "${SERVICE_MESH_KEY_PATH}.pub"
 }
 
 # Main function
@@ -340,6 +392,7 @@ main() {
         "key")
             generate_deploy_key
             show_deploy_key
+            create_flux_secret
             ;;
         "sources")
             create_git_source

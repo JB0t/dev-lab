@@ -72,93 +72,27 @@ spec:
     - name: dev-lab-base
 
 ---
-# Certificate management - cert-manager installation only
+# Service Mesh Layer - Complete Linkerd Deployment with cert-manager and certificates
+# This replaces the individual cert-manager, linkerd-certs, and service-mesh kustomizations
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: dev-lab-cert-manager
+  name: dev-lab-service-mesh-layer
   namespace: flux-system
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 2m
-  retryInterval: 5m
-  sourceRef:
-    kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/linkerd-cert-manager"
-  prune: true
-  wait: true
-  timeout: 10m0s
-  dependsOn:
-    - name: dev-lab-base
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: linkerd-cert-manager
-      namespace: linkerd
-
----
-# Linkerd certificates (depends on cert-manager being ready)
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: dev-lab-linkerd-certs
-  namespace: flux-system
-  labels:
-    app.kubernetes.io/part-of: flux
-spec:
-  interval: 1m
+  interval: 5m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/linkerd-certificates"
+    name: flux-service-mesh-layer
+  path: "."
   prune: true
   wait: true
-  timeout: 5m0s
+  timeout: 15m0s
   dependsOn:
-    - name: dev-lab-cert-manager
-  healthChecks:
-    - apiVersion: cert-manager.io/v1
-      kind: Certificate
-      name: linkerd-trust-anchor-ca
-      namespace: linkerd
-    - apiVersion: cert-manager.io/v1
-      kind: Certificate
-      name: linkerd-identity-issuer
-      namespace: linkerd
-
----
-# Service mesh - Linkerd only (depends on cert-manager)
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: dev-lab-service-mesh
-  namespace: flux-system
-  labels:
-    app.kubernetes.io/part-of: flux
-spec:
-  interval: 168h  # 7 days - practically never reconciles on timer
-  retryInterval: 5m
-  sourceRef:
-    kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/service-mesh"
-  prune: true
-  wait: true
-  timeout: 10m0s
-  dependsOn:
-    - name: dev-lab-linkerd-certs
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: linkerd-destination
-      namespace: linkerd
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: linkerd-identity
-      namespace: linkerd
+    - name: dev-lab-base
 
 ---
 # Networking - ingress controller (gets injected with Linkerd proxy)
@@ -180,7 +114,7 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-service-mesh
+    - name: dev-lab-service-mesh-layer
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
@@ -211,7 +145,7 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-service-mesh
+    - name: dev-lab-service-mesh-layer
     - name: dev-lab-prometheus
   healthChecks:
     - apiVersion: apps/v1
@@ -243,7 +177,7 @@ spec:
   timeout: 5m0s
   dependsOn:
     - name: dev-lab-prometheus
-    - name: dev-lab-service-mesh
+    - name: dev-lab-service-mesh-layer
   healthChecks:
     - apiVersion: monitoring.coreos.com/v1
       kind: ServiceMonitor
@@ -274,7 +208,7 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-service-mesh
+    - name: dev-lab-service-mesh-layer
     - name: dev-lab-networking
     - name: dev-lab-prometheus
     - name: dev-lab-monitoring

@@ -11,11 +11,8 @@ metadata:
 resources:
   # Core services (metrics-server, namespaces, etc.) - deployed first
   - base/
-  
-  # Service mesh
-  - service-mesh/
-  
-  # Networking (ingress controller) - needs to be injected with Linkerd proxy
+
+  # Networking (ingress controller)
   - networking/
   
   # Container registry - needed for custom images

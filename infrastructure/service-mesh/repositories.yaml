@@ -1,9 +1,0 @@
----
-apiVersion: source.toolkit.fluxcd.io/v1beta2
-kind: HelmRepository
-metadata:
-  name: linkerd
-  namespace: linkerd
-spec:
-  interval: 168h  # 7 days - Linkerd charts change infrequently
-  url: https://helm.linkerd.io/stable

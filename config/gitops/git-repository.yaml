@@ -12,7 +12,7 @@ spec:
     branch: dev
   url: ssh://git@github.com/jbotstevens/dev-lab.git
   secretRef:
-    name: flux-system-auth
+    name: dev-lab-repo
   ignore: |
     # Ignore non-kubernetes files
     *.md
