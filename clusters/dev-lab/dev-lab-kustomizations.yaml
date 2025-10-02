@@ -86,13 +86,13 @@ spec:
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
-    name: flux-service-mesh-layer  # Reference to the service mesh layer repository
-  path: "."  # Root of the service mesh layer repository
+    name: flux-service-mesh-layer
+  path: "."
   prune: true
   wait: true
   timeout: 15m0s
   dependsOn:
-    - name: dev-lab-base  # Only depends on base infrastructure
+    - name: dev-lab-base
 
 ---
 # Networking - ingress controller (gets injected with Linkerd proxy)
