@@ -139,7 +139,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 2m
+  interval: 10m
   retryInterval: 5m
   sourceRef:
     kind: GitRepository
