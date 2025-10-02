@@ -3,4 +3,5 @@ node_modules/
 __pycache__/
 .kube/
 flux-deploy-key*
+service-mesh-deploy-key*
 devlab
