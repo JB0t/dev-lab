@@ -8,7 +8,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 5m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -28,7 +28,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 5m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -59,7 +59,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 5m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -81,7 +81,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 2m
   retryInterval: 1m
   sourceRef:
     kind: GitRepository
@@ -122,7 +122,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 10s
+  interval: 1m
   retryInterval: 30s
   sourceRef:
     kind: GitRepository
@@ -157,7 +157,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 2m
   retryInterval: 1m
   sourceRef:
     kind: GitRepository
@@ -195,7 +195,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 2m
   retryInterval: 1m
   sourceRef:
     kind: GitRepository
@@ -226,7 +226,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 3m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -257,7 +257,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 15s
+  interval: 3m
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -289,7 +289,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 10s
+  interval: 30s
   retryInterval: 1m
   sourceRef:
     kind: GitRepository
