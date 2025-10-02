@@ -65,66 +65,6 @@ spec:
     - name: dev-lab-base
 
 ---
-# External Secrets Operator - installs the operator and CRDs
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: dev-lab-external-secrets
-  namespace: flux-system
-  labels:
-    app.kubernetes.io/part-of: flux
-spec:
-  interval: 30s
-  sourceRef:
-    kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/external-secrets"
-  prune: true
-  wait: true
-  timeout: 10m0s
-  dependsOn:
-    - name: dev-lab-base
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: external-secrets
-      namespace: external-secrets
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: external-secrets-webhook
-      namespace: external-secrets
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: external-secrets-cert-controller
-      namespace: external-secrets
-
----
-# External Secrets Configuration - ClusterSecretStore and other configs
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: dev-lab-external-secrets-config
-  namespace: flux-system
-  labels:
-    app.kubernetes.io/part-of: flux
-spec:
-  interval: 30s
-  sourceRef:
-    kind: GitRepository
-    name: dev-lab-repo
-  path: "./infrastructure/external-secrets-config"
-  prune: true
-  wait: true
-  timeout: 5m0s
-  dependsOn:
-    - name: dev-lab-external-secrets
-  healthChecks:
-    - apiVersion: external-secrets.io/v1
-      kind: ClusterSecretStore
-      name: github-cluster-secret-store
-      namespace: external-secrets
-
----
 # Certificate management - cert-manager installation only
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -143,7 +83,7 @@ spec:
   wait: true
   timeout: 10m0s
   dependsOn:
-    - name: dev-lab-external-secrets-config
+    - name: dev-lab-base
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
@@ -177,8 +117,12 @@ spec:
   wait: true
   timeout: 5m0s
   dependsOn:
-    - name: dev-lab-external-secrets-config
+    - name: dev-lab-cert-manager
   healthChecks:
+    - apiVersion: cert-manager.io/v1
+      kind: Certificate
+      name: linkerd-trust-anchor
+      namespace: linkerd
     - apiVersion: cert-manager.io/v1
       kind: Certificate
       name: linkerd-identity-issuer
@@ -204,7 +148,6 @@ spec:
   timeout: 10m0s
   dependsOn:
     - name: dev-lab-linkerd-certs
-    - name: dev-lab-external-secrets-config
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
