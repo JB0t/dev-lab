@@ -93,8 +93,6 @@ spec:
   timeout: 15m0s
   dependsOn:
     - name: dev-lab-base  # Only depends on base infrastructure
-  # The service mesh layer manages its own internal dependencies
-  # No additional health checks needed here - handled by the layer itself
 
 ---
 # Networking - ingress controller (gets injected with Linkerd proxy)
