@@ -143,8 +143,9 @@ spec:
       name: linkerd-identity-issuer
       namespace: linkerd
     - apiVersion: cert-manager.io/v1
-      kind: ClusterIssuer
+      kind: Issuer
       name: selfsigned-issuer
+      namespace: linkerd
 
 ---
 # Service mesh - Linkerd only (depends on cert-manager)

@@ -1,9 +1,10 @@
 ---
-# Self-signed ClusterIssuer for generating the initial root CA
+# Self-signed Issuer for generating the initial root CA (namespace-scoped)
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: selfsigned-issuer
+  namespace: linkerd
 spec:
   selfSigned: {}
 
@@ -30,4 +31,4 @@ spec:
     - key encipherment
   issuerRef:
     name: selfsigned-issuer
-    kind: ClusterIssuer
+    kind: Issuer
