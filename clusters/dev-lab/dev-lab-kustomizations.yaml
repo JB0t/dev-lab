@@ -136,7 +136,7 @@ spec:
   healthChecks:
     - apiVersion: cert-manager.io/v1
       kind: Certificate
-      name: linkerd-trust-anchor
+      name: linkerd-trust-anchor-ca
       namespace: linkerd
     - apiVersion: cert-manager.io/v1
       kind: Certificate
@@ -144,7 +144,7 @@ spec:
       namespace: linkerd
     - apiVersion: cert-manager.io/v1
       kind: ClusterIssuer
-      name: linkerd-trust-anchor-selfsigned
+      name: selfsigned-issuer
 
 ---
 # Service mesh - Linkerd only (depends on cert-manager)
