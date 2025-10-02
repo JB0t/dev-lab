@@ -139,7 +139,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 10m
+  interval: 168h  # 7 days - practically never reconciles on timer
   retryInterval: 5m
   sourceRef:
     kind: GitRepository

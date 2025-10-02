@@ -5,5 +5,5 @@ metadata:
   name: linkerd
   namespace: linkerd
 spec:
-  interval: 24h
+  interval: 168h  # 7 days - Linkerd charts change infrequently
   url: https://helm.linkerd.io/stable
