@@ -3,6 +3,8 @@
 # Dev Lab Cycle Script - Full Bootstrap + GitOps Deployment with Timing
 # This script runs the complete cycle and provides detailed timing breakdown
 
+kind delete cluster --name dev-lab
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
