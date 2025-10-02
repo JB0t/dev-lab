@@ -82,7 +82,7 @@ metadata:
     app.kubernetes.io/part-of: flux
 spec:
   interval: 2m
-  retryInterval: 1m
+  retryInterval: 5m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -109,7 +109,7 @@ metadata:
     app.kubernetes.io/part-of: flux
 spec:
   interval: 1m
-  retryInterval: 30s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -140,7 +140,7 @@ metadata:
     app.kubernetes.io/part-of: flux
 spec:
   interval: 2m
-  retryInterval: 1m
+  retryInterval: 5m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
