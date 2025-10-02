@@ -8,7 +8,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -27,7 +28,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -42,6 +44,10 @@ spec:
       kind: Deployment
       name: kube-prometheus-stack-operator
       namespace: monitoring
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: prometheus-kube-prometheus-prometheus
+      namespace: monitoring
 
 ---
 # Container registry (independent)
@@ -53,7 +59,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -74,7 +81,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 1m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -97,6 +105,12 @@ spec:
       kind: Deployment
       name: linkerd-cert-manager-cainjector
       namespace: linkerd
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: certificates.cert-manager.io
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: issuers.cert-manager.io
 
 ---
 # Linkerd certificates (depends on cert-manager being ready)
@@ -108,7 +122,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 10s
+  retryInterval: 30s
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -127,6 +142,9 @@ spec:
       kind: Certificate
       name: linkerd-identity-issuer
       namespace: linkerd
+    - apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      name: linkerd-trust-anchor-selfsigned
 
 ---
 # Service mesh - Linkerd only (depends on cert-manager)
@@ -138,7 +156,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 1m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -161,6 +180,9 @@ spec:
       kind: Deployment
       name: linkerd-identity
       namespace: linkerd
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: serviceprofiles.linkerd.io
 
 ---
 # Networking - ingress controller (gets injected with Linkerd proxy)
@@ -172,7 +194,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 1m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -187,6 +210,10 @@ spec:
       kind: Deployment
       name: ingress-nginx-controller
       namespace: ingress-nginx
+    - apiVersion: v1
+      kind: Service
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
 
 ---
 # Flagger - progressive delivery (needs Linkerd + Prometheus)
@@ -198,7 +225,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -209,6 +237,14 @@ spec:
   dependsOn:
     - name: dev-lab-service-mesh
     - name: dev-lab-prometheus
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: flagger
+      namespace: linkerd-viz
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: canaries.flagger.app
 
 ---
 # Monitoring extras - ServiceMonitors, PodMonitors (needs Prometheus CRDs + Linkerd)
@@ -220,7 +256,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 15s
+  retryInterval: 2m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo
@@ -231,6 +268,15 @@ spec:
   dependsOn:
     - name: dev-lab-prometheus
     - name: dev-lab-service-mesh
+  healthChecks:
+    - apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      name: linkerd-controller
+      namespace: linkerd-viz
+    - apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      name: linkerd-proxy
+      namespace: linkerd-viz
 
 ---
 # Applications (depends on everything being ready)
@@ -242,7 +288,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 30s
+  interval: 10s
+  retryInterval: 1m
   sourceRef:
     kind: GitRepository
     name: dev-lab-repo

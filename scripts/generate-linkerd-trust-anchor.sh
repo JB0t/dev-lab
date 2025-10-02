@@ -165,9 +165,9 @@ main() {
             success "Trust anchor certificates generated and stored in GitHub Secrets!"
             echo ""
             warn "Next steps:"
-            echo "1. Update the GitHub auth secret in external-secrets namespace with a valid token"
-            echo "2. Deploy external-secrets to your cluster"
-            echo "3. The ExternalSecret will automatically sync the certificates"
+            echo "1. Note: This cluster now uses cert-manager to auto-generate trust anchors"
+            echo "2. The certificates stored here are for backup/reference purposes"
+            echo "3. Deploy the cluster - cert-manager will create new trust anchors automatically"
             ;;
         "verify")
             check_prerequisites

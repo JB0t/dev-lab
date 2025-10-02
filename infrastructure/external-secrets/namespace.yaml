@@ -1,9 +1,0 @@
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: external-secrets
-  labels:
-    app.kubernetes.io/name: external-secrets
-    app.kubernetes.io/part-of: secrets-management
-    app.kubernetes.io/managed-by: fluxcd
