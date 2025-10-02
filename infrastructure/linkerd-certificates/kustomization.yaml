@@ -7,9 +7,10 @@ metadata:
 
 resources:
   - linkerd-certs.yaml
+  - linkerd-trust-anchor-external-secret.yaml
 
 # Note: The linkerd-trust-anchor secret is now managed by external-secrets
-# via ExternalSecret resource defined in the external-secrets component
+# via ExternalSecret resource defined in this component
 
 configurations:
   - kustomizeconfig.yaml

@@ -10,10 +10,9 @@ resources:
   - linkerd-crds.yaml
   - linkerd-control-plane.yaml
   - linkerd-viz.yaml
-  - linkerd-trust-anchor-external-secret.yaml
 
 # Note: linkerd-trust-anchor secret is now managed by ExternalSecret
-# which references the github-cluster-secret-store from external-secrets component
+# in the linkerd-certificates component
 
 patches:
   # Patch Linkerd control plane to wait for cert-manager (external)
