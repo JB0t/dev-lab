@@ -7,7 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: flux
 spec:
-  interval: 1m0s
+  interval: 30s
   ref:
     branch: dev
   url: ssh://git@github.com/jbotstevens/dev-lab.git

@@ -11,13 +11,8 @@ resources:
   - linkerd-control-plane.yaml
   - linkerd-viz.yaml
 
-secretGenerator:
-  - name: linkerd-trust-anchor
-    namespace: linkerd
-    type: kubernetes.io/tls
-    files:
-      - tls.crt=ca.crt
-      - tls.key=ca.key
+# Note: linkerd-trust-anchor secret is now managed by ExternalSecret
+# in the linkerd-certificates component
 
 patches:
   # Patch Linkerd control plane to wait for cert-manager (external)

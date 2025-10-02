@@ -2,13 +2,16 @@
 
 # Dev Lab Bootstrap Script
 # Common initialization steps required for both script-based and GitOps deployments
-# This script handles: cluster creation, registry, and basic setup
+# This script handles: cluster creation and basic setup only
 
 set -euo pipefail
 
+# Capture start time
+BOOTSTRAP_START_TIME=$(date +%s)
+BOOTSTRAP_START_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+
 # Configuration
 CLUSTER_NAME="dev-lab"
-REGISTRY_PORT="5000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -137,43 +140,12 @@ create_cluster() {
     kubectl get nodes -o wide
 }
 
-# Setup local registry
+# NOTE: Registry setup moved to deploy-traditional.sh for script-based deployments
+# and to GitOps infrastructure/container-registry/ component for GitOps deployments
 setup_registry() {
-    section "Setting up Local Container Registry"
-    
-    log "Creating dev-lab-registry namespace..."
-    kubectl create namespace dev-lab-registry --dry-run=client -o yaml | kubectl apply -f -
-    
-    log "Deploying registry DaemonSet from external config..."
-    kubectl apply -f "$PROJECT_ROOT/config/registry/registry-daemonset.yaml"
-
-    # Deploy registry UI
-    log "Deploying registry UI from external config..."
-    kubectl apply -f "$PROJECT_ROOT/config/registry/registry-ui.yaml"
-
-    # Wait for registry to be ready
-    log "Waiting for registry to be ready..."
-    kubectl wait --for=condition=ready pod -l app=docker-registry -n dev-lab-registry --timeout=300s
-    kubectl wait --for=condition=ready pod -l app=docker-registry-ui -n dev-lab-registry --timeout=300s
-    
-    # Test registry connectivity
-    log "Testing registry connectivity..."
-    local timeout=60
-    while [[ $timeout -gt 0 ]]; do
-        if curl -f http://localhost:5000/v2/ >/dev/null 2>&1; then
-            success "Registry is ready at http://localhost:5000"
-            break
-        fi
-        sleep 2
-        ((timeout-=2))
-    done
-    
-    if [[ $timeout -le 0 ]]; then
-        error "Registry failed to become ready"
-        return 1
-    fi
-    
-    success "Local container registry setup complete"
+    info "Registry setup is handled by deployment scripts:"
+    info "  • Script-based: ./scripts/deploy-traditional.sh"
+    info "  • GitOps: infrastructure/container-registry/ component"
 }
 
 # Setup metrics server
@@ -204,13 +176,13 @@ show_bootstrap_info() {
     echo ""
     echo " **Core Infrastructure Ready:**"
     echo "  • KinD cluster with proper node labels"
-    echo "  • Local container registry at http://localhost:5000"
     echo "  • Metrics server for autoscaling"
     echo ""
     echo " **Next Steps - Choose Your Deployment Method:**"
     echo ""
     echo " **Script-based deployment (traditional):**"
     echo "  ./scripts/deploy-traditional.sh"
+    echo "  • Installs local registry via config files"
     echo "  • Installs Linkerd service mesh via CLI"
     echo "  • Installs monitoring via Helm commands"
     echo "  • Installs NGINX ingress via kubectl"
@@ -220,11 +192,10 @@ show_bootstrap_info() {
     echo "  ./scripts/deploy-gitops.sh"
     echo "  • Installs Flux controllers"
     echo "  • Sets up SSH deploy key"
-    echo "  • Automatic Linkerd + infrastructure + app deployment via Git"
+    echo "  • Automatic registry + Linkerd + infrastructure + app deployment via Git"
     echo ""
     echo " **Verification Commands:**"
     echo "  kubectl get nodes                     # Check cluster"
-    echo "  curl http://localhost:5000/v2/       # Check registry"
     echo "  kubectl top nodes                    # Check metrics server"
     echo ""
 }
@@ -238,12 +209,30 @@ cleanup() {
 main() {
     case "${1:-bootstrap}" in
         "bootstrap"|"setup"|"")
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${PURPLE}🚀 Dev Lab Bootstrap Process Started${NC}"
+            echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
+            echo ""
+            
             log "Starting Dev Lab bootstrap process..."
             check_prerequisites
             create_cluster
-            setup_registry
             setup_metrics_server
             show_bootstrap_info
+            
+            # Calculate and display timing
+            BOOTSTRAP_END_TIME=$(date +%s)
+            BOOTSTRAP_DURATION=$((BOOTSTRAP_END_TIME - BOOTSTRAP_START_TIME))
+            BOOTSTRAP_END_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
+            
+            echo ""
+            echo -e "${PURPLE}=================================================${NC}"
+            echo -e "${GREEN}✅ Dev Lab Bootstrap Process Completed${NC}"
+            echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
+            echo -e "${PURPLE}   End Time:   $BOOTSTRAP_END_FORMATTED${NC}"
+            echo -e "${CYAN}   Duration:   ${BOOTSTRAP_DURATION} seconds${NC}"
+            echo -e "${PURPLE}=================================================${NC}"
             ;;
         "cluster")
             create_cluster
@@ -259,7 +248,6 @@ main() {
             echo ""
             echo "This script handles common initialization for both deployment methods:"
             echo "  • KinD cluster creation with proper configuration"
-            echo "  • Local container registry setup"
             echo "  • Metrics server installation"
             echo ""
             echo "Usage: $0 [COMMAND]"
@@ -267,13 +255,13 @@ main() {
             echo "Commands:"
             echo "  bootstrap  Complete bootstrap process (default)"
             echo "  cluster    Create KinD cluster only"
-            echo "  registry   Setup local registry only"
+            echo "  registry   Show registry setup info (now in deployment scripts)"
             echo "  metrics    Setup metrics server only"
             echo "  help       Show this help"
             echo ""
             echo "After bootstrap, choose your deployment method:"
-            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment (includes Linkerd)"
-            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment (Linkerd via Flux)"
+            echo "  ./scripts/deploy-traditional.sh  # Script-based deployment (includes registry + Linkerd)"
+            echo "  ./scripts/deploy-gitops.sh       # GitOps deployment (registry + Linkerd via Flux)"
             echo ""
             ;;
         *)

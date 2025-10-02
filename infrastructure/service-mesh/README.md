@@ -42,7 +42,7 @@ The implementation follows a layered approach with proper dependency management:
 ### cert-manager Integration
 
 - **Issuer**: Creates CA issuer from the trust anchor secret
-- **Certificate**: Generates identity issuer certificate for Linkerd 
+- **Certificate**: Generates identity issuer certificate for Linkerd
 
 ## Deployment Flow
 
