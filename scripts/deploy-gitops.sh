@@ -392,6 +392,7 @@ main() {
         "key")
             generate_deploy_key
             show_deploy_key
+            create_flux_secret
             ;;
         "sources")
             create_git_source
