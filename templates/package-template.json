@@ -1,0 +1,8 @@
+{
+  "name": "SERVICE_NAME_PLACEHOLDER",
+  "version": "v1",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}
