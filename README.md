@@ -547,6 +547,7 @@ This project uses **automated semantic versioning** based on branch naming conve
 - 🎉 `dev` → `main` = Major version bump
 
 Check current version and rules:
+
 ```bash
 ./scripts/version-info.sh        # Show version info
 ./scripts/version-info.sh rules  # Show versioning rules
@@ -560,6 +561,14 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed workflow guidelines.
 2. **Image Management**: Use `kind load` for development, registry for CI/CD simulation
 3. **Persistent Storage**: Registry data persists in `/var/lib/registry` on control-plane node
 4. **Port Forwarding**: Use kubectl port-forward instead of NodePort for better performance
+
+## Misc
+
+Lint markdown like this:
+
+```bash
+mkdownfix --exclude-dirs apps/mesh-test-app/node_modules
+```
 
 ## License
 
