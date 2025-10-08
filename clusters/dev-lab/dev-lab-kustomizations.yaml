@@ -87,7 +87,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-service-mesh-layer
-  path: "."
+  path: "./standalone"
   prune: true
   wait: true
   timeout: 15m0s
