@@ -15,10 +15,11 @@ resources:
 
 # Generate ConfigMaps from external files
 configMapGenerator:
-  - name: linkerd-canary-dashboard
+  - name: dashboards
     namespace: monitoring
     files:
       - linkerd-canary-dashboard.json
+      - multi-app-canary-dashboard.json
     options:
       labels:
         grafana_dashboard: "1"

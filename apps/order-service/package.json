@@ -1,6 +1,6 @@
 {
   "name": "order-service",
-  "version": "v2",
+  "version": "v3",
   "description": "Order management service for testing canary deployments",
   "main": "server.js",
   "scripts": {

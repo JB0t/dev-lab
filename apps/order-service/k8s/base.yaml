@@ -38,14 +38,14 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: localhost:5000/order-service:v2-fixed
+        image: localhost:5000/order-service:v3
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
         env:
         - name: APP_VERSION
-          value: "v2"  # ← Update version to trigger canary
+          value: "v3"  # ← Update version to trigger canary
         - name: NODE_ENV
           value: "production"
         resources:
