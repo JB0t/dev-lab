@@ -13,8 +13,10 @@ spec:
   url: ssh://git@github.com/example-org/flux-service-mesh-layer.git
   secretRef:
     name: flux-service-mesh-layer
-  ignore: |
-    # Ignore non-kubernetes files
-    *.md
-    # Ignore example directories
-    /examples/
+  # ignore: |
+  #   # Ignore non-kubernetes files
+  #   *.md
+  #   # Ignore example directories
+  #   /examples/
+  #   # Ignore gitops files
+  #   .commit-check.yml
