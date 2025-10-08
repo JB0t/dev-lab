@@ -1,0 +1,21 @@
+{
+  "name": "order-service",
+  "version": "v2",
+  "description": "Order management service for testing canary deployments",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "redis": "^4.6.7"
+  },
+  "keywords": [
+    "order",
+    "service",
+    "canary",
+    "linkerd"
+  ],
+  "author": "DevLab",
+  "license": "MIT"
+}

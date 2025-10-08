@@ -1,0 +1,545 @@
+{
+  "id": null,
+  "title": "Multi-Application Canary Monitoring Dashboard",
+  "tags": [
+    "linkerd",
+    "flagger",
+    "canary",
+    "prometheus",
+    "multi-app"
+  ],
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "query": "label_values(flagger_canary_weight, exported_namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": "Prometheus",
+        "definition": "label_values(flagger_canary_weight, exported_namespace)",
+        "hide": 0,
+        "multi": true,
+        "regex": "",
+        "sort": 1
+      },
+      {
+        "name": "workload",
+        "label": "Application",
+        "type": "query",
+        "query": "label_values(flagger_canary_weight{exported_namespace=~\"$namespace\"}, workload)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": "Prometheus",
+        "definition": "label_values(flagger_canary_weight{exported_namespace=~\"$namespace\"}, workload)",
+        "hide": 0,
+        "multi": true,
+        "regex": "",
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Canary Traffic Weight by Application",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{exported_namespace=~\"$namespace\", workload=~\"$workload\"}",
+          "legendFormat": "{{exported_namespace}}/{{workload}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 75
+              }
+            ]
+          },
+          "unit": "percent",
+          "displayName": "${__field.labels.exported_namespace}/${__field.labels.workload}"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Canary Deployment Status",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "flagger_canary_status{exported_namespace=~\"$namespace\", name=~\"$workload\"}",
+          "legendFormat": "{{exported_namespace}}/{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "Progressing",
+                  "color": "blue"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "Succeeded",
+                  "color": "green"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "2": {
+                  "text": "Failed",
+                  "color": "red"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "displayName": "${__field.labels.exported_namespace}/${__field.labels.name}"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "title": "Success Rate by Application",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",classification!=\"failure\"}[1m])) by (namespace) / sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace) * 100",
+          "legendFormat": "{{namespace}} Success Rate %",
+          "refId": "A"
+        },
+        {
+          "expr": "95",
+          "legendFormat": "SLA Threshold (95%)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent",
+          "min": 90,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      }
+    },
+    {
+      "id": 4,
+      "title": "Request Rate by Application",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace)",
+          "legendFormat": "{{namespace}} req/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      }
+    },
+    {
+      "id": 5,
+      "title": "Traffic Weight Distribution Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{exported_namespace=~\"$namespace\", workload=~\"$workload\"}",
+          "legendFormat": "{{exported_namespace}}/{{workload}} Canary %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      }
+    },
+    {
+      "id": 6,
+      "title": "Application Response Latency P99",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(response_latency_ms_bucket{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace, le))",
+          "legendFormat": "{{namespace}} P99 latency",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(response_latency_ms_bucket{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace, le))",
+          "legendFormat": "{{namespace}} P95 latency",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      }
+    },
+    {
+      "id": 7,
+      "title": "mTLS Security Coverage",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",tls=\"true\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) by (namespace) / sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) by (namespace) * 100",
+          "legendFormat": "{{namespace}} mTLS %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "green",
+                "value": 95
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "displayName": "${__field.labels.namespace} mTLS Coverage"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      }
+    },
+    {
+      "id": 8,
+      "title": "Application Health Overview",
+      "type": "table",
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{exported_namespace=~\"$namespace\", workload=~\"$workload\"}",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table"
+        },
+        {
+          "expr": "flagger_canary_status{exported_namespace=~\"$namespace\", name=~\"$workload\"}",
+          "legendFormat": "",
+          "refId": "B",
+          "format": "table"
+        },
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace)",
+          "legendFormat": "",
+          "refId": "C",
+          "format": "table"
+        },
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",classification!=\"failure\"}[1m])) by (namespace) / sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace) * 100",
+          "legendFormat": "",
+          "refId": "D",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "center",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Canary Weight %"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "text": "Progressing"
+                      }
+                    },
+                    "type": "value"
+                  },
+                  {
+                    "options": {
+                      "1": {
+                        "text": "Succeeded"
+                      }
+                    },
+                    "type": "value"
+                  },
+                  {
+                    "options": {
+                      "2": {
+                        "text": "Failed"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #C"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Request Rate"
+              },
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #D"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Success Rate %"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 9,
+      "title": "Primary vs Canary Traffic Distribution",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",pod=~\".*primary.*\"}[1m])) by (namespace)",
+          "legendFormat": "{{namespace}} Primary req/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\",pod!~\".*primary.*\"}[1m])) by (namespace)",
+          "legendFormat": "{{namespace}} Canary req/s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      }
+    },
+    {
+      "id": 10,
+      "title": "HTTP Status Code Distribution",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=~\"$namespace\",direction=\"inbound\"}[1m])) by (namespace, status_code)",
+          "legendFormat": "{{namespace}} {{status_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      }
+    }
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "version": 1
+}

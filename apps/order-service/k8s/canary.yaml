@@ -1,0 +1,161 @@
+---
+# Order Service Canary Configuration
+# This enables progressive deployment for the order management service
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: order-service
+  namespace: order-system
+spec:
+  # Target deployment
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-service
+  
+  # Service configuration
+  service:
+    port: 80
+    targetPort: 3000
+    portDiscovery: true
+    
+  # Progressive delivery configuration
+  analysis:
+    # Check every 45 seconds (different from mesh-test-app)
+    interval: 45s
+    # Rollback threshold
+    threshold: 3
+    # Maximum weight for canary (30% traffic)
+    maxWeight: 30
+    # Weight increase step (5% increments)
+    stepWeight: 5
+    # Minimum number of pods for primary deployment
+    primaryReadyThreshold: 1
+    # Minimum number of pods for canary deployment
+    canaryReadyThreshold: 1
+    
+    # Linkerd metrics for order service
+    metrics:
+    - name: success-rate
+      templateRef:
+        name: linkerd-success-rate
+        namespace: order-system
+      thresholdRange:
+        min: 97  # Higher threshold for order service
+      interval: 1m
+    - name: latency
+      templateRef:
+        name: linkerd-request-duration
+        namespace: order-system
+      thresholdRange:
+        max: 300  # Lower latency requirement
+      interval: 1m
+    
+    # Order service specific webhook tests
+    webhooks:
+    
+    # 1. Service Health Check
+    - name: order-service-health-check
+      type: pre-rollout
+      url: http://flagger-loadtester.order-system/
+      timeout: 15s
+      metadata:
+        type: bash
+        cmd: |
+          curl -sf http://order-service-canary.order-system/ > /dev/null && 
+          curl -sf http://order-service-canary.order-system/health/live > /dev/null &&
+          curl -sf http://order-service-canary.order-system/health/ready > /dev/null
+    
+    # 2. Order Creation Test  
+    - name: order-creation-test
+      type: pre-rollout
+      url: http://flagger-loadtester.order-system/
+      timeout: 20s
+      metadata:
+        type: bash
+        cmd: |
+          # Test order creation functionality
+          response=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"items":["test-item"],"total":29.99}' \
+            http://order-service-canary.order-system/orders)
+          echo "$response" | grep -q "created"
+    
+    # 3. Stats Endpoint Test
+    - name: stats-endpoint-test
+      url: http://flagger-loadtester.order-system/
+      timeout: 10s
+      metadata:
+        type: bash
+        cmd: |
+          # Test stats endpoint
+          response=$(curl -sf http://order-service-canary.order-system/stats)
+          echo "$response" | grep -q "order-service"
+    
+    # 4. Load Test - Core Functionality
+    - name: order-service-load-test
+      url: http://flagger-loadtester.order-system/
+      timeout: 30s
+      metadata:
+        type: cmd
+        cmd: "hey -z 25s -q 8 -c 2 -H 'User-Agent: Flagger-OrderService' http://order-service-canary.order-system/"
+    
+    # 5. Order Processing End-to-End Test
+    - name: e2e-order-processing-test
+      url: http://flagger-loadtester.order-system/
+      timeout: 45s
+      metadata:
+        type: bash
+        cmd: |
+          # Test complete order lifecycle
+          echo "Testing order creation and retrieval..."
+          
+          # Create multiple test orders
+          for i in {1..5}; do
+            order_response=$(curl -sf -X POST -H "Content-Type: application/json" \
+              -d "{\"items\":[\"item-$i\"],\"total\":$((i * 10)).99}" \
+              http://order-service-canary.order-system/orders)
+            
+            order_id=$(echo "$order_response" | jq -r '.id')
+            
+            if [ "$order_id" == "null" ] || [ -z "$order_id" ]; then
+              echo "Failed to create order $i"
+              exit 1
+            fi
+            
+            # Retrieve the created order
+            retrieve_response=$(curl -sf http://order-service-canary.order-system/orders/$order_id)
+            
+            if ! echo "$retrieve_response" | grep -q "$order_id"; then
+              echo "Failed to retrieve order $order_id"
+              exit 1
+            fi
+            
+            sleep 1
+          done
+          
+          # Check final stats
+          stats_response=$(curl -sf http://order-service-canary.order-system/stats)
+          total_orders=$(echo "$stats_response" | jq -r '.total_orders')
+          
+          if [ "$total_orders" -lt 5 ]; then
+            echo "Expected at least 5 orders, got: $total_orders"
+            exit 1
+          fi
+          
+          echo "E2E test passed. Total orders: $total_orders"
+    
+    # 6. Concurrent Order Load Test
+    - name: concurrent-order-load-test
+      url: http://flagger-loadtester.order-system/
+      timeout: 60s
+      metadata:
+        type: bash
+        cmd: |
+          # Run concurrent load on different endpoints
+          hey -z 40s -q 10 -c 2 http://order-service-canary.order-system/ &
+          hey -z 40s -q 5 -c 1 http://order-service-canary.order-system/stats &
+          hey -z 40s -q 8 -c 2 http://order-service-canary.order-system/health/ready &
+          wait
+          
+          # Final verification
+          curl -sf http://order-service-canary.order-system/stats > /dev/null
