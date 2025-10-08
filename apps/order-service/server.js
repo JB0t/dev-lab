@@ -9,12 +9,17 @@ const version = process.env.APP_VERSION || 'v1';
 let orderCount = 0;
 let totalOrders = 0;
 
-// Redis configuration
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-let redisClient;
+// Redis configuration - only connect if explicitly configured
+const redisUrl = process.env.REDIS_URL;
+let redisClient = null;
 
-// Initialize Redis client
+// Initialize Redis client only if REDIS_URL is provided
 async function initRedis() {
+  if (!redisUrl) {
+    console.log('No Redis URL configured - running without Redis');
+    return;
+  }
+
   try {
     redisClient = createClient({ url: redisUrl });
 
@@ -250,7 +255,12 @@ async function startServer() {
   app.listen(port, () => {
     console.log(`Order Service ${version} running on port ${port}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Redis URL: ${redisUrl}`);
+    if (redisUrl) {
+      console.log(`Redis URL: ${redisUrl}`);
+      console.log(`Redis Status: ${redisClient ? 'connected' : 'failed'}`);
+    } else {
+      console.log('Redis: disabled (no REDIS_URL configured)');
+    }
   });
 }
 

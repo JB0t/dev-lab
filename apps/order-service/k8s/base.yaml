@@ -38,7 +38,7 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: localhost:5000/order-service:v2-working
+        image: localhost:5000/order-service:v2-fixed
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
