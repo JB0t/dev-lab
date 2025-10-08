@@ -149,34 +149,34 @@ create_flux_secret() {
     log "Creating flux-system secret with SSH deploy key..."
     
     # Delete existing secret if it exists
-    kubectl delete secret flux-system-auth -n flux-system --ignore-not-found=true
+    kubectl delete secret dev-lab-repo -n flux-system --ignore-not-found=true
     
     # Create new secret with SSH key
-    kubectl create secret generic flux-system-auth \
+    kubectl create secret generic dev-lab-repo \
         --from-file=identity="${KEY_PATH}" \
         --from-file=identity.pub="${KEY_PATH}.pub" \
         --from-literal=known_hosts="$(ssh-keyscan github.com)" \
         -n flux-system
     
     # Label the secret
-    kubectl label secret flux-system-auth -n flux-system app.kubernetes.io/part-of=flux
-    success "flux-system-auth secret created"
+    kubectl label secret dev-lab-repo -n flux-system app.kubernetes.io/part-of=flux
+    success "dev-lab-repo secret created"
     
     log "Creating service mesh layer secret with SSH deploy key..."
     
     # Delete existing secret if it exists
-    kubectl delete secret flux-service-mesh-layer-auth -n flux-system --ignore-not-found=true
+    kubectl delete secret flux-service-mesh-layer -n flux-system --ignore-not-found=true
     
     # Create new secret with SSH key
-    kubectl create secret generic flux-service-mesh-layer-auth \
+    kubectl create secret generic flux-service-mesh-layer \
         --from-file=identity="${SERVICE_MESH_KEY_PATH}" \
         --from-file=identity.pub="${SERVICE_MESH_KEY_PATH}.pub" \
         --from-literal=known_hosts="$(ssh-keyscan github.com)" \
         -n flux-system
     
     # Label the secret
-    kubectl label secret flux-service-mesh-layer-auth -n flux-system app.kubernetes.io/part-of=flux
-    success "flux-service-mesh-layer-auth secret created"
+    kubectl label secret flux-service-mesh-layer -n flux-system app.kubernetes.io/part-of=flux
+    success "flux-service-mesh-layer secret created"
 }
 
 # Display deploy keys for GitHub setup
@@ -221,7 +221,7 @@ create_git_source() {
         "$PROJECT_ROOT/config/gitops/git-repository.yaml" | kubectl apply -f -
 
     log "Creating service mesh layer GitRepository source..."
-    kubectl apply -f "$PROJECT_ROOT/config/gitops/service-mesh-layer-repository.yaml"
+    kubectl apply -f "$PROJECT_ROOT/config/gitops/service-mesh-layer-gitrepository.yaml"
 
     # Wait for GitRepository to sync
     log "Waiting for GitRepositories to sync..."
