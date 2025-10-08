@@ -14,9 +14,9 @@ spec:
       rate(
         response_total{
           namespace="{{ namespace }}",
-          deployment=~"{{ target }}",
+          direction="inbound",
           classification!="failure",
-          direction="inbound"
+          target_port="3000"
         }[{{ interval }}]
       )
     ) 
@@ -25,8 +25,8 @@ spec:
       rate(
         response_total{
           namespace="{{ namespace }}",
-          deployment=~"{{ target }}",
-          direction="inbound"
+          direction="inbound",
+          target_port="3000"
         }[{{ interval }}]
       )
     ) * 100
@@ -41,17 +41,49 @@ metadata:
 spec:
   provider:
     type: prometheus
-    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
   query: |
-    histogram_quantile(
-      0.99,
+    histogram_quantile(0.99,
       sum(
         rate(
           response_latency_ms_bucket{
             namespace="{{ namespace }}",
-            deployment=~"{{ target }}",
-            direction="inbound"
+            direction="inbound",
+            target_port="3000"
           }[{{ interval }}]
         )
       ) by (le)
     )
+
+---
+# Traffic-based success rate (for canary vs primary comparison)
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-traffic-success-rate
+  namespace: order-system
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  query: |
+    sum(
+      rate(
+        response_total{
+          classification!="failure",
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name)
+    / 
+    sum(
+      rate(
+        response_total{
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name) * 100
