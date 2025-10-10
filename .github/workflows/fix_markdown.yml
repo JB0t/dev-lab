@@ -48,7 +48,7 @@ jobs:
           echo "${{ steps.changed-files.outputs.changed_files }}" | while IFS= read -r file; do
             if [ -f "$file" ]; then
               echo "Processing: $file"
-              python3 ./scripts/fix_markdown.py "$file"
+              python3 .github/scripts/fix_markdown.py "$file"
             fi
           done
       
