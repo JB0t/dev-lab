@@ -19,7 +19,7 @@ resources:
   # - order-service/k8s          # ✅ ENABLED - Order management service
   
   # External Application Layers
-  # - quant-services/kustomization.yaml  # ❌ DISABLED - Quantitative trading services
+  - quant-services/kustomization.yaml  # ❌ DISABLED - Quantitative trading services
   
   # ============================================================================
   # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
