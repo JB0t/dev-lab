@@ -1,16 +1,16 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
 
-namespace: order-system
+# namespace: order-system
 
-resources:
-  - base.yaml
-  - canary.yaml
-  - loadtester.yaml
-  - metrics.yaml
-  - linkerd-podmonitor.yaml
+# resources:
+#   - base.yaml
+#   - canary.yaml
+#   - loadtester.yaml
+#   - metrics.yaml
+#   - linkerd-podmonitor.yaml
 
-commonLabels:
-  app.kubernetes.io/name: order-service
-  app.kubernetes.io/part-of: dev-lab
-  app.kubernetes.io/component: canary-service
+# commonLabels:
+#   app.kubernetes.io/name: order-service
+#   app.kubernetes.io/part-of: dev-lab
+#   app.kubernetes.io/component: canary-service

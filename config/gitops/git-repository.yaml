@@ -9,7 +9,7 @@ metadata:
 spec:
   interval: 30s
   ref:
-    branch: feature/multiple-canary-apps
+    branch: feature/test-quant-services-layer
   url: ssh://git@github.com/jbotstevens/dev-lab.git
   secretRef:
     name: dev-lab-repo

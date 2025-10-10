@@ -1,19 +1,18 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# apiVersion: kustomize.config.k8s.io/v1beta1
+# kind: Kustomization
 
-metadata:
-  name: mesh-test-app
-  namespace: mesh-test
+# metadata:
+#   name: mesh-test-app
+#   namespace: mesh-test
 
-resources:
-  # Core application components
-  - base.yaml
-  - redis.yaml
+# resources:
+
+#   - base.yaml
+#   - redis.yaml
   
-  # Flagger progressive delivery
-  - canary.yaml
-  - loadtester.yaml
-  
-  # Application-specific Linkerd metrics collection 
-  - linkerd-metric-templates.yaml
-  - linkerd-podmonitor-debug.yaml
+
+#   - canary.yaml
+#   - loadtester.yaml
+
+#   - linkerd-metric-templates.yaml
+#   - linkerd-podmonitor-debug.yaml
