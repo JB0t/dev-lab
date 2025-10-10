@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Central Application Control Panel
+# Enable/disable applications by commenting/uncommenting resources below
+
+resources:
+  # ============================================================================
+  # GITREPOSITORY SOURCES (Always deploy these to make repos available)
+  # ============================================================================
+  - quant-services/gitrepository.yaml
+  
+  # ============================================================================
+  # ACTIVE APPLICATIONS (Comment out to disable)
+  # ============================================================================
+  
+  # Canary Demo Applications
+  # - mesh-test-app/k8s          # ✅ ENABLED - Redis-backed counter service
+  # - order-service/k8s          # ✅ ENABLED - Order management service
+  
+  # External Application Layers
+  # - quant-services/kustomization.yaml  # ❌ DISABLED - Quantitative trading services
+  
+  # ============================================================================
+  # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
+  # ============================================================================
+  # - mtls-test-app/k8s         # ❌ DISABLED - mTLS testing application
