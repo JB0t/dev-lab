@@ -15,13 +15,13 @@ resources:
   # ============================================================================
   
   # Canary Demo Applications
-  # - mesh-test-app/k8s          # ✅ ENABLED - Redis-backed counter service
-  # - order-service/k8s          # ✅ ENABLED - Order management service
+  # - mesh-test-app/k8s
+  # - order-service/k8s
   
   # External Application Layers
-  - quant-services/kustomization.yaml  # ❌ DISABLED - Quantitative trading services
+  - quant-services/kustomization.yaml
   
   # ============================================================================
   # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
   # ============================================================================
-  # - mtls-test-app/k8s         # ❌ DISABLED - mTLS testing application
+  # - mtls-test-app/k8s
