@@ -1,0 +1,71 @@
+---
+name: Fix Markdown Files
+on:
+  push:
+    paths:
+      - '**/*.md'
+      - '**/*.MD'
+jobs:
+  fix-markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.WORKFLOW_PAT }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+      
+      - name: Get changed markdown files
+        id: changed-files
+        run: |
+          # Get list of changed markdown files in the last commit
+          CHANGED_FILES=$(git diff --name-only HEAD~1..HEAD | grep -E '\.(md|MD)$' || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "changed_files=" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run markdown fixer on changed files
+        if: steps.changed-files.outputs.has_changes == 'true'
+        run: |
+          echo "Processing changed markdown files:"
+          echo "${{ steps.changed-files.outputs.changed_files }}"
+          
+          # Process each changed markdown file
+          echo "${{ steps.changed-files.outputs.changed_files }}" | while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              echo "Processing: $file"
+              python3 .github/scripts/fix_markdown.py "$file"
+            fi
+          done
+      
+      - name: Commit markdown fixes
+        if: steps.changed-files.outputs.has_changes == 'true'
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+          git add .
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: auto-fix markdown issues with fix_markdown.py"
+            
+            # Set up PAT-based authentication for push
+            git remote set-url origin https://x-access-token:${{ secrets.WORKFLOW_PAT }}@github.com/${{ github.repository }}.git
+            git push origin HEAD:${{ github.ref_name }}
+            echo "✅ Markdown fixes pushed successfully"
+          else
+            echo "ℹ️ No changes were made by markdown fixer"
+          fi

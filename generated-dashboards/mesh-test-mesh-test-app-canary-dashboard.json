@@ -1,0 +1,375 @@
+{
+  "id": null,
+  "title": "Canary Dashboard - mesh-test/mesh-test-app",
+  "tags": [
+    "linkerd",
+    "flagger", 
+    "canary",
+    "mesh-test",
+    "mesh-test-app"
+  ],
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "mesh-test-app Canary Traffic Weight",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{workload=\"mesh-test-app\", exported_namespace=\"mesh-test\"}",
+          "legendFormat": "Traffic Weight %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "title": "mesh-test-app Success Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",classification!=\"failure\"}[1m]))/sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m]))*100",
+          "legendFormat": "Success Rate %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "title": "mesh-test-app Request Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m]))",
+          "legendFormat": "Requests/sec",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 4,
+      "title": "mesh-test-app Canary Phase",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "flagger_canary_status{name=\"mesh-test-app\", exported_namespace=\"mesh-test\"}",
+          "legendFormat": "Phase",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "Progressing",
+                  "color": "blue"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "Succeeded",
+                  "color": "green"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "2": {
+                  "text": "Failed",
+                  "color": "red"
+                }
+              },
+              "type": "value"
+            }
+          ]
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      }
+    },
+    {
+      "id": 5,
+      "title": "mesh-test-app Traffic Split Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "flagger_canary_weight{workload=\"mesh-test-app\", exported_namespace=\"mesh-test\"}",
+          "legendFormat": "Canary Weight %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "id": 6,
+      "title": "mesh-test-app Success Rate Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",classification!=\"failure\"}[1m]))/sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\"}[1m]))*100",
+          "legendFormat": "Success Rate %",
+          "refId": "A"
+        },
+        {
+          "expr": "95",
+          "legendFormat": "SLA Threshold (95%)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent",
+          "min": 90,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      }
+    },
+    {
+      "id": 7,
+      "title": "mesh-test-app Response Latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(response_latency_ms_bucket{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) by (le))",
+          "legendFormat": "P99 Latency",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(response_latency_ms_bucket{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) by (le))",
+          "legendFormat": "P95 Latency",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(response_latency_ms_bucket{namespace=\"mesh-test\",direction=\"inbound\"}[1m])) by (le))",
+          "legendFormat": "P50 Latency",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      }
+    },
+    {
+      "id": 8,
+      "title": "mesh-test-app mTLS Security Status",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",tls=\"true\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) / sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",path!~\"/health.*|/live|/ready|/metrics\",status_code!~\"404\"}[1m])) * 100",
+          "legendFormat": "mTLS Coverage %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      }
+    },
+    {
+      "id": 9,
+      "title": "mesh-test-app Primary vs Canary Traffic",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",pod=~\".*primary.*\"}[1m]))",
+          "legendFormat": "Primary Requests/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(response_total{namespace=\"mesh-test\",direction=\"inbound\",pod!~\".*primary.*\",pod!~\".*flagger.*\"}[1m]))",
+          "legendFormat": "Canary Requests/sec",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      }
+    }
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "version": 1
+}

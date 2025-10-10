@@ -788,7 +788,7 @@ class DevLabManager:
         
         # Delete existing secret if it exists
         self.tools.kubectl([
-            "delete", "secret", "flux-system-auth", "-n", "flux-system", "--ignore-not-found=true"
+            "delete", "secret", "dev-lab-repo", "-n", "flux-system", "--ignore-not-found=true"
         ])
         
         # Get GitHub known hosts
@@ -803,7 +803,7 @@ class DevLabManager:
         # Use workspace paths that are accessible inside the container
         key_path_container = "/workspace/flux-deploy-key"
         result = self.tools.kubectl([
-            "create", "secret", "generic", "flux-system-auth",
+            "create", "secret", "generic", "dev-lab-repo",
             f"--from-file=identity={key_path_container}",
             f"--from-file=identity.pub={key_path_container}.pub",
             f"--from-literal=known_hosts={known_hosts}",
@@ -816,11 +816,11 @@ class DevLabManager:
         
         # Label the secret
         self.tools.kubectl([
-            "label", "secret", "flux-system-auth", "-n", "flux-system", 
+            "label", "secret", "dev-lab-repo", "-n", "flux-system", 
             "app.kubernetes.io/part-of=flux"
         ])
         
-        console.print("[green]✅ flux-system-auth secret created[/green]")
+        console.print("[green]✅ dev-lab-repo secret created[/green]")
         return True
     
     def _show_deploy_key(self):

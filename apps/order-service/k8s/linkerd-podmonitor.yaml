@@ -1,0 +1,33 @@
+---
+# Application-specific PodMonitor for Order Service
+# Enables precise per-deployment metrics collection for canary analysis
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: order-service-linkerd-proxy
+  namespace: order-system
+  labels:
+    app: order-service
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: order-service
+  podMetricsEndpoints:
+  - port: linkerd-admin
+    interval: 30s
+    path: /metrics
+    relabelings:
+    # Only scrape linkerd-proxy containers
+    - sourceLabels: [__meta_kubernetes_pod_container_name]
+      action: keep
+      regex: linkerd-proxy
+    # Add useful labels
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_label_app]
+      targetLabel: app
+    - sourceLabels: [__meta_kubernetes_pod_label_version]
+      targetLabel: version

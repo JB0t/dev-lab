@@ -65,42 +65,42 @@ ensure_keys_exist() {
 
 # Create main repository secret
 create_main_secret() {
-    log "Creating flux-system-auth secret..."
+    log "Creating dev-lab-repo secret..."
     
     # Delete existing secret if it exists
-    kubectl delete secret flux-system-auth -n flux-system --ignore-not-found=true
+    kubectl delete secret dev-lab-repo -n flux-system --ignore-not-found=true
     
     # Create new secret with SSH key
-    kubectl create secret generic flux-system-auth \
+    kubectl create secret generic dev-lab-repo \
         --from-file=identity="${KEY_PATH}" \
         --from-file=identity.pub="${KEY_PATH}.pub" \
         --from-literal=known_hosts="$(ssh-keyscan github.com)" \
         -n flux-system
     
     # Label the secret
-    kubectl label secret flux-system-auth -n flux-system app.kubernetes.io/part-of=flux
+    kubectl label secret dev-lab-repo -n flux-system app.kubernetes.io/part-of=flux
     
-    success "flux-system-auth secret created"
+    success "dev-lab-repo secret created"
 }
 
 # Create service mesh layer secret
 create_service_mesh_secret() {
-    log "Creating flux-service-mesh-layer-auth secret..."
+    log "Creating flux-service-mesh-layer secret..."
     
     # Delete existing secret if it exists
-    kubectl delete secret flux-service-mesh-layer-auth -n flux-system --ignore-not-found=true
+    kubectl delete secret flux-service-mesh-layer -n flux-system --ignore-not-found=true
     
     # Create new secret with SSH key
-    kubectl create secret generic flux-service-mesh-layer-auth \
+    kubectl create secret generic flux-service-mesh-layer \
         --from-file=identity="${SERVICE_MESH_KEY_PATH}" \
         --from-file=identity.pub="${SERVICE_MESH_KEY_PATH}.pub" \
         --from-literal=known_hosts="$(ssh-keyscan github.com)" \
         -n flux-system
     
     # Label the secret
-    kubectl label secret flux-service-mesh-layer-auth -n flux-system app.kubernetes.io/part-of=flux
+    kubectl label secret flux-service-mesh-layer -n flux-system app.kubernetes.io/part-of=flux
     
-    success "flux-service-mesh-layer-auth secret created"
+    success "flux-service-mesh-layer secret created"
 }
 
 # Check prerequisites

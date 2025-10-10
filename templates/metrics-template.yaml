@@ -1,0 +1,90 @@
+---
+# Basic Linkerd Success Rate Metric Template
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-success-rate
+  namespace: SERVICE_NAME_PLACEHOLDER
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  query: |
+    sum(
+      rate(
+        response_total{
+          namespace="{{ namespace }}",
+          direction="inbound",
+          target_port="PORT_PLACEHOLDER",
+          classification!="failure"
+        }[{{ interval }}]
+      )
+    ) 
+    / 
+    sum(
+      rate(
+        response_total{
+          namespace="{{ namespace }}",
+          direction="inbound",
+          target_port="PORT_PLACEHOLDER"
+        }[{{ interval }}]
+      )
+    ) * 100
+
+---
+# Basic Linkerd Request Duration Metric Template
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-request-duration
+  namespace: SERVICE_NAME_PLACEHOLDER
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  query: |
+    histogram_quantile(0.99,
+      sum(
+        rate(
+          response_latency_ms_bucket{
+            namespace="{{ namespace }}",
+            direction="inbound",
+            target_port="PORT_PLACEHOLDER"
+          }[{{ interval }}]
+        )
+      ) by (le)
+    )
+
+---
+# Advanced Traffic-based Success Rate (for canary vs primary comparison)
+# Requires application-specific PodMonitor for best accuracy
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: linkerd-traffic-success-rate
+  namespace: SERVICE_NAME_PLACEHOLDER
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  query: |
+    sum(
+      rate(
+        response_total{
+          classification!="failure",
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name)
+    / 
+    sum(
+      rate(
+        response_total{
+          direction="inbound",
+          dst_service_name=~"{{name}}-canary|{{name}}-primary",
+          dst_service_namespace="{{namespace}}"
+        }[{{interval}}]
+      )
+    ) by (dst_service_name) * 100
