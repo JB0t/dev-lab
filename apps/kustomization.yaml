@@ -25,3 +25,7 @@ resources:
   # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
   # ============================================================================
   # - mtls-test-app/k8s
+postBuild:
+  substitute:
+    QS_IMAGE_REGISTRY: "docker-registry.dev-lab-registry.svc.cluster.local:5000"
+    QS_IMAGE_REPOSITORY: ""
