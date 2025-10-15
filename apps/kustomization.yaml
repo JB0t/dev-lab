@@ -26,6 +26,6 @@ resources:
   # ============================================================================
   # - mtls-test-app/k8s
 postBuild:
-  substitute:
+  substitutions:
     QS_IMAGE_REGISTRY: "docker-registry.dev-lab-registry.svc.cluster.local:5000"
     QS_IMAGE_REPOSITORY: ""
