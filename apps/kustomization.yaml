@@ -15,6 +15,7 @@ resources:
   # ============================================================================
   # CONFIGURATION (Deploy ConfigMaps before applications)
   # ============================================================================
+  - quant-services/qs-namespace.yaml
   - quant-services/qs-common-config.yaml
   
   # ============================================================================
