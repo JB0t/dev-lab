@@ -4,8 +4,6 @@ kind: Kustomization
 # Central Application Control Panel
 # Enable/disable applications by commenting/uncommenting resources below
 
-namespace: quant-services
-
 resources:
   # ============================================================================
   # GITREPOSITORY SOURCES (Always deploy these to make repos available)
