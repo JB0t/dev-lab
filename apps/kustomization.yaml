@@ -4,11 +4,18 @@ kind: Kustomization
 # Central Application Control Panel
 # Enable/disable applications by commenting/uncommenting resources below
 
+namespace: quant-services
+
 resources:
   # ============================================================================
   # GITREPOSITORY SOURCES (Always deploy these to make repos available)
   # ============================================================================
   - quant-services/gitrepository.yaml
+  
+  # ============================================================================
+  # CONFIGURATION (Deploy ConfigMaps before applications)
+  # ============================================================================
+  - quant-services/qs-common-config.yaml
   
   # ============================================================================
   # ACTIVE APPLICATIONS (Comment out to disable)
@@ -25,7 +32,3 @@ resources:
   # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
   # ============================================================================
   # - mtls-test-app/k8s
-postBuild:
-  substitutions:
-    QS_IMAGE_REGISTRY: "docker-registry.dev-lab-registry.svc.cluster.local:5000"
-    QS_IMAGE_REPOSITORY: ""
