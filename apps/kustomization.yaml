@@ -14,7 +14,6 @@ resources:
   # CONFIGURATION (Deploy ConfigMaps before applications)
   # ============================================================================
   - quant-services/qs-namespace.yaml
-  - quant-services/qs-common-cm.yaml
   
   # ============================================================================
   # ACTIVE APPLICATIONS (Comment out to disable)
@@ -26,8 +25,21 @@ resources:
   
   # External Application Layers
   - quant-services/kustomization.yaml
+
+# ============================================================================
+# CONFIGMAP GENERATION (Quant Services common configuration)
+# ============================================================================
+configMapGenerator:
+  - name: qs-common-config
+    namespace: quant-services
+    files:
+      - values.yaml=quant-services/qs-common-values.yaml
+
+# Enable name reference updates and hashing
+configurations:
+  - quant-services/kustomizeconfig.yaml
   
-  # ============================================================================
-  # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
-  # ============================================================================
-  # - mtls-test-app/k8s
+# ============================================================================
+# TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
+# ============================================================================
+# - mtls-test-app/k8s
