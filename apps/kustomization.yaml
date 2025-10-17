@@ -46,7 +46,7 @@ configMapGenerator:
     files:
       - values.yaml=quant-services/qs-common-values.yaml
 
-# Disable hashing to have a predictable name for cross-repo references
+# Disable hashing for predictable names (we'll use other methods for change detection)
 generatorOptions:
   disableNameSuffixHash: true
 
