@@ -11,9 +11,11 @@ resources:
   - quant-services/gitrepository.yaml
   
   # ============================================================================
-  # CONFIGURATION (Deploy ConfigMaps before applications)
+  # CONFIGURATION (Deploy ConfigMaps before applications - ATS pattern)
   # ============================================================================
   - quant-services/qs-namespace.yaml
+  - quant-services-common-config      # ConfigMap generation with hashing
+  - quant-services                    # HelmReleases with name references
   
   # ============================================================================
   # ACTIVE APPLICATIONS (Comment out to disable)
@@ -22,36 +24,6 @@ resources:
   # Canary Demo Applications
   # - mesh-test-app/k8s
   # - order-service/k8s
-  
-  # Quant Services HelmReleases (managed locally for ConfigMap name references)
-  - quant-services/adh-consumer.yaml
-  - quant-services/betticker-ws.yaml
-  - quant-services/dash-auth.yaml
-  - quant-services/dash-ws.yaml
-  - quant-services/external-prices-gather.yaml
-  - quant-services/nba-livescores.yaml
-  - quant-services/news-gather.yaml
-  - quant-services/rapid-pini-feeder.yaml
-  - quant-services/rw-proj-min-store.yaml
-  - quant-services/rw-proj-min.yaml
-  - quant-services/unabated-news-feeder.yaml
-  - quant-services/wnba-reports.yaml
-
-# ============================================================================
-# CONFIGMAP GENERATION (Quant Services common configuration)
-# ============================================================================
-configMapGenerator:
-  - name: qs-common-config
-    files:
-      - values.yaml=quant-services/qs-common-values.yaml
-
-# Disable hashing for predictable names (we'll use other methods for change detection)
-generatorOptions:
-  disableNameSuffixHash: true
-
-# Enable name reference updates and hashing
-configurations:
-  - quant-services/kustomizeconfig.yaml
   
 # ============================================================================
 # TESTING/DEVELOPMENT APPLICATIONS (Usually disabled in production)
