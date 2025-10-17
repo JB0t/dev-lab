@@ -42,7 +42,6 @@ resources:
 # ============================================================================
 configMapGenerator:
   - name: qs-common-config
-    namespace: quant-services
     files:
       - values.yaml=quant-services/qs-common-values.yaml
 
