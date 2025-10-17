@@ -23,8 +23,19 @@ resources:
   # - mesh-test-app/k8s
   # - order-service/k8s
   
-  # External Application Layers
-  - quant-services/kustomization.yaml
+  # Quant Services HelmReleases (managed locally for ConfigMap name references)
+  - quant-services/adh-consumer.yaml
+  - quant-services/betticker-ws.yaml
+  - quant-services/dash-auth.yaml
+  - quant-services/dash-ws.yaml
+  - quant-services/external-prices-gather.yaml
+  - quant-services/nba-livescores.yaml
+  - quant-services/news-gather.yaml
+  - quant-services/rapid-pini-feeder.yaml
+  - quant-services/rw-proj-min-store.yaml
+  - quant-services/rw-proj-min.yaml
+  - quant-services/unabated-news-feeder.yaml
+  - quant-services/wnba-reports.yaml
 
 # ============================================================================
 # CONFIGMAP GENERATION (Quant Services common configuration)
@@ -34,6 +45,10 @@ configMapGenerator:
     namespace: quant-services
     files:
       - values.yaml=quant-services/qs-common-values.yaml
+
+# Disable hashing to have a predictable name for cross-repo references
+generatorOptions:
+  disableNameSuffixHash: true
 
 # Enable name reference updates and hashing
 configurations:
