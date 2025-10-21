@@ -72,7 +72,13 @@ containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
       endpoint = ["http://dev-lab-control-plane:5000"]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."dev-lab-control-plane:5000"]
+      endpoint = ["http://dev-lab-control-plane:5000"]
     [plugins."io.containerd.grpc.v1.cri".registry.configs."dev-lab-control-plane:5000".tls]
       insecure_skip_verify = true
     [plugins."io.containerd.grpc.v1.cri".registry.configs."localhost:5000".tls]
       insecure_skip_verify = true
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."dev-lab-control-plane:5000".plain_http]
+      true
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."localhost:5000".plain_http]
+      true
