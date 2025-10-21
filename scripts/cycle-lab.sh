@@ -44,7 +44,10 @@ echo -e "${BOLD}${BLUE}Phase 2: GitOps Deployment${NC}"
 echo -e "${BLUE}Running: $SCRIPT_DIR/deploy-gitops.sh${NC}"
 echo ""
 
-# Phase 2: GitOps Deployment
+# Phase 2: Patch containerd config
+"$SCRIPT_DIR/configure-registry.sh"
+
+# Phase 3: GitOps Deployment
 GITOPS_PHASE_START=$(date +%s)
 "$SCRIPT_DIR/deploy-gitops.sh"
 GITOPS_PHASE_END=$(date +%s)
