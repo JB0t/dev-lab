@@ -10,16 +10,11 @@ resources:
   # ============================================================================
   - quant-services/gitrepository.yaml
   
-  # ============================================================================
-  # CONFIGURATION (Deploy ConfigMaps before applications - ATS pattern)
-  # ============================================================================
-  - quant-services/qs-namespace.yaml
-  - quant-services-common-config      # ConfigMap generation with hashing
-  - quant-services                    # HelmReleases with name references
-  
+
   # ============================================================================
   # ACTIVE APPLICATIONS (Comment out to disable)
   # ============================================================================
+  - quant-services
   
   # Canary Demo Applications
   # - mesh-test-app/k8s
