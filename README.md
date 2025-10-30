@@ -26,29 +26,39 @@ A comprehensive local development environment with **dual deployment options**: 
 # Setup Python environment
 python3 python/setup.py
 
+# Put the wrapper script in your path so you can cd away from this repo
+export PATH="$PATH:$(pwd)/devlab"
+
 # Build local tool container images (optional, built automatically when needed)
-./devlab build-tools
+devlab build-tools
 
 # Bootstrap the cluster
-./devlab bootstrap
+devlab bootstrap
 
 # Deploy using traditional method
-./devlab deploy-traditional
+devlab deploy-traditional
 
 # OR deploy using GitOps method
-./devlab deploy-gitops
+devlab deploy-gitops
 
 # Check status
-./devlab status
+devlab status
 
 # Use container-based tools
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
-./devlab flux -- get all -A
+devlab kubectl -- get pods -A
+devlab helm -- list -A
+devlab linkerd -- check
+devlab flux -- get all -A
+
+# Do this if you hate typing
+## Then create some aliases
+alias kubectl='devlab kubectl --'
+alias helm='devlab helm --'
+alias linkerd='devlab linkerd --'
+alias flux='devlab flux --'
 
 # Cleanup when done
-./devlab cleanup
+devlab cleanup
 ```
 
 ### Option 2: Bash Scripts (Legacy)
