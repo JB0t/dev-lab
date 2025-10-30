@@ -47,6 +47,11 @@ python3 python/setup.py
 ./devlab linkerd -- check
 ./devlab flux -- get all -A
 
+# Do this if you hate typing
+alias kubectl='./devlab kubectl --'
+alias helm='./devlab helm --'
+alias flux='./devlab flux --'
+
 # Cleanup when done
 ./devlab cleanup
 ```

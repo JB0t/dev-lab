@@ -325,7 +325,7 @@ class DevLabManager:
         
         result = self.tools.kind([
             "create", "cluster", 
-            "--config", "/workspace/cluster/kind-config.yaml",
+            "--config", config_file,
             "--wait", "300s"
         ])
         
