@@ -60,6 +60,9 @@ python3 python/setup.py
 # 2. Bootstrap common infrastructure  
 ./scripts/bootstrap.sh
 
+# 3: Patch the containerd config to configure the local registry
+./scripts/configure-registry.sh
+
 # 3. Deploy either:
 # via scripts
 ./scripts/deploy-traditional.sh

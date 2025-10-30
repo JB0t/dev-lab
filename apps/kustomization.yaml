@@ -9,12 +9,13 @@ resources:
   # GITREPOSITORY SOURCES (Always deploy these to make repos available)
   # ============================================================================
   - quant-services/gitrepository.yaml
-  
+  - quant-pricing-console/gitrepository.yaml
 
   # ============================================================================
   # ACTIVE APPLICATIONS (Comment out to disable)
   # ============================================================================
   - quant-services
+  - quant-pricing-console
   
   # Canary Demo Applications
   # - mesh-test-app/k8s
