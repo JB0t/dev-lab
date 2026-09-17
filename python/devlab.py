@@ -297,8 +297,14 @@ class DevLabManager:
         if not self._create_cluster():
             return False
         
-        # Setup Linkerd
-        if not self._setup_linkerd():
+        # Setup bootstrap infrastructure
+        if not self._setup_registry():
+            return False
+
+        if not self._setup_metrics_server():
+            return False
+
+        if not self._deploy_monitoring():
             return False
         
         console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
@@ -316,8 +322,8 @@ class DevLabManager:
         console.print("\n[green]Access Points:[/green]")
         console.print(f"  • [cyan]Linkerd Viz:[/cyan] http://localhost:50750 (after: ./devlab linkerd viz dashboard)")
         console.print("\n[yellow]Next Steps:[/yellow]")
-        console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes registry, metrics-server, ingress, monitoring)")
-        console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages all infrastructure including metrics-server)")
+        console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes ingress and sample apps)")
+        console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages application infrastructure)")
         console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
 
     def _latest_kind_node_images(self, current_image: str):
@@ -594,20 +600,16 @@ class DevLabManager:
         if not self._check_bootstrap():
             return False
         
-        # Setup container registry (not included in bootstrap for GitOps compatibility)
+        # Ensure the container registry is present
         if not self._setup_registry():
             return False
         
-        # Setup metrics server (not included in bootstrap for GitOps compatibility)
+        # Ensure the metrics server is present
         if not self._setup_metrics_server():
             return False
         
         # Install NGINX Ingress
         if not self._install_nginx_ingress():
-            return False
-        
-        # Deploy monitoring
-        if not self._deploy_monitoring():
             return False
         
         # Deploy sample apps
@@ -625,12 +627,6 @@ class DevLabManager:
         result = self.tools.kubectl(["cluster-info", "--context", f"kind-{CLUSTER_NAME}"], capture_output=True)
         if result.returncode != 0:
             console.print("[red]dev-lab cluster not found or not accessible[/red]")
-            return False
-        
-        # Check Linkerd
-        result = self.tools.kubectl(["get", "ns", "linkerd"], capture_output=True)
-        if result.returncode != 0:
-            console.print("[red]Linkerd not found[/red]")
             return False
         
         # Check registry
