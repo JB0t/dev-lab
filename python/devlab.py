@@ -324,10 +324,14 @@ class DevLabManager:
         images = {}
         url = "https://registry.hub.docker.com/v2/repositories/kindest/node/tags"
         params = {"page_size": 100, "ordering": "last_updated"}
+        ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+        system_ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
+        if not ca_bundle and system_ca_bundle.exists():
+            ca_bundle = str(system_ca_bundle)
 
         try:
             while url:
-                response = requests.get(url, params=params, timeout=15)
+                response = requests.get(url, params=params, timeout=15, verify=ca_bundle or True)
                 response.raise_for_status()
                 payload = response.json()
                 for tag in payload.get("results", []):
