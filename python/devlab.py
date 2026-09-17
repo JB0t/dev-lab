@@ -552,11 +552,25 @@ class DevLabManager:
         """Setup local container registry"""
         console.print("[blue]Setting up local container registry...[/blue]")
         
-        # Create namespace
-        console.print("[blue]Creating registry namespace...[/blue]")
-        self.tools.kubectl([
-            "create", "namespace", "dev-lab-registry"
-        ], context=f"kind-{CLUSTER_NAME}")
+        # Create or reconcile the namespace without failing if it already exists.
+        console.print("[blue]Ensuring registry namespace...[/blue]")
+        namespace_result = self.tools.kubectl([
+            "create", "namespace", "dev-lab-registry",
+            "--dry-run=client", "-o", "yaml"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        if namespace_result.returncode != 0:
+            console.print("[red]Failed to generate registry namespace[/red]")
+            return False
+
+        result = self.tools.kubectl(
+            ["apply", "-f", "-"],
+            input=namespace_result.stdout,
+            text=True,
+            context=f"kind-{CLUSTER_NAME}"
+        )
+        if result.returncode != 0:
+            console.print("[red]Failed to ensure registry namespace[/red]")
+            return False
         
         # Apply registry configuration
         registry_config = CONFIG_DIR / "registry" / "registry-daemonset.yaml"
@@ -564,18 +578,27 @@ class DevLabManager:
             console.print(f"[red]Registry config not found at {registry_config}[/red]")
             return False
         
-        self.tools.kubectl(["apply", "-f", f"/workspace/config/registry/registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
+        result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to apply registry configuration[/red]")
+            return False
         
         # Apply registry UI
         registry_ui_config = CONFIG_DIR / "registry" / "registry-ui.yaml"
         if registry_ui_config.exists():
-            self.tools.kubectl(["apply", "-f", f"/workspace/config/registry/registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
+            result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
+            if result.returncode != 0:
+                console.print("[red]Failed to apply registry UI configuration[/red]")
+                return False
         
         # Wait for registry to be ready
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod", 
             "-l", "app=docker-registry", "-n", "dev-lab-registry", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Registry did not become ready[/red]")
+            return False
         
         console.print("[green]Registry setup completed[/green]")
         return True
@@ -593,15 +616,24 @@ class DevLabManager:
             console.print("[red]Failed to install metrics server[/red]")
             return False
         
-        # Patch for KinD
-        patch = '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
-        result = self.tools.kubectl([
-            "patch", "deployment", "metrics-server", "-n", "kube-system",
-            "--type=json", f"--patch={patch}"
-        ], context=f"kind-{CLUSTER_NAME}")
-        if result.returncode != 0:
-            console.print("[red]Failed to configure metrics server[/red]")
+        # Patch for KinD only when the argument is not already present.
+        args_result = self.tools.kubectl([
+            "get", "deployment", "metrics-server", "-n", "kube-system",
+            "-o", "jsonpath={.spec.template.spec.containers[0].args}"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        if args_result.returncode != 0:
+            console.print("[red]Failed to inspect metrics server configuration[/red]")
             return False
+
+        if "--kubelet-insecure-tls" not in args_result.stdout:
+            patch = '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+            result = self.tools.kubectl([
+                "patch", "deployment", "metrics-server", "-n", "kube-system",
+                "--type=json", f"--patch={patch}"
+            ], context=f"kind-{CLUSTER_NAME}")
+            if result.returncode != 0:
+                console.print("[red]Failed to configure metrics server[/red]")
+                return False
         
         # Wait for metrics server
         result = self.tools.kubectl([
@@ -694,19 +726,10 @@ class DevLabManager:
         """Deploy monitoring stack"""
         console.print("[blue]Deploying monitoring stack...[/blue]")
         
-        # Check if already installed
-        result = self.tools.kubectl([
-            "get", "deployment", "-n", "monitoring", 
-            "kube-prometheus-stack-operator"
-        ], capture_output=True)
-        if result.returncode == 0:
-            console.print("[yellow]Monitoring stack already installed[/yellow]")
-            return True
-        
         # Add Helm repositories
         for repository in [
-            ["repo", "add", "prometheus-community", "https://prometheus-community.github.io/helm-charts"],
-            ["repo", "add", "grafana", "https://grafana.github.io/helm-charts"],
+            ["repo", "add", "--force-update", "prometheus-community", "https://prometheus-community.github.io/helm-charts"],
+            ["repo", "add", "--force-update", "grafana", "https://grafana.github.io/helm-charts"],
             ["repo", "update"],
         ]:
             result = self.tools.helm(repository, capture_output=True, text=True)
