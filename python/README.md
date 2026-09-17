@@ -50,7 +50,7 @@ You can also build the KinD image manually:
 
 ```bash
 cd python/
-docker build -f Dockerfile.kind -t devlab-kind:latest .
+docker build --build-arg KIND_VERSION=<configured-kind-version> --build-arg TARGETARCH=<docker-architecture> -f Dockerfile.kind -t devlab-kind:latest .
 ```
 
 ### KinD Image Components
@@ -59,7 +59,7 @@ The `devlab-kind:latest` image contains:
 
 - **Base**: Alpine Linux (minimal, secure)
 - **Dependencies**: curl, docker-cli
-- **KinD Binary**: Downloaded from GitHub releases (v0.33.0)
+- **KinD Binary**: Downloaded from the version configured in `python/devlab.py`
 - **Docker Access**: Can manage Docker containers via mounted socket
 - **Networking**: Configured for container-to-container communication
 
@@ -72,7 +72,9 @@ FROM alpine:latest
 RUN apk add --no-cache curl docker-cli
 
 # Install KinD
-RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64 && \
+ARG KIND_VERSION
+ARG TARGETARCH
+RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${TARGETARCH} && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
 
