@@ -125,7 +125,18 @@ class ContainerToolRunner:
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
+            "--entrypoint", "/bin/sh",
+            "-v", f"{PROJECT_ROOT / 'python' / 'certs'}:/tmp/local-ca:ro",
             "alpine/helm:latest",
+            "-c",
+            "set -e; bundle=/tmp/devlab-ca.pem; "
+            "if [ -f /etc/ssl/cert.pem ]; then cat /etc/ssl/cert.pem > \"$bundle\"; "
+            "elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt > \"$bundle\"; "
+            "else : > \"$bundle\"; fi; "
+            "find /tmp/local-ca -type f -name '*.crt' -exec cat {} \\; >> \"$bundle\"; "
+            "cp \"$bundle\" /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true; "
+            "export SSL_CERT_FILE=\"$bundle\"; exec helm \"$@\"",
+            "helm",
         ] + args
         
         if not capture_output:
@@ -765,15 +776,10 @@ class DevLabManager:
         else:
             console.print(f"[blue]Using cached host image {image}[/blue]")
 
-        console.print(f"[blue]Loading {image} into KinD nodes...[/blue]")
-        load_result = self.tools.kind([
-            "load", "docker-image", image, "--name", CLUSTER_NAME
-        ])
-        if load_result.returncode != 0:
-            console.print("[yellow]KinD image load failed; importing the Linux image directly...[/yellow]")
-            if not self._import_kind_image_directly(image):
-                console.print(f"[red]Failed to load {image} into KinD[/red]")
-                return False
+        console.print(f"[blue]Loading the host image into KinD nodes...[/blue]")
+        if not self._import_kind_image_directly(image):
+            console.print(f"[red]Failed to load {image} into KinD[/red]")
+            return False
         return True
 
     def _import_kind_image_directly(self, image: str) -> bool:
