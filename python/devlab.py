@@ -21,11 +21,14 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import argparse
 import time
+import re
+import shutil
 
 # Third-party imports (will be in requirements.txt)
 import click
 import docker
 import yaml
+import requests
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -41,13 +44,15 @@ CLUSTER_NAME = "dev-lab"
 REGISTRY_PORT = 5000
 KEY_PATH = str(PROJECT_ROOT / "flux-deploy-key")
 REPO_URL = "ssh://git@github.com/jbotstevens/notes.git"
+KIND_NODE_REPOSITORY = "kindest/node"
+KIND_NODE_TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 # Container tool versions
 TOOL_VERSIONS = {
     "kubectl": "v1.28.3",
     "helm": "v3.13.1",
     "linkerd": "stable-2.14.5",
-    "kind": "v0.20.0",
+    "kind": "v0.33.0",
     "flux": "v2.1.2"
 }
 
@@ -313,6 +318,61 @@ class DevLabManager:
         console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes registry, metrics-server, ingress, monitoring)")
         console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages all infrastructure including metrics-server)")
         console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
+
+    def _latest_kind_node_images(self, current_image: str):
+        """Return the newest published KinD node image for each Kubernetes minor."""
+        images = {}
+        url = "https://registry.hub.docker.com/v2/repositories/kindest/node/tags"
+        params = {"page_size": 100, "ordering": "last_updated"}
+
+        try:
+            while url:
+                response = requests.get(url, params=params, timeout=15)
+                response.raise_for_status()
+                payload = response.json()
+                for tag in payload.get("results", []):
+                    match = KIND_NODE_TAG_PATTERN.match(tag.get("name", ""))
+                    if not match:
+                        continue
+                    version = tuple(int(part) for part in match.groups())
+                    minor = version[:2]
+                    if minor not in images or version > images[minor][0]:
+                        images[minor] = (version, f"{KIND_NODE_REPOSITORY}:v{'.'.join(map(str, version))}")
+                url = payload.get("next")
+                params = None
+        except (requests.RequestException, ValueError) as error:
+            console.print(f"[yellow]Could not list latest KinD node images: {error}[/yellow]")
+
+        current_match = re.match(r"^kindest/node:(v\d+\.\d+\.\d+)$", current_image)
+        if current_match:
+            version = tuple(int(part) for part in current_match.group(1)[1:].split("."))
+            images.setdefault(version[:2], (version, current_image))
+
+        return [image for _, image in sorted(images.values(), reverse=True)]
+
+    def _select_kind_node_image(self, current_image: str):
+        """Let the user keep the configured image or select a current minor release."""
+        options = [f"Keep current: {current_image}"]
+        options.extend(self._latest_kind_node_images(current_image))
+        options = list(dict.fromkeys(options))
+
+        if shutil.which("fzf"):
+            result = subprocess.run(
+                ["fzf", "--height=40%", "--layout=reverse", "--header=Select Kubernetes version"],
+                input="\n".join(options),
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 130:
+                raise KeyboardInterrupt
+            if result.returncode != 0:
+                return current_image
+            selection = result.stdout.strip()
+        else:
+            console.print("[blue]fzf is not installed; choose a Kubernetes version:[/blue]")
+            selection = click.prompt("Selection", type=click.Choice(options), default=options[0])
+
+        return current_image if selection.startswith("Keep current:") else selection
     
     def _create_cluster(self) -> bool:
         """Create KinD cluster"""
@@ -333,10 +393,16 @@ class DevLabManager:
         if not config_file.exists():
             console.print(f"[red]Kind config not found at {config_file}[/red]")
             return False
+
+        config = yaml.safe_load(config_file.read_text()) or {}
+        current_image = config.get("image", "kindest/node:v1.35.1")
+        selected_image = self._select_kind_node_image(current_image)
+        console.print(f"[blue]Using Kubernetes node image: {selected_image}[/blue]")
         
         result = self.tools.kind([
             "create", "cluster", 
             "--config", config_file,
+            "--image", selected_image,
             "--wait", "300s"
         ])
         
@@ -1143,4 +1209,8 @@ def cleanup():
             console.print("[red]Cleanup failed[/red]")
 
 if __name__ == "__main__":
-    cli()
+    try:
+        cli.main(standalone_mode=False)
+    except (KeyboardInterrupt, click.Abort):
+        console.print("\n[yellow]Interrupted. Exiting...[/yellow]")
+        sys.exit(130)

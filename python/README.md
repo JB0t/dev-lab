@@ -28,6 +28,13 @@ The KinD container image is built automatically when:
 2. Builds the image as `devlab-kind:latest`
 3. Uses this image for all KinD operations
 
+### Kubernetes Version Selection
+
+When creating a new cluster, `devlab bootstrap` checks the published
+`kindest/node` images and offers the newest patch release for each Kubernetes
+minor version. Use `fzf` to select a version, or keep the configured image.
+Without `fzf`, the same choices are available through a numbered prompt.
+
 ### Network CA Certificates
 
 If your network performs TLS inspection, place its trusted root certificate(s)
@@ -50,7 +57,7 @@ The `devlab-kind:latest` image contains:
 
 - **Base**: Alpine Linux (minimal, secure)
 - **Dependencies**: curl, docker-cli
-- **KinD Binary**: Downloaded from GitHub releases (v0.20.0)
+- **KinD Binary**: Downloaded from GitHub releases (v0.33.0)
 - **Docker Access**: Can manage Docker containers via mounted socket
 - **Networking**: Configured for container-to-container communication
 
@@ -63,7 +70,7 @@ FROM alpine:latest
 RUN apk add --no-cache curl docker-cli
 
 # Install KinD
-RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 && \
+RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64 && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
 
@@ -214,10 +221,10 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 
 ### Tool Containers Used
 
-- **kubectl**: `bitnami/kubectl:v1.28.3`
+- **kubectl**: `alpine/kubectl:latest`
 - **helm**: `alpine/helm:v3.13.1`
 - **linkerd**: `linkerd/cli-bin:stable-2.14.5`
-- **kind**: `kindest/node:v0.20.0`
+- **kind**: `kindest/node:v1.35.1` (selected in `cluster/kind-config.yaml`)
 - **flux**: `fluxcd/flux-cli:v2.1.2`
 
 ### Volume Mounts

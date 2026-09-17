@@ -11,7 +11,7 @@ RUN apk add --no-cache --no-check-certificate curl ca-certificates docker-cli &&
   update-ca-certificates
 
 # Download and install KinD CLI
-RUN curl -L https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 -o /usr/local/bin/kind && \
+RUN curl -L https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64 -o /usr/local/bin/kind && \
   chmod +x /usr/local/bin/kind
 
 # Verify installation
