@@ -46,6 +46,7 @@ KEY_PATH = str(PROJECT_ROOT / "flux-deploy-key")
 REPO_URL = "ssh://git@github.com/jbotstevens/notes.git"
 KIND_NODE_REPOSITORY = "kindest/node"
 KIND_NODE_TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+DEFAULT_KIND_NODE_IMAGE = "kindest/node:v1.35.8"
 
 # Container tool versions
 TOOL_VERSIONS = {
@@ -399,7 +400,7 @@ class DevLabManager:
             return False
 
         config = yaml.safe_load(config_file.read_text()) or {}
-        current_image = config.get("image", "kindest/node:v1.35.1")
+        current_image = config.get("image", DEFAULT_KIND_NODE_IMAGE)
         selected_image = self._select_kind_node_image(current_image)
         console.print(f"[blue]Using Kubernetes node image: {selected_image}[/blue]")
         

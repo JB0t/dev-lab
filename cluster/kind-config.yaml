@@ -2,7 +2,6 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: dev-lab
-image: kindest/node:v1.35.8
 
 # Note: All nodes are labeled with ingress-ready=true to support NGINX ingress controller
 
