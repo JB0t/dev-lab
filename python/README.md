@@ -24,9 +24,9 @@ The KinD container image is built automatically when:
 
 **Build Process:**
 
-1. Creates `Dockerfile.kind` with Alpine Linux + curl + docker-cli + KinD binary
-2. Builds the image as `devlab-kind:latest`
-3. Uses this image for all KinD operations
+1. Builds `devlab-kind:latest` from `Dockerfile.kind`
+2. Builds `devlab-helm:latest` from `Dockerfile.helm` with the local CA bundle
+3. Uses these images for KinD and Helm operations
 
 ### Kubernetes Version Selection
 

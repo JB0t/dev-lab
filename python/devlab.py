@@ -24,6 +24,7 @@ import time
 import re
 import shutil
 import threading
+import hashlib
 
 # Third-party imports (will be in requirements.txt)
 import click
@@ -119,24 +120,17 @@ class ContainerToolRunner:
         if args:
             console.print(f"[cyan]Running Helm: {' '.join(str(arg) for arg in args)}[/cyan]")
 
+        helm_image = self._ensure_helm_image()
+        if helm_image is None:
+            return subprocess.CompletedProcess([], 1, "", "Failed to build Helm image")
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
-            "--entrypoint", "/bin/sh",
-            "-v", f"{PROJECT_ROOT / 'python' / 'certs'}:/tmp/local-ca:ro",
-            "alpine/helm:latest",
-            "-c",
-            "set -e; bundle=/tmp/devlab-ca.pem; "
-            "if [ -f /etc/ssl/cert.pem ]; then cat /etc/ssl/cert.pem > \"$bundle\"; "
-            "elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt > \"$bundle\"; "
-            "else : > \"$bundle\"; fi; "
-            "find /tmp/local-ca -type f -name '*.crt' -exec cat {} \\; >> \"$bundle\"; "
-            "cp \"$bundle\" /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true; "
-            "export SSL_CERT_FILE=\"$bundle\"; exec helm \"$@\"",
-            "helm",
+            helm_image,
         ] + args
         
         if not capture_output:
@@ -345,6 +339,36 @@ class ContainerToolRunner:
         cmd.extend(args)
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
+
+    def _ensure_helm_image(self) -> Optional[str]:
+        """Build a cached Helm image containing the current local CA bundle."""
+        image_name = "devlab-helm:latest"
+        certificate_files = sorted((PROJECT_ROOT / "python" / "certs").rglob("*.crt"))
+        digest = hashlib.sha256()
+        for certificate in certificate_files:
+            digest.update(certificate.relative_to(PROJECT_ROOT).as_posix().encode())
+            digest.update(certificate.read_bytes())
+        ca_bundle_version = digest.hexdigest()
+
+        inspect_result = subprocess.run([
+            "docker", "image", "inspect", image_name,
+            "--format", "{{index .Config.Labels \"devlab.ca-bundle-version\"}}"
+        ], capture_output=True, text=True)
+        if inspect_result.returncode == 0 and inspect_result.stdout.strip() == ca_bundle_version:
+            return image_name
+
+        dockerfile_path = Path(__file__).parent / "Dockerfile.helm"
+        console.print("[blue]Building local Helm image with custom CA certificates...[/blue]")
+        build_result = subprocess.run([
+            "docker", "build", "-f", str(dockerfile_path),
+            "-t", image_name,
+            "--build-arg", f"CA_BUNDLE_VERSION={ca_bundle_version}",
+            str(dockerfile_path.parent),
+        ], capture_output=True, text=True)
+        if build_result.returncode != 0:
+            console.print(f"[red]Failed to build Helm image:\n{build_result.stderr}[/red]")
+            return None
+        return image_name
     
     def linkerd(self, args, capture_output=False, text=False, input=None, context=None):
         """Run linkerd CLI in container"""
@@ -1491,6 +1515,12 @@ def build_tools():
     except Exception as e:
         console.print(f"[red]Failed to build KinD image: {e}[/red]")
         sys.exit(1)
+
+    helm_image = manager.tools._ensure_helm_image()
+    if helm_image is None:
+        console.print("[red]Failed to build Helm image[/red]")
+        sys.exit(1)
+    console.print(f"[green]Helm image ready: {helm_image}[/green]")
     
     console.print("[green]All tool images built successfully![/green]")
 
