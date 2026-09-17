@@ -290,7 +290,7 @@ class DevLabManager:
     
     def _show_bootstrap_info(self) -> None:
         """Display helpful information after bootstrap"""
-         console.print("\n[bold cyan]What's Next?[/bold cyan]")
+        console.print("\n[bold cyan]What's Next?[/bold cyan]")
         console.print("\n[green]Available Commands:[/green]")
         console.print("  • [cyan]./devlab kubectl get nodes[/cyan] - Check cluster status")
         console.print("  • [cyan]./devlab linkerd check[/cyan] - Verify Linkerd installation")
@@ -825,7 +825,7 @@ class DevLabManager:
     
     def _show_deploy_key(self):
         """Display deploy key for GitHub setup"""
-         console.print("\n[bold blue]GitHub Deploy Key Setup[/bold blue]\n")
+        console.print("\n[bold blue]GitHub Deploy Key Setup[/bold blue]\n")
         
         console.print("[cyan]Add this public key as a deploy key to your GitHub repository:[/cyan]")
         console.print(f"[cyan]Repository:[/cyan] https://github.com/jbotstevens/notes")
@@ -909,7 +909,7 @@ class DevLabManager:
     
     def _wait_for_gitops_deployment(self):
         """Wait for GitOps deployment completion"""
-         console.print("\n[bold blue]Waiting for GitOps Deployment[/bold blue]\n")
+        console.print("\n[bold blue]Waiting for GitOps Deployment[/bold blue]\n")
         
         console.print("[blue]Monitoring infrastructure deployment...[/blue]")
         console.print("[cyan]This may take several minutes as Flux deploys:[/cyan]")
@@ -965,7 +965,7 @@ class DevLabManager:
                 if line.strip():
                     console.print(line)
         
-         console.print("\n[bold blue]Access Information:[/bold blue]")
+        console.print("\n[bold blue]Access Information:[/bold blue]")
         table = Table(title="Service Access")
         table.add_column("Service", style="cyan")
         table.add_column("Command", style="green")
@@ -978,7 +978,7 @@ class DevLabManager:
         
         console.print(table)
         
-         console.print("\n[bold blue]GitOps Monitoring Commands:[/bold blue]")
+        console.print("\n[bold blue]GitOps Monitoring Commands:[/bold blue]")
         console.print("• ./devlab flux -- get all -A                    # Overview of all Flux resources")
         console.print("• ./devlab flux -- logs --all-namespaces        # Controller logs")
         console.print("• watch ./devlab flux -- get kustomizations -A  # Watch reconciliation")
@@ -1102,7 +1102,7 @@ def status():
 @cli.command(name='build-tools')
 def build_tools():
     """Build/rebuild local tool container images"""
-         console.print("[bold blue]Building Local Tool Images[/bold blue]")
+    console.print("[bold blue]Building Local Tool Images[/bold blue]")
     
     manager = DevLabManager()
     
