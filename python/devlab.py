@@ -23,6 +23,7 @@ import argparse
 import time
 import re
 import shutil
+import threading
 
 # Third-party imports (will be in requirements.txt)
 import click
@@ -90,6 +91,12 @@ class ContainerToolRunner:
     
     def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run kubectl in container"""
+        if args and args[0] == "apply":
+            target = " ".join(str(arg) for arg in args[1:]) or "manifest from stdin"
+            if target == "-f -":
+                target = "generated manifest from stdin"
+            console.print(f"[cyan]Applying Kubernetes resources: {target}[/cyan]")
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -109,6 +116,9 @@ class ContainerToolRunner:
     
     def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run helm in container"""
+        if args:
+            console.print(f"[cyan]Running Helm: {' '.join(str(arg) for arg in args)}[/cyan]")
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -118,7 +128,48 @@ class ContainerToolRunner:
             "alpine/helm:latest",
         ] + args
         
-        return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
+        if not capture_output:
+            return subprocess.run(cmd, text=text, input=input)
+
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE if input is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+        )
+        stdout_lines = []
+        stderr_lines = []
+
+        def stream_output(stream, lines, target):
+            for line in iter(stream.readline, "" if text else b""):
+                lines.append(line)
+                target.write(line)
+                target.flush()
+            stream.close()
+
+        stdout_thread = threading.Thread(
+            target=stream_output, args=(process.stdout, stdout_lines, sys.stdout)
+        )
+        stderr_thread = threading.Thread(
+            target=stream_output, args=(process.stderr, stderr_lines, sys.stderr)
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        if input is not None:
+            process.stdin.write(input)
+            process.stdin.close()
+        return_code = process.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+        return subprocess.CompletedProcess(
+            cmd,
+            return_code,
+            "".join(stdout_lines) if text else b"".join(stdout_lines),
+            "".join(stderr_lines) if text else b"".join(stderr_lines),
+        )
     
     def kind(self, args: List[str], capture_output: bool = False) -> subprocess.CompletedProcess:
         """Run kind CLI - try host first, then local container image as fallback"""
