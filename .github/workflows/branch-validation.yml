@@ -29,29 +29,29 @@ jobs:
           if [[ "$BRANCH_NAME" =~ ^feature/.+ ]]; then
             if [[ "$TARGET_BRANCH" == "dev" ]]; then
               VALID_BRANCH=true
-              REASON="✅ Feature branch targeting dev (will trigger MINOR version bump)"
+              REASON="Feature branch targeting dev (will trigger MINOR version bump)"
             else
-              REASON="❌ Feature branches must target 'dev' branch"
+              REASON="Feature branches must target 'dev' branch"
             fi
           elif [[ "$BRANCH_NAME" =~ ^patch/.+ ]]; then
             if [[ "$TARGET_BRANCH" == "dev" ]]; then
               VALID_BRANCH=true
-              REASON="✅ Patch branch targeting dev (will trigger PATCH version bump)"
+              REASON="Patch branch targeting dev (will trigger PATCH version bump)"
             else
-              REASON="❌ Patch branches must target 'dev' branch"
+              REASON="Patch branches must target 'dev' branch"
             fi
           elif [[ "$BRANCH_NAME" == "dev" ]]; then
             if [[ "$TARGET_BRANCH" == "main" ]]; then
               VALID_BRANCH=true
-              REASON="✅ Dev branch targeting main (will trigger MAJOR version bump)"
+              REASON="Dev branch targeting main (will trigger MAJOR version bump)"
             else
-              REASON="❌ Dev branch must target 'main' branch"
+              REASON="Dev branch must target 'main' branch"
             fi
           elif [[ "$BRANCH_NAME" =~ ^(hotfix|docs|ci)/.+ ]]; then
             VALID_BRANCH=true
-            REASON="✅ Utility branch (no version bump)"
+            REASON="Utility branch (no version bump)"
           else
-            REASON="❌ Invalid branch name. Use: feature/, patch/, hotfix/, docs/, or ci/"
+            REASON="Invalid branch name. Use: feature/, patch/, hotfix/, docs/, or ci/"
           fi
           
           echo "Branch validation result: $REASON"
@@ -80,17 +80,17 @@ jobs:
             const target = '${{ github.base_ref }}';
             
             let versionImpact = 'No version bump';
-            let emoji = '📝';
+            let emoji = '';
             
             if (branch.startsWith('feature/') && target === 'dev') {
               versionImpact = 'MINOR version bump';
-              emoji = '🚀';
+              emoji = '';
             } else if (branch.startsWith('patch/') && target === 'dev') {
               versionImpact = 'PATCH version bump';
-              emoji = '🔧';
+               emoji = '';
             } else if (branch === 'dev' && target === 'main') {
               versionImpact = 'MAJOR version bump';
-              emoji = '🎉';
+              emoji = '';
             }
             
             const comment = `## ${emoji} Semantic Versioning Impact
@@ -104,7 +104,7 @@ jobs:
             - \`dev\` → \`main\` = Major version bump (e.g., v1.2.0 → v2.0.0)
             - Other branches = No version bump
             
-            ${versionImpact !== 'No version bump' ? '⚠️ **Note:** Version will be automatically tagged when this PR is merged.' : ''}`;
+            ${versionImpact !== 'No version bump' ? '**Note:** Version will be automatically tagged when this PR is merged.' : ''}`;
             
             try {
               const result = await github.rest.issues.createComment({
@@ -114,11 +114,11 @@ jobs:
                 body: comment
               });
               
-              console.log('✅ PR comment created successfully');
+              console.log('PR comment created successfully');
               console.log('Comment URL:', result.data.html_url);
               
             } catch (error) {
-              console.error('❌ Failed to create PR comment:', error.message);
+              console.error('Failed to create PR comment:', error.message);
               console.error('Error details:', error);
               
               // Set as warning instead of failure since branch validation already passed
@@ -135,17 +135,17 @@ jobs:
           
           # Determine version impact
           VERSION_IMPACT="No version bump"
-          EMOJI="📝"
+          EMOJI=""
           
           if [[ "$BRANCH_NAME" =~ ^feature/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
             VERSION_IMPACT="MINOR version bump"
-            EMOJI="🚀"
+            EMOJI=""
           elif [[ "$BRANCH_NAME" =~ ^patch/.+ ]] && [[ "$TARGET_BRANCH" == "dev" ]]; then
             VERSION_IMPACT="PATCH version bump"
-            EMOJI="🔧"
+            EMOJI=""
           elif [[ "$BRANCH_NAME" == "dev" ]] && [[ "$TARGET_BRANCH" == "main" ]]; then
             VERSION_IMPACT="MAJOR version bump"
-            EMOJI="🎉"
+            EMOJI=""
           fi
           
           # Create comment via gh CLI
@@ -160,6 +160,6 @@ jobs:
           - \`dev\` → \`main\` = Major version bump
           - Other branches = No version bump
           
-          ⚠️ **Note:** Created via fallback method due to API authentication issue."
+          **Note:** Created via fallback method due to API authentication issue."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

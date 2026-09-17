@@ -14,15 +14,15 @@ log() {
 }
 
 success() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}✓ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN} $1${NC}"
 }
 
 error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED}✗ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED} $1${NC}"
 }
 
 warn() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW}⚠ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW} $1${NC}"
 }
 
 # Script directory
@@ -191,32 +191,32 @@ show_access_info() {
     echo ""
     success "=== Service Mesh Test Environment Ready ==="
     echo ""
-    echo "🔗 Linkerd Dashboard:"
+    echo "Linkerd Dashboard:"
     echo "   kubectl port-forward -n linkerd-viz svc/web 8084:8084"
     echo "   http://localhost:8084"
     echo ""
-    echo "📱 Test Application (Browser Access):"
+    echo "Test Application (Browser Access):"
     echo "   http://mesh-test.local:30080"
     echo "   http://localhost:30080"
     echo ""
-    echo "📱 Test Application (Port Forward):"
+    echo "Test Application (Port Forward):"
     echo "   kubectl port-forward -n mesh-test svc/mesh-test-app-service 8080:80"
     echo "   http://localhost:8080"
     echo ""
-    echo "📊 Application Metrics:"
+    echo "Application Metrics:"
     echo "   http://mesh-test.local:30080/metrics"
     echo ""
-    echo "🏥 Health Checks:"
+    echo "Health Checks:"
     echo "   http://mesh-test.local:30080/health"
     echo "   http://mesh-test.local:30080/health/live"
     echo "   http://mesh-test.local:30080/health/ready"
     echo ""
-    echo "🔍 Linkerd Commands:"
+    echo "Linkerd Commands:"
     echo "   linkerd viz stat -n mesh-test"
     echo "   linkerd viz top -n mesh-test"
     echo "   linkerd viz tap -n mesh-test"
     echo ""
-    echo "🐛 Debugging:"
+    echo "Debugging:"
     echo "   kubectl get pods -n mesh-test"
     echo "   kubectl logs -n mesh-test -l app=mesh-test-app"
     echo "   kubectl describe pod -n mesh-test <pod-name>"

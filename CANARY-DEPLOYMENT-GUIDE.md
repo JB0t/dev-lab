@@ -208,7 +208,7 @@ Visit: `<http://localhost:50750>`
 
 ## Step 6: Possible Outcomes
 
-### 6.1 Successful Promotion ✅
+### 6.1 Successful Promotion 
 
 ```bash
 # Successful canary will show:
@@ -225,7 +225,7 @@ kubectl get canary mesh-test-app -n mesh-test
 4. Old primary pods are terminated
 5. Traffic routes 100% to v2
 
-### 6.2 Automatic Rollback ❌
+### 6.2 Automatic Rollback 
 
 ```bash
 # Failed canary will show:
@@ -376,10 +376,10 @@ kubectl annotate canary mesh-test-app -n mesh-test flagger.app/restart=$(date +%
 
 This GitOps canary deployment process provides:
 
-- ✅ **Zero-downtime deployments**
-- ✅ **Automated rollback on failures**  
-- ✅ **Comprehensive testing at each step**
-- ✅ **Real-time traffic and metrics monitoring**
-- ✅ **Full GitOps workflow integration**
+- **Zero-downtime deployments**
+- **Automated rollback on failures**  
+- **Comprehensive testing at each step**
+- **Real-time traffic and metrics monitoring**
+- **Full GitOps workflow integration**
 
-The entire process is declarative, version-controlled, and automatically handles the complexity of progressive traffic shifting and validation! 🚀
+The entire process is declarative, version-controlled, and automatically handles the complexity of progressive traffic shifting and validation! 

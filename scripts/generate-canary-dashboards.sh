@@ -10,7 +10,7 @@ OUTPUT_DIR="${2:-./generated-dashboards}"
 GRAFANA_URL="${GRAFANA_URL:-http://localhost:3000}"
 GRAFANA_TOKEN="${GRAFANA_TOKEN:-}"
 
-echo "🔍 Discovering canary deployments..."
+echo "Discovering canary deployments..."
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -19,11 +19,11 @@ mkdir -p "$OUTPUT_DIR"
 CANARIES=$(kubectl get canaries -A -o json | jq -r '.items[] | "\(.metadata.namespace):\(.metadata.name)"')
 
 if [ -z "$CANARIES" ]; then
-    echo "❌ No canary deployments found"
+    echo "No canary deployments found"
     exit 1
 fi
 
-echo "📊 Found canary deployments:"
+echo "Found canary deployments:"
 echo "$CANARIES"
 echo ""
 
@@ -37,7 +37,7 @@ for canary in $CANARIES; do
         continue
     fi
     
-    echo "🎨 Generating dashboard for $namespace/$app_name..."
+    echo "Generating dashboard for $namespace/$app_name..."
     
     # Create application-specific dashboard
     cat > "$OUTPUT_DIR/${namespace}-${app_name}-canary-dashboard.json" << EOF
@@ -418,17 +418,17 @@ for canary in $CANARIES; do
 }
 EOF
 
-    echo "✅ Generated dashboard: $OUTPUT_DIR/${namespace}-${app_name}-canary-dashboard.json"
+    echo "Generated dashboard: $OUTPUT_DIR/${namespace}-${app_name}-canary-dashboard.json"
 done
 
 echo ""
-echo "🎯 Dashboard Generation Summary:"
-echo "📁 Output directory: $OUTPUT_DIR"
-echo "📊 Generated dashboards:"
+echo "Dashboard Generation Summary:"
+echo "Output directory: $OUTPUT_DIR"
+echo "Generated dashboards:"
 ls -la "$OUTPUT_DIR"/*.json 2>/dev/null || echo "  (No dashboards generated)"
 
 echo ""
-echo "🚀 Next Steps:"
+echo "Next Steps:"
 echo "1. Import the multi-app dashboard: multi-app-canary-dashboard.json"
 echo "2. Import individual app dashboards from $OUTPUT_DIR/"
 echo "3. Configure Grafana data source pointing to Prometheus"
@@ -437,7 +437,7 @@ echo "4. Test canary deployments by updating image tags and APP_VERSION"
 # If Grafana token is provided, attempt to upload dashboards
 if [ -n "$GRAFANA_TOKEN" ]; then
     echo ""
-    echo "📤 Uploading dashboards to Grafana..."
+    echo "Uploading dashboards to Grafana..."
     
     for dashboard_file in "$OUTPUT_DIR"/*.json; do
         if [ -f "$dashboard_file" ]; then
@@ -454,9 +454,9 @@ if [ -n "$GRAFANA_TOKEN" ]; then
                 "$GRAFANA_URL/api/dashboards/db")
             
             if echo "$response" | jq -e '.status == "success"' > /dev/null; then
-                echo "✅ Successfully uploaded $(basename "$dashboard_file")"
+                echo "Successfully uploaded $(basename "$dashboard_file")"
             else
-                echo "❌ Failed to upload $(basename "$dashboard_file"): $response"
+                echo "Failed to upload $(basename "$dashboard_file"): $response"
             fi
         fi
     done

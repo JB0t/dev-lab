@@ -65,7 +65,7 @@ jobs:
             # Set up PAT-based authentication for push
             git remote set-url origin https://x-access-token:${{ secrets.WORKFLOW_PAT }}@github.com/${{ github.repository }}.git
             git push origin HEAD:${{ github.ref_name }}
-            echo "✅ Markdown fixes pushed successfully"
+            echo "Markdown fixes pushed successfully"
           else
-            echo "ℹ️ No changes were made by markdown fixer"
+            echo "No changes were made by markdown fixer"
           fi

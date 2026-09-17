@@ -208,7 +208,7 @@ install_jq() {
 
 # Main installation function
 main() {
-    echo "🔧 Dev Lab Prerequisites Installation"
+    echo "Dev Lab Prerequisites Installation"
     echo ""
     
     local os_type
@@ -261,7 +261,7 @@ main() {
     done
     
     echo ""
-    success "🎉 All prerequisites installed successfully!"
+    success "All prerequisites installed successfully!"
     echo ""
     
     if [[ " ${to_install[*]} " =~ " docker " ]]; then

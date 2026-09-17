@@ -210,7 +210,7 @@ main() {
     case "${1:-bootstrap}" in
         "bootstrap"|"setup"|"")
             echo -e "${PURPLE}=================================================${NC}"
-            echo -e "${PURPLE}🚀 Dev Lab Bootstrap Process Started${NC}"
+            echo -e "${PURPLE}Dev Lab Bootstrap Process Started${NC}"
             echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
             echo -e "${PURPLE}=================================================${NC}"
             echo ""
@@ -228,7 +228,7 @@ main() {
             
             echo ""
             echo -e "${PURPLE}=================================================${NC}"
-            echo -e "${GREEN}✅ Dev Lab Bootstrap Process Completed${NC}"
+            echo -e "${GREEN}Dev Lab Bootstrap Process Completed${NC}"
             echo -e "${PURPLE}   Start Time: $BOOTSTRAP_START_FORMATTED${NC}"
             echo -e "${PURPLE}   End Time:   $BOOTSTRAP_END_FORMATTED${NC}"
             echo -e "${CYAN}   Duration:   ${BOOTSTRAP_DURATION} seconds${NC}"

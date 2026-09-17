@@ -191,14 +191,14 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 
 ### Expected Results
 
-✅ **Successful Zero-Downtime Deployment**:
+**Successful Zero-Downtime Deployment**:
 
 - 0 request failures during deployment
 - 0 health check failures
 - Smooth traffic transition between versions
 - mTLS encryption maintained
 
-❌ **Failed Deployment** (triggers rollback):
+**Failed Deployment** (triggers rollback):
 
 - Increased error rate in canary version
 - Health check failures

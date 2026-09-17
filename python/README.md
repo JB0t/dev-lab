@@ -221,11 +221,11 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 
 ### Benefits
 
-- ✅ **Consistent versions** across all platforms
-- ✅ **No local installation** required
-- ✅ **Easy updates** - just change container tags
-- ✅ **Isolation** - no conflicts with existing tools
-- ✅ **Security** - containers provide sandboxing
+- **Consistent versions** across all platforms
+- **No local installation** required
+- **Easy updates** - just change container tags
+- **Isolation** - no conflicts with existing tools
+- **Security** - containers provide sandboxing
 
 ## Technical Details
 

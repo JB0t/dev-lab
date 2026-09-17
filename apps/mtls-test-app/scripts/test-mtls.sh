@@ -3,7 +3,7 @@
 echo "=== mTLS Demonstration Test ==="
 echo ""
 
-echo "🔍 Testing mTLS status using ephemeral curl pods"
+echo "Testing mTLS status using ephemeral curl pods"
 echo "   Creating temporary test pods as needed..."
 echo ""
 
@@ -30,22 +30,22 @@ run_curl_test() {
         --command -- curl -s --max-time 10 "$url" 2>/dev/null | head -3
 }
 
-echo "📊 1. Testing connection to PLAIN HTTP service (no mTLS):"
+echo "1. Testing connection to PLAIN HTTP service (no mTLS):"
 run_curl_test "mtls-test-plain" "http://test-app-plain-svc.mtls-test-plain.svc.cluster.local:9898/version" "Plain HTTP connection (no Linkerd sidecar)"
 echo ""
 
-echo "🔒 2. Testing connection to SECURE service (with mTLS):"
+echo "2. Testing connection to SECURE service (with mTLS):"
 run_curl_test "mtls-test-secure" "http://test-app-secure-svc.mtls-test-secure.svc.cluster.local:9898/version" "mTLS connection (with Linkerd sidecar)"
 echo ""
 
-echo "📈 3. Checking Prometheus metrics for mTLS status:"
+echo "3. Checking Prometheus metrics for mTLS status:"
 echo ""
 
 # Check if Prometheus is available
 if ! curl -s "http://localhost:9091/api/v1/query?query=up" > /dev/null 2>&1; then
-    echo "   ⚠️  Prometheus not available at localhost:9091"
-    echo "   💡 Run: kubectl port-forward -n linkerd-viz svc/prometheus 9091:9090"
-    echo "   📊 Skipping metrics check..."
+    echo "    Prometheus not available at localhost:9091"
+    echo "   Run: kubectl port-forward -n linkerd-viz svc/prometheus 9091:9090"
+    echo "   Skipping metrics check..."
     echo ""
 else
 
@@ -78,10 +78,10 @@ curl -s "http://localhost:9091/api/v1/query?query=sum(rate(response_total{namesp
 fi
 
 echo ""
-echo "🎯 4. Summary:"
+echo "4. Summary:"
 echo "   - Plain namespace: NO Linkerd injection = NO mTLS"
 echo "   - Secure namespace: WITH Linkerd injection = mTLS enabled"
 echo "   - Check your Grafana dashboard for real-time mTLS metrics!"
 echo ""
-echo "🔧 5. Cleanup when done:"
+echo "5. Cleanup when done:"
 echo "   kubectl delete namespace mtls-test-plain mtls-test-secure"

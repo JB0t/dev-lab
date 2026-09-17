@@ -4,7 +4,7 @@
 
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
-> **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
+> **For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
 
 ## Features
 
@@ -366,13 +366,13 @@ The mesh test application demonstrates production patterns:
 
 ### Production-Ready Features
 
-- ✅ **Health Probes**: Kubernetes liveness and readiness checks
-- ✅ **Graceful Shutdown**: Proper SIGTERM handling
-- ✅ **Resource Limits**: CPU and memory constraints
-- ✅ **Security**: mTLS encryption for all service communication
-- ✅ **Observability**: Comprehensive metrics and tracing
-- ✅ **Zero Downtime**: Proven deployment strategies
-- ✅ **Automated Testing**: Load generation and health verification
+- **Health Probes**: Kubernetes liveness and readiness checks
+- **Graceful Shutdown**: Proper SIGTERM handling
+- **Resource Limits**: CPU and memory constraints
+- **Security**: mTLS encryption for all service communication
+- **Observability**: Comprehensive metrics and tracing
+- **Zero Downtime**: Proven deployment strategies
+- **Automated Testing**: Load generation and health verification
 
 ## Monitoring Access
 
@@ -557,9 +557,9 @@ Edit `cluster/kind-config.yaml` to:
 
 This project uses **automated semantic versioning** based on branch naming conventions:
 
-- 🚀 `feature/*` → `dev` = Minor version bump
-- 🔧 `patch/*` → `dev` = Patch version bump  
-- 🎉 `dev` → `main` = Major version bump
+- `feature/*` → `dev` = Minor version bump
+- `patch/*` → `dev` = Patch version bump  
+- `dev` → `main` = Major version bump
 
 Check current version and rules:
 
