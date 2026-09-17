@@ -101,6 +101,7 @@ def create_wrapper_scripts(venv_info):
     """Create platform-specific wrapper scripts"""
     script_dir = Path(__file__).parent
     venv_python = venv_info["python_executable"]
+    venv_bin_dir = "Scripts" if sys.platform == "win32" else "bin"
     
     # Create cross-platform wrapper
     wrapper_content = f'''#!/usr/bin/env python3
@@ -113,7 +114,7 @@ import subprocess
 from pathlib import Path
 
 # Use the virtual environment Python
-venv_python = Path(__file__).parent / "venv" / {"Scripts" if sys.platform == "win32" else "bin"} / "python"
+venv_python = Path(__file__).parent / "venv" / "{venv_bin_dir}" / "python"
 devlab_script = Path(__file__).parent / "devlab.py"
 
 # Pass all arguments to the actual script
