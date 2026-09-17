@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to the Dev Lab project! This guide will help you understand our development workflow and semantic versioning process.
 
-## 🔄 Semantic Versioning Workflow
+## Semantic Versioning Workflow
 
 This project uses **automated semantic versioning** based on branch naming conventions and merge patterns.
 
@@ -15,7 +15,7 @@ This project uses **automated semantic versioning** based on branch naming conve
 | `dev` | `main` | **Major** | v1.2.0 → v2.0.0 |
 | `docs/*`, `ci/*`, `hotfix/*` | any | **None** | No version change |
 
-### 🚀 Development Workflow
+### Development Workflow
 
 #### 1. Feature Development
 
@@ -31,7 +31,7 @@ git commit -m "feat: add new feature"
 git push origin feature/describe-your-feature
 
 # Create PR: feature/describe-your-feature → dev
-# ✅ Will trigger MINOR version bump when merged
+# Will trigger MINOR version bump when merged
 ```
 
 #### 2. Bug Fixes
@@ -48,15 +48,15 @@ git commit -m "fix: resolve specific issue"
 git push origin patch/fix-specific-issue
 
 # Create PR: patch/fix-specific-issue → dev
-# ✅ Will trigger PATCH version bump when merged
+# Will trigger PATCH version bump when merged
 ```
 
 #### 3. Release to Production
 
 ```bash
 # Create PR: dev → main
-# ✅ Will trigger MAJOR version bump when merged
-# 🎉 Creates GitHub release automatically
+# Will trigger MAJOR version bump when merged
+# Creates GitHub release automatically
 ```
 
 #### 4. Documentation & CI Changes
@@ -70,7 +70,7 @@ git checkout -b hotfix/emergency-fix
 # Can target any branch without version changes
 ```
 
-## 📋 Branch Naming Conventions
+## Branch Naming Conventions
 
 ### Required Patterns
 
@@ -98,7 +98,7 @@ git checkout -b hotfix/emergency-fix
   - Example: `hotfix/security-vulnerability`
   - Target: Any branch
 
-## 🛠️ Version Management Tools
+## Version Management Tools
 
 ### Check Current Version
 
@@ -124,7 +124,7 @@ The current version is stored in:
 - Version badge in `README.md`
 - Git tags (automatically created)
 
-## 🤖 Automated Processes
+## Automated Processes
 
 ### On Pull Request
 
@@ -139,7 +139,7 @@ The current version is stored in:
 - **Release creation**: Creates GitHub release with changelog
 - **Version file update**: Updates VERSION file and README.md
 
-## 📝 Commit Message Guidelines
+## Commit Message Guidelines
 
 While not strictly enforced, we recommend following conventional commits:
 
@@ -153,7 +153,7 @@ test: add tests
 chore: maintenance tasks
 ```
 
-## 🔍 Examples
+## Examples
 
 ### Adding a New Feature
 
@@ -201,7 +201,7 @@ git push origin patch/prometheus-config
 # 3. GitHub release created automatically
 ```
 
-## ⚠️ Important Notes
+## Important Notes
 
 1. **Always target the correct branch**:
    - Features and patches must target `dev`
@@ -219,14 +219,14 @@ git push origin patch/prometheus-config
    - All PRs should include appropriate tests
    - CI must pass before merging
 
-## 🆘 Getting Help
+## Getting Help
 
 - Check version status: `./scripts/version-info.sh`
 - View versioning rules: `./scripts/version-info.sh rules`
 - Open an issue for questions
 - Ask in PR comments for guidance
 
-## 🏗️ Dev Lab Specific Guidelines
+## Dev Lab Specific Guidelines
 
 ### Infrastructure Changes
 
@@ -248,4 +248,4 @@ git push origin patch/prometheus-config
 
 ---
 
-Thank you for contributing to Dev Lab! 🚀
+Thank you for contributing to Dev Lab! 

@@ -15,15 +15,15 @@ log() {
 }
 
 success() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}✓ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN} $1${NC}"
 }
 
 error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED}✗ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED} $1${NC}"
 }
 
 warn() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW}⚠ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW} $1${NC}"
 }
 
 echo "=== Testing Dev Lab Environment ==="

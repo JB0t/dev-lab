@@ -527,7 +527,7 @@ if [ -z "$SERVICE_NAME" ]; then
     exit 1
 fi
 
-echo "🚀 Creating canary-enabled service: $SERVICE_NAME (port: $PORT)"
+echo "Creating canary-enabled service: $SERVICE_NAME (port: $PORT)"
 
 # Create service directory structure
 SERVICE_DIR="apps/$SERVICE_NAME"
@@ -542,7 +542,7 @@ replace_template() {
 }
 
 # Generate Kubernetes manifests from templates
-echo "📝 Generating Kubernetes manifests..."
+echo "Generating Kubernetes manifests..."
 
 replace_template "templates/base-template.yaml" "$SERVICE_DIR/k8s/base.yaml"
 replace_template "templates/canary-template.yaml" "$SERVICE_DIR/k8s/canary.yaml"
@@ -612,7 +612,7 @@ CMD ["node", "server.js"]
 EOF
 
 # Create GitOps kustomization entry
-echo "🔄 Adding GitOps configuration..."
+echo "Adding GitOps configuration..."
 
 KUSTOMIZATION_ENTRY="
 ---
@@ -645,7 +645,7 @@ echo "$KUSTOMIZATION_ENTRY" >> clusters/dev-lab/dev-lab-kustomizations.yaml
 
 echo "Service $SERVICE_NAME created successfully!"
 echo ""
-echo "📋 Next steps:"
+echo "Next steps:"
 echo "   1. Review and customize the generated files in $SERVICE_DIR/"
 echo "   2. Build and push the Docker image:"
 echo "      cd $SERVICE_DIR"
@@ -657,7 +657,7 @@ echo "   4. Verify canary status:"
 echo "      kubectl get canary $SERVICE_NAME -n $SERVICE_NAME"
 echo "   5. Test canary deployment by updating image version"
 echo ""
-echo "🔧 Customization points:"
+echo "Customization points:"
 echo "   - Update functional tests in $SERVICE_DIR/k8s/canary.yaml"
 echo "   - Adjust resource limits in $SERVICE_DIR/k8s/base.yaml"
 echo "   - Modify health check logic in $SERVICE_DIR/server.js"
@@ -675,7 +675,7 @@ chmod +x scripts/create-canary-service.sh
 - **Solution**: Use only basic bash/curl commands, avoid complex JSON parsing
 
 ```bash
-# ❌ Avoid this (requires jq)
+# Avoid this (requires jq)
 order_id=$(echo "$response" | jq -r '.id')
 
 # Use this instead
@@ -732,7 +732,7 @@ livenessProbe:
 - **Solution**: Design for graceful degradation
 
 ```javascript
-// ❌ Hard dependency
+// Hard dependency
 const redis = require('redis');
 const client = redis.createClient(redisUrl);
 

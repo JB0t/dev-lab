@@ -2,7 +2,7 @@
 
 This directory contains the minimal, essential configuration for a working Linkerd service mesh canary deployment using Flagger and Prometheus metrics.
 
-## ✅ Essential Files
+## Essential Files
 
 ### Core Application
 
@@ -23,7 +23,7 @@ This directory contains the minimal, essential configuration for a working Linke
 
 - **`kustomization.yaml`** - Kustomize configuration for GitOps deployment
 
-## 🔧 Key Configuration Details
+## Key Configuration Details
 
 ### Flagger Bypass for Prometheus
 
@@ -49,7 +49,7 @@ metadata:
     release: kube-prometheus-stack
 ```
 
-## 🚀 Deployment
+## Deployment
 
 Deploy with Kustomize:
 
@@ -63,7 +63,7 @@ Or deploy individual files:
 kubectl apply -f base.yaml -f redis.yaml -f canary.yaml -f loadtester.yaml -f linkerd-metric-templates.yaml -f linkerd-podmonitor-debug.yaml
 ```
 
-## 📊 Canary Progression
+## Canary Progression
 
 The canary will automatically progress through these weights based on success rate metrics:
 
@@ -73,7 +73,7 @@ Success rate threshold: **95%**
 Evaluation interval: **30 seconds**  
 Max weight: **50%**
 
-## 🔍 Monitoring
+## Monitoring
 
 Check canary status:
 
@@ -87,7 +87,7 @@ View Flagger logs:
 kubectl logs -n linkerd deployment/flagger
 ```
 
-## 🎯 Prerequisites
+## Prerequisites
 
 1. **Linkerd** service mesh installed and running
 2. **Flagger** deployed in linkerd namespace with proxy bypass configured

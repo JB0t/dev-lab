@@ -32,28 +32,28 @@ def run_command(cmd, check=True, capture_output=False):
 def check_python():
     """Check Python version"""
     if sys.version_info < (3, 8):
-        print("❌ Python 3.8 or higher is required")
+        print("Python 3.8 or higher is required")
         return False
     
-    print(f"✅ Python {sys.version.split()[0]} detected")
+    print(f"Python {sys.version.split()[0]} detected")
     return True
 
 def check_docker():
     """Check if Docker is available"""
     try:
         result = run_command("docker --version", capture_output=True)
-        print(f"✅ {result.stdout.strip()}")
+        print(f"{result.stdout.strip()}")
         
         # Check if Docker daemon is running
         result = run_command("docker info", capture_output=True, check=False)
         if result.returncode != 0:
-            print("❌ Docker daemon is not running. Please start Docker.")
+            print("Docker daemon is not running. Please start Docker.")
             return False
         
-        print("✅ Docker daemon is running")
+        print("Docker daemon is running")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("❌ Docker is not installed or not in PATH")
+        print("Docker is not installed or not in PATH")
         print("Please install Docker from: https://docs.docker.com/get-docker/")
         return False
 
@@ -63,11 +63,11 @@ def setup_venv():
     venv_dir = script_dir / "venv"
     
     if venv_dir.exists():
-        print("🔄 Virtual environment already exists")
+        print("Virtual environment already exists")
     else:
-        print("🐍 Creating Python virtual environment...")
+        print("Creating Python virtual environment...")
         run_command(f"{sys.executable} -m venv {venv_dir}")
-        print("✅ Virtual environment created")
+        print("Virtual environment created")
     
     # Determine activation script based on platform
     if platform.system() == "Windows":
@@ -82,12 +82,12 @@ def setup_venv():
     # Install requirements
     requirements_file = script_dir / "requirements.txt"
     if requirements_file.exists():
-        print("📦 Installing Python dependencies...")
+        print("Installing Python dependencies...")
         run_command(f"{pip_executable} install --upgrade pip")
         run_command(f"{pip_executable} install -r {requirements_file}")
-        print("✅ Dependencies installed")
+        print("Dependencies installed")
     else:
-        print(f"❌ Requirements file not found: {requirements_file}")
+        print(f"Requirements file not found: {requirements_file}")
         return False
     
     return {
@@ -145,11 +145,11 @@ def show_usage_instructions(wrapper_file):
     script_dir = Path(__file__).parent
     
     print("\n" + "="*60)
-    print("🎉 Dev Lab Setup Complete!")
+    print("Dev Lab Setup Complete!")
     print("="*60)
     print("\nThe dev-lab environment is now ready to use.")
     print("All Kubernetes tools run in containers - no local installation needed!")
-    print("\n📖 Quick Start:")
+    print("\nQuick Start:")
     print(f"   cd {script_dir}")
     
     if platform.system() == "Windows":
@@ -165,21 +165,21 @@ def show_usage_instructions(wrapper_file):
         print("   ./devlab kubectl -- get pods -A")
         print("   ./devlab cleanup            # Clean up everything")
     
-    print("\n🐳 Container-based tools available:")
+    print("\nContainer-based tools available:")
     print("   • kubectl (Kubernetes CLI)")
     print("   • helm (Package manager)")
     print("   • linkerd (Service mesh CLI)")
     print("   • kind (Kubernetes in Docker)")
     print("   • flux (GitOps toolkit)")
     
-    print("\n🌟 Benefits:")
-    print("   ✅ Platform-agnostic (Windows, macOS, Linux)")
-    print("   ✅ Only requires Docker")
-    print("   ✅ No local tool installation")
-    print("   ✅ Clean, reproducible environment")
-    print("   ✅ Easy cleanup and reset")
+    print("\nBenefits:")
+    print("   Platform-agnostic (Windows, macOS, Linux)")
+    print("   Only requires Docker")
+    print("   No local tool installation")
+    print("   Clean, reproducible environment")
+    print("   Easy cleanup and reset")
     
-    print("\n📁 Project structure:")
+    print("\nProject structure:")
     print(f"   {script_dir.parent}/")
     print("   ├── python/              # Python-based dev-lab tools")
     print("   ├── config/              # External configuration files")
@@ -188,7 +188,7 @@ def show_usage_instructions(wrapper_file):
 
 def main():
     """Main setup function"""
-    print("🚀 Dev Lab Platform-Agnostic Setup")
+    print("Dev Lab Platform-Agnostic Setup")
     print("=" * 40)
     
     # Check prerequisites
@@ -211,7 +211,7 @@ def main():
         show_usage_instructions(wrapper_file)
         
     except Exception as e:
-        print(f"❌ Setup failed: {e}")
+        print(f"Setup failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

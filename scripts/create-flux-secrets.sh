@@ -129,7 +129,7 @@ cleanup() {
 
 # Main function
 main() {
-    echo "🔑 Creating Flux SSH Secrets"
+    echo "Creating Flux SSH Secrets"
     echo "=============================="
     
     check_prerequisites
@@ -138,7 +138,7 @@ main() {
     create_service_mesh_secret
     
     echo ""
-    success "✅ All Flux secrets created successfully!"
+    success "All Flux secrets created successfully!"
     echo ""
     log "You can now create GitRepository sources:"
     echo "  kubectl apply -f config/gitops/git-repository.yaml"

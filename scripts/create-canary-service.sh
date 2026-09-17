@@ -18,13 +18,13 @@ if [ -z "$SERVICE_NAME" ]; then
     exit 1
 fi
 
-echo "🚀 Creating canary-enabled service: $SERVICE_NAME (port: $PORT, monitoring: $MONITORING_LEVEL)"
+echo "Creating canary-enabled service: $SERVICE_NAME (port: $PORT, monitoring: $MONITORING_LEVEL)"
 
 # Create service directory structure
 SERVICE_DIR="apps/$SERVICE_NAME"
 mkdir -p "$SERVICE_DIR/k8s"
 
-echo "📝 Generating Kubernetes manifests..."
+echo "Generating Kubernetes manifests..."
 
 # Generate base.yaml
 cat > "$SERVICE_DIR/k8s/base.yaml" << EOF
@@ -549,9 +549,9 @@ commonLabels:
   app.kubernetes.io/component: canary-service
 EOF
 
-echo "✅ Service $SERVICE_NAME created successfully with $MONITORING_LEVEL monitoring!"
+echo "Service $SERVICE_NAME created successfully with $MONITORING_LEVEL monitoring!"
 echo ""
-echo "📋 Next steps:"
+echo "Next steps:"
 echo "   1. Review and customize the generated files in $SERVICE_DIR/"
 echo "   2. Build and push the Docker image:"
 echo "      cd $SERVICE_DIR"
@@ -563,23 +563,23 @@ echo "   4. Verify canary status:"
 echo "      kubectl get canary $SERVICE_NAME -n $SERVICE_NAME"
 echo "   5. Test canary deployment by updating image version"
 echo ""
-echo "🔧 Monitoring level: $MONITORING_LEVEL"
+echo "Monitoring level: $MONITORING_LEVEL"
 if [ "$MONITORING_LEVEL" = "enhanced" ]; then
-    echo "   ✅ PodMonitor included for precise metrics"
-    echo "   ✅ Traffic-based success rate metric available"
-    echo "   ✅ Enhanced canary vs primary comparison"
+    echo "   PodMonitor included for precise metrics"
+    echo "   Traffic-based success rate metric available"
+    echo "   Enhanced canary vs primary comparison"
 else
-    echo "   ℹ️  Basic monitoring (faster deployment)"
-    echo "   💡 Use 'enhanced' for production services"
+    echo "   Basic monitoring (faster deployment)"
+    echo "   Use 'enhanced' for production services"
 fi
 echo ""
-echo "🔧 Customization points:"
+echo "Customization points:"
 echo "   - Update functional tests in $SERVICE_DIR/k8s/canary.yaml"
 echo "   - Adjust resource limits in $SERVICE_DIR/k8s/base.yaml"
 echo "   - Modify health check logic in $SERVICE_DIR/server.js"
 echo "   - Update success rate/latency thresholds as needed"
 echo ""
-echo "📊 Monitor progress:"
+echo "Monitor progress:"
 echo "   - Grafana multi-app dashboard: http://localhost:3001"
 echo "   - Canary status: kubectl get canary $SERVICE_NAME -n $SERVICE_NAME -w"
 echo "   - Pod status: kubectl get pods -n $SERVICE_NAME"

@@ -56,9 +56,9 @@ DevLab uses a hybrid approach for tool execution that prioritizes performance wh
 
 | Method | Speed | Setup | Platform Support |
 |--------|-------|--------|------------------|
-| Host Binary | ⚡ Fastest | ❌ Manual install | ⚠️ Platform specific |
-| Pre-built Container | 🚀 Fast | ✅ Auto-build | ✅ Universal |
-| Ephemeral Download | 🐌 Slow | ✅ No setup | ✅ Universal |
+| Host Binary | Fastest | Manual install | Platform specific |
+| Pre-built Container | Fast | Auto-build | Universal |
+| Ephemeral Download | Slow | No setup | Universal |
 
 ## Benefits of This Approach
 
@@ -98,19 +98,19 @@ DevLab uses a hybrid approach for tool execution that prioritizes performance wh
                        │ Host Binary?    │──YES─▶│ Direct Execution │
                        └─────────────────┘       └──────────────────┘
                                 │                         │
-                                NO                       ⚡ FASTEST
+                                 NO                       FASTEST
                                 ▼                         
                        ┌─────────────────┐       ┌──────────────────┐
                        │ Local Image?    │──YES─▶│ Container Exec   │
                        └─────────────────┘       └──────────────────┘
                                 │                         │
-                                NO                       🚀 FAST
+                                NO                       FAST
                                 ▼                         
                        ┌─────────────────┐       ┌──────────────────┐
                        │ Build Image     │──────▶│ Container Exec   │
                        └─────────────────┘       └──────────────────┘
                                                           │
-                                                       ✅ RELIABLE
+                                                       RELIABLE
 ```
 
 ## Maintenance

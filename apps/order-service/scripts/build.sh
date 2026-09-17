@@ -17,7 +17,7 @@ echo "Pushing image to local registry..."
 # Push to local registry
 docker push ${REGISTRY}/${IMAGE_NAME}:${VERSION}
 
-echo "✓ Order Service image built and pushed: ${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+echo "Order Service image built and pushed: ${REGISTRY}/${IMAGE_NAME}:${VERSION}"
 echo ""
 echo "To deploy:"
 echo "  kubectl apply -k k8s/"

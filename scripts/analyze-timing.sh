@@ -15,7 +15,7 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-echo -e "${BOLD}${PURPLE}📊 Dev Lab Timing Analysis${NC}"
+echo -e "${BOLD}${PURPLE}Dev Lab Timing Analysis${NC}"
 echo -e "${PURPLE}==============================${NC}"
 echo ""
 
@@ -88,11 +88,11 @@ if [ $(wc -l < "$TIMING_FILE") -gt 0 ]; then
     # Performance recommendations
     echo -e "${BOLD}${CYAN}Recommendations:${NC}"
     if [ $RECENT_AVG_TOTAL -lt 300 ]; then
-        echo -e "  ${GREEN}🚀 Excellent performance! Deployment under 5 minutes${NC}"
+        echo -e "  ${GREEN}Excellent performance! Deployment under 5 minutes${NC}"
     elif [ $RECENT_AVG_TOTAL -lt 600 ]; then
-        echo -e "  ${YELLOW}⚡ Good performance. Consider optimizing reconciliation intervals${NC}"
+        echo -e "  ${YELLOW}Good performance. Consider optimizing reconciliation intervals${NC}"
     else
-        echo -e "  ${YELLOW}🐌 Slow deployments. Check:${NC}"
+        echo -e "  ${YELLOW}Slow deployments. Check:${NC}"
         echo -e "     - Reconciliation intervals in kustomizations"
         echo -e "     - Health check timeouts"
         echo -e "     - Resource dependencies"
@@ -101,4 +101,4 @@ if [ $(wc -l < "$TIMING_FILE") -gt 0 ]; then
     echo ""
 fi
 
-echo -e "${CYAN}📁 Full timing log: $TIMING_FILE${NC}"
+echo -e "${CYAN}Full timing log: $TIMING_FILE${NC}"

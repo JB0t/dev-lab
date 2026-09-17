@@ -178,7 +178,7 @@ class ContainerToolRunner:
             console.print(result.stderr)
             raise RuntimeError(f"Failed to build {image_name}")
         
-        console.print(f"[green]✅ Successfully built {image_name}[/green]")
+        console.print(f"[green]Successfully built {image_name}[/green]")
     
     def _ensure_shared_kubeconfig(self):
         """Ensure shared kubeconfig exists, copy from user's if needed"""
@@ -268,7 +268,7 @@ class DevLabManager:
     
     def bootstrap(self) -> bool:
         """Bootstrap the complete dev-lab environment"""
-        console.print("[bold blue]🚀 Bootstrapping Dev Lab Environment[/bold blue]")
+        console.print("[bold blue]Bootstrapping Dev Lab Environment[/bold blue]")
         
         if not self.check_docker():
             return False
@@ -284,13 +284,13 @@ class DevLabManager:
         if not self._setup_linkerd():
             return False
         
-        console.print("\n[bold green]🎉 Bootstrap completed successfully![/bold green]")
+        console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
         self._show_bootstrap_info()
         return True
     
     def _show_bootstrap_info(self) -> None:
         """Display helpful information after bootstrap"""
-        console.print("\n[bold cyan]🎯 What's Next?[/bold cyan]")
+         console.print("\n[bold cyan]What's Next?[/bold cyan]")
         console.print("\n[green]Available Commands:[/green]")
         console.print("  • [cyan]./devlab kubectl get nodes[/cyan] - Check cluster status")
         console.print("  • [cyan]./devlab linkerd check[/cyan] - Verify Linkerd installation")
@@ -341,7 +341,7 @@ class DevLabManager:
         console.print("[blue]Waiting for nodes to be ready...[/blue]")
         self.tools.kubectl(["wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s"], context="kind-dev-lab")
         
-        console.print("[green]✅ Cluster created successfully[/green]")
+        console.print("[green]Cluster created successfully[/green]")
         return True
     
     def _fix_kubeconfig_for_containers(self) -> bool:
@@ -379,7 +379,7 @@ class DevLabManager:
             with open(kubeconfig_path, 'w') as f:
                 yaml.safe_dump(config, f, default_flow_style=False)
             
-            console.print("[green]✅ Kubeconfig updated for container networking[/green]")
+            console.print("[green]Kubeconfig updated for container networking[/green]")
             return True
             
         except Exception as e:
@@ -444,7 +444,7 @@ class DevLabManager:
             "-n", "linkerd-viz", "--all", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
         
-        console.print("[green]✅ Linkerd setup completed[/green]")
+        console.print("[green]Linkerd setup completed[/green]")
         return True
     
     def _setup_registry(self) -> bool:
@@ -476,7 +476,7 @@ class DevLabManager:
             "-l", "app=docker-registry", "-n", "dev-lab-registry", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
         
-        console.print("[green]✅ Registry setup completed[/green]")
+        console.print("[green]Registry setup completed[/green]")
         return True
     
     def _setup_metrics_server(self) -> bool:
@@ -502,12 +502,12 @@ class DevLabManager:
             "-n", "kube-system", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
         
-        console.print("[green]✅ Metrics server setup completed[/green]")
+        console.print("[green]Metrics server setup completed[/green]")
         return True
     
     def deploy_traditional(self) -> bool:
         """Deploy using traditional script-based method"""
-        console.print("[bold blue]🚀 Traditional Deployment[/bold blue]")
+        console.print("[bold blue]Traditional Deployment[/bold blue]")
         
         if not self._check_bootstrap():
             return False
@@ -560,7 +560,7 @@ class DevLabManager:
             console.print("[red]Local registry not running[/red]")
             return False
         
-        console.print("[green]✅ Bootstrap prerequisites verified[/green]")
+        console.print("[green]Bootstrap prerequisites verified[/green]")
         return True
     
     def _install_nginx_ingress(self) -> bool:
@@ -587,7 +587,7 @@ class DevLabManager:
             "--timeout=300s"
         ])
         
-        console.print("[green]✅ NGINX Ingress Controller installed[/green]")
+        console.print("[green]NGINX Ingress Controller installed[/green]")
         return True
     
     def _deploy_monitoring(self) -> bool:
@@ -635,7 +635,7 @@ class DevLabManager:
             "-n", "monitoring", "--timeout=300s"
         ])
         
-        console.print("[green]✅ Monitoring stack deployed[/green]")
+        console.print("[green]Monitoring stack deployed[/green]")
         return True
     
     def _deploy_sample_apps(self) -> bool:
@@ -669,12 +669,12 @@ class DevLabManager:
             "-n", "mesh-test", "--timeout=300s"
         ])
         
-        console.print("[green]✅ Sample applications deployed[/green]")
+        console.print("[green]Sample applications deployed[/green]")
         return True
     
     def _show_access_info(self):
         """Show access information"""
-        console.print("\n[bold green]🎉 Dev Lab deployment completed![/bold green]\n")
+        console.print("\n[bold green]Dev Lab deployment completed![/bold green]\n")
         
         table = Table(title="Access Information")
         table.add_column("Service", style="cyan")
@@ -696,7 +696,7 @@ class DevLabManager:
     
     def deploy_gitops(self) -> bool:
         """Deploy using GitOps method with Flux CD"""
-        console.print("[bold blue]🚀 GitOps Deployment[/bold blue]")
+        console.print("[bold blue]GitOps Deployment[/bold blue]")
         
         if not self._check_bootstrap():
             return False
@@ -739,7 +739,7 @@ class DevLabManager:
             console.print("[yellow]Flux controllers may already be installed[/yellow]")
             result = self.tools.kubectl(["get", "deployment", "-n", "flux-system", "source-controller"], capture_output=True)
             if result.returncode == 0:
-                console.print("[green]✅ Flux controllers already installed[/green]")
+                console.print("[green]Flux controllers already installed[/green]")
                 return True
         
         # Install Flux controllers
@@ -755,7 +755,7 @@ class DevLabManager:
             "-n", "flux-system", "--timeout=300s"
         ])
         
-        console.print("[green]✅ Flux controllers installed and ready[/green]")
+        console.print("[green]Flux controllers installed and ready[/green]")
         return True
     
     def _generate_deploy_key(self) -> bool:
@@ -779,7 +779,7 @@ class DevLabManager:
             console.print("[red]Failed to generate SSH key[/red]")
             return False
         
-        console.print("[green]✅ SSH key pair generated[/green]")
+        console.print("[green]SSH key pair generated[/green]")
         return True
     
     def _create_flux_secret(self) -> bool:
@@ -820,12 +820,12 @@ class DevLabManager:
             "app.kubernetes.io/part-of=flux"
         ])
         
-        console.print("[green]✅ dev-lab-repo secret created[/green]")
+        console.print("[green]dev-lab-repo secret created[/green]")
         return True
     
     def _show_deploy_key(self):
         """Display deploy key for GitHub setup"""
-        console.print("\n[bold blue]📋 GitHub Deploy Key Setup[/bold blue]\n")
+         console.print("\n[bold blue]GitHub Deploy Key Setup[/bold blue]\n")
         
         console.print("[cyan]Add this public key as a deploy key to your GitHub repository:[/cyan]")
         console.print(f"[cyan]Repository:[/cyan] https://github.com/jbotstevens/notes")
@@ -837,7 +837,7 @@ class DevLabManager:
             console.print(f.read().strip())
         console.print("─" * 50)
         
-        console.print("\n[yellow]⚠️  Make sure to:[/yellow]")
+        console.print("\n[yellow] Make sure to:[/yellow]")
         console.print(f"  1. Give the key a descriptive title (e.g., 'flux-dev-lab-{time.strftime('%Y%m%d')}')")  
         console.print("  2. Paste the public key above")
         console.print("  3. Leave 'Allow write access' UNCHECKED (read-only)")
@@ -881,9 +881,9 @@ class DevLabManager:
         ], capture_output=True)
         
         if result.returncode == 0:
-            console.print("[green]✅ GitRepository synced successfully[/green]")
+            console.print("[green]GitRepository synced successfully[/green]")
         else:
-            console.print("[yellow]⚠️  GitRepository may not be ready yet. Continuing...[/yellow]")
+            console.print("[yellow] GitRepository may not be ready yet. Continuing...[/yellow]")
         
         return True
     
@@ -894,7 +894,7 @@ class DevLabManager:
         # Apply the cluster-specific kustomizations
         kustomizations_file = PROJECT_ROOT / "clusters" / "dev-lab" / "dev-lab-kustomizations.yaml"
         if not kustomizations_file.exists():
-            console.print(f"[yellow]⚠️  Kustomizations file not found at {kustomizations_file}[/yellow]")
+            console.print(f"[yellow] Kustomizations file not found at {kustomizations_file}[/yellow]")
             console.print("[yellow]GitOps setup complete, but manual kustomizations not applied[/yellow]")
             return True
         
@@ -903,13 +903,13 @@ class DevLabManager:
             console.print("[red]Failed to apply kustomizations[/red]")
             return False
         
-        console.print("[green]✅ Git-managed kustomizations applied[/green]")
+        console.print("[green]Git-managed kustomizations applied[/green]")
         console.print("[blue]Infrastructure and applications will be deployed automatically from Git[/blue]")
         return True
     
     def _wait_for_gitops_deployment(self):
         """Wait for GitOps deployment completion"""
-        console.print("\n[bold blue]🕐 Waiting for GitOps Deployment[/bold blue]\n")
+         console.print("\n[bold blue]Waiting for GitOps Deployment[/bold blue]\n")
         
         console.print("[blue]Monitoring infrastructure deployment...[/blue]")
         console.print("[cyan]This may take several minutes as Flux deploys:[/cyan]")
@@ -942,21 +942,21 @@ class DevLabManager:
             console.print(f"\r[blue]Infrastructure: {infra_ready}, Apps: {apps_ready} ({elapsed}s elapsed)[/blue]", end="")
             
             if infra_ready == "True" and apps_ready == "True":
-                console.print("\n[green]✅ GitOps deployment completed successfully![/green]")
+                console.print("\n[green]GitOps deployment completed successfully![/green]")
                 return
             
             time.sleep(interval)
             elapsed += interval
         
-        console.print("\n[yellow]⚠️  Deployment is taking longer than expected, but may still be in progress[/yellow]")
+        console.print("\n[yellow] Deployment is taking longer than expected, but may still be in progress[/yellow]")
         console.print("[yellow]Use './devlab flux -- get kustomizations -A' to monitor status[/yellow]")
     
     def _show_gitops_info(self):
         """Show GitOps status and access information"""
-        console.print("\n[bold green]🎉 Dev Lab GitOps deployment setup complete![/bold green]\n")
+        console.print("\n[bold green]Dev Lab GitOps deployment setup complete![/bold green]\n")
         
         # Show GitOps status
-        console.print("[bold blue]🔄 GitOps Status:[/bold blue]")
+        console.print("[bold blue]GitOps Status:[/bold blue]")
         result = self.tools.flux(["get", "all", "-A"], capture_output=True)
         if result.returncode == 0:
             # Show first 20 lines
@@ -965,7 +965,7 @@ class DevLabManager:
                 if line.strip():
                     console.print(line)
         
-        console.print("\n[bold blue]📊 Access Information:[/bold blue]")
+         console.print("\n[bold blue]Access Information:[/bold blue]")
         table = Table(title="Service Access")
         table.add_column("Service", style="cyan")
         table.add_column("Command", style="green")
@@ -978,17 +978,17 @@ class DevLabManager:
         
         console.print(table)
         
-        console.print("\n[bold blue]🔧 GitOps Monitoring Commands:[/bold blue]")
+         console.print("\n[bold blue]GitOps Monitoring Commands:[/bold blue]")
         console.print("• ./devlab flux -- get all -A                    # Overview of all Flux resources")
         console.print("• ./devlab flux -- logs --all-namespaces        # Controller logs")
         console.print("• watch ./devlab flux -- get kustomizations -A  # Watch reconciliation")
         console.print("• ./devlab kubectl -- get events -n flux-system # System events")
         
-        console.print("\n[bold blue]🚀 Sample Application:[/bold blue]")
+        console.print("\n[bold blue]Sample Application:[/bold blue]")
         console.print("• Add to /etc/hosts: 127.0.0.1 sample-app.local")
         console.print("• Access at: http://sample-app.local")
         
-        console.print("\n[bold blue]📝 Notes:[/bold blue]")
+        console.print("\n[bold blue]Notes:[/bold blue]")
         console.print("• Infrastructure and apps are automatically deployed from Git")
         console.print("• Changes to dev-lab/ directory will be reconciled automatically")
         console.print("• Use Git commits to manage deployments")
@@ -1067,17 +1067,17 @@ def status():
     
     # Check Docker
     if manager.check_docker():
-        console.print("[green]✅ Docker is running[/green]")
+        console.print("[green]Docker is running[/green]")
     else:
-        console.print("[red]❌ Docker is not available[/red]")
+        console.print("[red]Docker is not available[/red]")
         return
     
     # Check cluster
     result = manager.tools.kubectl(["cluster-info"], capture_output=True)
     if result.returncode == 0:
-        console.print("[green]✅ Cluster is accessible[/green]")
+        console.print("[green]Cluster is accessible[/green]")
     else:
-        console.print("[red]❌ Cluster is not accessible[/red]")
+        console.print("[red]Cluster is not accessible[/red]")
         return
     
     # Check nodes
@@ -1102,7 +1102,7 @@ def status():
 @cli.command(name='build-tools')
 def build_tools():
     """Build/rebuild local tool container images"""
-    console.print("[bold blue]🔨 Building Local Tool Images[/bold blue]")
+         console.print("[bold blue]Building Local Tool Images[/bold blue]")
     
     manager = DevLabManager()
     
@@ -1111,12 +1111,12 @@ def build_tools():
         image_name = "devlab-kind:latest"
         console.print(f"[blue]Building {image_name}...[/blue]")
         manager.tools._build_kind_image(image_name)
-        console.print("[green]✅ KinD image built successfully[/green]")
+        console.print("[green]KinD image built successfully[/green]")
     except Exception as e:
-        console.print(f"[red]❌ Failed to build KinD image: {e}[/red]")
+        console.print(f"[red]Failed to build KinD image: {e}[/red]")
         sys.exit(1)
     
-    console.print("[green]🎉 All tool images built successfully![/green]")
+    console.print("[green]All tool images built successfully![/green]")
 
 @cli.command()
 def cleanup():
@@ -1127,9 +1127,9 @@ def cleanup():
         console.print("[blue]Cleaning up dev-lab environment...[/blue]")
         result = manager.tools.kind(["delete", "cluster", "--name", CLUSTER_NAME])
         if result.returncode == 0:
-            console.print("[green]✅ Cleanup completed[/green]")
+            console.print("[green]Cleanup completed[/green]")
         else:
-            console.print("[red]❌ Cleanup failed[/red]")
+            console.print("[red]Cleanup failed[/red]")
 
 if __name__ == "__main__":
     cli()

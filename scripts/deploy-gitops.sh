@@ -282,11 +282,11 @@ wait_for_deployment() {
             local ready=$(kubectl get kustomization "$component" -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "N/A")
             if [[ "$ready" == "True" ]]; then
                 ((ready_count++))
-                status_line+="✅ $component "
+                status_line+="$component "
             elif [[ "$ready" == "False" ]]; then
-                status_line+="❌ $component "
+                status_line+="$component "
             else
-                status_line+="🔄 $component "
+                status_line+="$component "
             fi
         done
         
@@ -312,19 +312,19 @@ show_gitops_info() {
     section "GitOps Deployment Complete"
     
     echo ""
-    success "🎉 Dev Lab GitOps deployment setup complete!"
+    success "Dev Lab GitOps deployment setup complete!"
     echo ""
-    echo "🔄 **GitOps Status:**"
+    echo "**GitOps Status:**"
     flux get all -A | head -20
     echo ""
-    echo "📊 **Access Information:**"
+    echo "**Access Information:**"
     echo "  • Prometheus:     kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090"
     echo "  • Grafana:        kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80 (admin/admin123)"
     echo "  • AlertManager:   kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093"
     echo "  • Linkerd Viz:    kubectl port-forward -n linkerd-viz svc/web 8084:8084"
     echo "  • Registry UI:    kubectl port-forward -n dev-lab-registry svc/docker-registry-ui 5001:80"
     echo ""
-    echo "🔧 **GitOps Monitoring Commands:**"
+    echo "**GitOps Monitoring Commands:**"
     echo "  kubectl get kustomizations -n flux-system     # All component status"
     echo "  flux get all -A                              # Overview of all Flux resources"
     echo "  flux logs --all-namespaces                   # Controller logs"
@@ -332,11 +332,11 @@ show_gitops_info() {
     echo "  kubectl get events -n flux-system            # System events"
     echo "  kubectl get events -n linkerd                # Linkerd events"
     echo ""
-    echo "🚀 **Sample Application (once apps are deployed):**"
+    echo "**Sample Application (once apps are deployed):**"
     echo "  • Add to /etc/hosts: 127.0.0.1 sample-app.local"
     echo "  • Access at: http://sample-app.local"
     echo ""
-    echo "📝 **Notes:**"
+    echo "**Notes:**"
     echo "  • Infrastructure and apps are automatically deployed from Git"
     echo "  • Changes to dev-lab/ directory will be reconciled automatically"
     echo "  • Use Git commits to manage deployments"
@@ -355,7 +355,7 @@ main() {
     case "${1:-deploy}" in
         "deploy"|"")
             echo -e "${PURPLE}=================================================${NC}"
-            echo -e "${PURPLE}🚀 GitOps Deployment Process Started${NC}"
+            echo -e "${PURPLE}GitOps Deployment Process Started${NC}"
             echo -e "${PURPLE}   Start Time: $GITOPS_START_FORMATTED${NC}"
             echo -e "${PURPLE}=================================================${NC}"
             echo ""
@@ -379,7 +379,7 @@ main() {
             
             echo ""
             echo -e "${PURPLE}=================================================${NC}"
-            echo -e "${GREEN}✅ GitOps Deployment Process Completed${NC}"
+            echo -e "${GREEN}GitOps Deployment Process Completed${NC}"
             echo -e "${PURPLE}   Start Time: $GITOPS_START_FORMATTED${NC}"
             echo -e "${PURPLE}   End Time:   $GITOPS_END_FORMATTED${NC}"
             echo -e "${CYAN}   Duration:   ${GITOPS_DURATION} seconds${NC}"

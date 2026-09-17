@@ -74,4 +74,4 @@ Once comfortable with the Python version:
 1. Update documentation to reference Python commands
 2. Consider deprecating bash scripts
 3. Train team on new workflow
-4. Enjoy platform-agnostic development! 🎉
+4. Enjoy platform-agnostic development! 

@@ -24,7 +24,7 @@ CYCLE_START_TIME=$(date +%s)
 CYCLE_START_FORMATTED=$(date '+%Y-%m-%d %H:%M:%S')
 
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
-echo -e "${BOLD}${PURPLE}🔄 Full Dev Lab Cycle Started${NC}"
+echo -e "${BOLD}${PURPLE}Full Dev Lab Cycle Started${NC}"
 echo -e "${BOLD}${PURPLE}   Start Time: $CYCLE_START_FORMATTED${NC}"
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
 echo ""
@@ -72,10 +72,10 @@ format_duration() {
 echo ""
 echo ""
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
-echo -e "${BOLD}${GREEN}🎉 Full Dev Lab Cycle Completed!${NC}"
+echo -e "${BOLD}${GREEN}Full Dev Lab Cycle Completed!${NC}"
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
 echo ""
-echo -e "${BOLD}${CYAN}📊 Timing Report:${NC}"
+echo -e "${BOLD}${CYAN}Timing Report:${NC}"
 echo ""
 echo -e "${BOLD}Overall Cycle:${NC}"
 echo -e "  Start Time:    $CYCLE_START_FORMATTED"
@@ -94,32 +94,32 @@ echo -e "  ${GREEN}GitOps Deploy:${NC}   ${GITOPS_PERCENT}%"
 echo ""
 echo -e "${BOLD}${CYAN}Performance Analysis:${NC}"
 if [ $CYCLE_DURATION -lt 300 ]; then
-    echo -e "  ${GREEN}🚀 Excellent! Total time under 5 minutes${NC}"
+    echo -e "  ${GREEN}Excellent! Total time under 5 minutes${NC}"
 elif [ $CYCLE_DURATION -lt 600 ]; then
-    echo -e "  ${YELLOW}⚡ Good! Total time under 10 minutes${NC}"
+    echo -e "  ${YELLOW}Good! Total time under 10 minutes${NC}"
 else
-    echo -e "  ${RED}⏰ Slow - Consider optimizing reconciliation intervals${NC}"
+    echo -e "  ${RED}Slow - Consider optimizing reconciliation intervals${NC}"
 fi
 
 if [ $BOOTSTRAP_PHASE_DURATION -lt 120 ]; then
-    echo -e "  ${GREEN}🏗️  Fast bootstrap (under 2 minutes)${NC}"
+    echo -e "  ${GREEN}Fast bootstrap (under 2 minutes)${NC}"
 elif [ $BOOTSTRAP_PHASE_DURATION -lt 300 ]; then
-    echo -e "  ${YELLOW}🏗️  Moderate bootstrap (2-5 minutes)${NC}"
+    echo -e "  ${YELLOW}Moderate bootstrap (2-5 minutes)${NC}"
 else
-    echo -e "  ${RED}🏗️  Slow bootstrap (over 5 minutes)${NC}"
+    echo -e "  ${RED}Slow bootstrap (over 5 minutes)${NC}"
 fi
 
 if [ $GITOPS_PHASE_DURATION -lt 180 ]; then
-    echo -e "  ${GREEN}⚙️  Fast GitOps deployment (under 3 minutes)${NC}"
+    echo -e "  ${GREEN}Fast GitOps deployment (under 3 minutes)${NC}"
 elif [ $GITOPS_PHASE_DURATION -lt 600 ]; then
-    echo -e "  ${YELLOW}⚙️  Moderate GitOps deployment (3-10 minutes)${NC}"
+    echo -e "  ${YELLOW}Moderate GitOps deployment (3-10 minutes)${NC}"
 else
-    echo -e "  ${RED}⚙️  Slow GitOps deployment (over 10 minutes)${NC}"
+    echo -e "  ${RED}Slow GitOps deployment (over 10 minutes)${NC}"
 fi
 
 echo ""
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
-echo -e "${BOLD}${GREEN}Ready for development! 🎯${NC}"
+echo -e "${BOLD}${GREEN}Ready for development!${NC}"
 echo -e "${BOLD}${PURPLE}=================================================${NC}"
 
 # Save timing data for comparison
@@ -127,5 +127,5 @@ TIMING_FILE="$SCRIPT_DIR/../.timing-history.log"
 echo "$(date '+%Y-%m-%d %H:%M:%S'),${CYCLE_DURATION},${BOOTSTRAP_PHASE_DURATION},${GITOPS_PHASE_DURATION}" >> "$TIMING_FILE"
 
 echo ""
-echo -e "${CYAN}💾 Timing data saved to: $TIMING_FILE${NC}"
-echo -e "${CYAN}📈 Use 'tail $TIMING_FILE' to see timing history${NC}"
+echo -e "${CYAN}Timing data saved to: $TIMING_FILE${NC}"
+echo -e "${CYAN}Use 'tail $TIMING_FILE' to see timing history${NC}"

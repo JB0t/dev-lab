@@ -53,14 +53,14 @@ show_versioning_rules() {
     echo -e "${PURPLE}=== Semantic Versioning Rules ===${NC}"
     echo ""
     echo -e "${GREEN}Automatic Version Bumps:${NC}"
-    echo "  🚀 feature/* → dev    = Minor version bump (v1.2.0 → v1.3.0)"
-    echo "  🔧 patch/*   → dev    = Patch version bump (v1.2.0 → v1.2.1)"
-    echo "  🎉 dev       → main   = Major version bump (v1.2.0 → v2.0.0)"
+    echo "  feature/* → dev    = Minor version bump (v1.2.0 → v1.3.0)"
+    echo "  patch/*   → dev    = Patch version bump (v1.2.0 → v1.2.1)"
+    echo "  dev       → main   = Major version bump (v1.2.0 → v2.0.0)"
     echo ""
     echo -e "${CYAN}No Version Bump:${NC}"
-    echo "  📝 docs/*    → any    = Documentation changes"
-    echo "  🔧 ci/*      → any    = CI/CD changes"
-    echo "  🔥 hotfix/*  → any    = Emergency fixes"
+    echo "  docs/*    → any    = Documentation changes"
+    echo "  ci/*      → any    = CI/CD changes"
+    echo "  hotfix/*  → any    = Emergency fixes"
     echo ""
     echo -e "${YELLOW}Branch Naming Examples:${NC}"
     echo "  feature/add-oauth-integration"
@@ -139,22 +139,22 @@ validate_current_branch() {
     echo -e "${CYAN}Current Branch:${NC} $current_branch"
     
     if [[ "$current_branch" =~ ^feature/.+ ]]; then
-        echo -e "${GREEN}✅ Valid feature branch${NC}"
+        echo -e "${GREEN}Valid feature branch${NC}"
         echo "  Should target: dev branch"
         echo "  Will trigger: MINOR version bump"
     elif [[ "$current_branch" =~ ^patch/.+ ]]; then
-        echo -e "${GREEN}✅ Valid patch branch${NC}"
+        echo -e "${GREEN}Valid patch branch${NC}"
         echo "  Should target: dev branch"
         echo "  Will trigger: PATCH version bump"
     elif [[ "$current_branch" == "dev" ]]; then
-        echo -e "${GREEN}✅ Development branch${NC}"
+        echo -e "${GREEN}Development branch${NC}"
         echo "  Should target: main branch"
         echo "  Will trigger: MAJOR version bump"
     elif [[ "$current_branch" =~ ^(docs|ci|hotfix)/.+ ]]; then
-        echo -e "${CYAN}📝 Utility branch${NC}"
+        echo -e "${CYAN}Utility branch${NC}"
         echo "  Will trigger: No version bump"
     else
-        echo -e "${YELLOW}⚠️ Non-standard branch name${NC}"
+        echo -e "${YELLOW}Non-standard branch name${NC}"
         echo "  Consider using: feature/, patch/, docs/, ci/, or hotfix/"
     fi
 }

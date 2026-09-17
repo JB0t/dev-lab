@@ -1,14 +1,14 @@
 #!/bin/bash
 
-echo "🚀 Force reconciling all Flux components for faster development cycle..."
+echo "Force reconciling all Flux components for faster development cycle..."
 echo ""
 
 # First reconcile the git source
-echo "📡 Reconciling Git source..."
+echo "Reconciling Git source..."
 flux reconcile source git dev-lab-repo -n flux-system
 
 echo ""
-echo "🔧 Reconciling all infrastructure Kustomizations..."
+echo "Reconciling all infrastructure Kustomizations..."
 
 # Reconcile all infrastructure kustomizations in dependency order
 KUSTOMIZATIONS=(
@@ -30,7 +30,7 @@ for kustomization in "${KUSTOMIZATIONS[@]}"; do
 done
 
 echo ""
-echo "⚡ Force reconciling Helm components..."
+echo "Force reconciling Helm components..."
 
 # Force reconcile helm repositories
 echo "  → Reconciling Helm repositories..."
@@ -49,6 +49,6 @@ flux reconcile helmrelease flagger -n flux-system 2>/dev/null || true
 flux reconcile helmrelease kube-prometheus-stack -n monitoring 2>/dev/null || true
 
 echo ""
-echo "✅ All reconciliations triggered! Infrastructure should now reconcile much faster."
-echo "💡 Check status with: flux get all"
-echo "📊 Monitor reconciliation with: watch 'flux get kustomizations'"
+echo "All reconciliations triggered! Infrastructure should now reconcile much faster."
+echo "Check status with: flux get all"
+echo "Monitor reconciliation with: watch 'flux get kustomizations'"
