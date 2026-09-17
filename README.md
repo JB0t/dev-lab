@@ -18,6 +18,40 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Metrics Server**: For cluster autoscaling and resource monitoring
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
 
+## Pre-requisites
+
+### Runtime Environment
+
+- **Bash**: Recommended for the smoothest experience and required by the legacy scripts.
+- **Linux, macOS, or Windows with WSL2**: On Windows, run the Bash commands from a WSL2 distribution. WSL2 must be able to reach the Docker daemon.
+- **Docker daemon**: Must be installed, running, and usable by your current user. Docker Desktop with WSL integration or Docker installed directly in WSL both work.
+- **Network access**: Required during setup to download Python packages, container images, Kubernetes manifests, Helm charts, and KinD node images.
+- **Trusted CA certificates**: Required when your network performs TLS inspection. For the local KinD helper image, place trusted `.crt` files under `python/certs/`; nested directories are supported.
+
+### Required Packages
+
+For the recommended Python CLI:
+
+- **Python 3.8 or newer** with `venv` and `pip` support. `python/setup.py` installs the Python dependencies listed in `python/requirements.txt`.
+- **Docker CLI and daemon**. The CLI uses Docker to run `kubectl`, Helm, Flux, and Linkerd containers, and to create the KinD cluster.
+- **Git** for working with this repository and for GitOps workflows.
+
+For the legacy Bash scripts, install these on the host as well:
+
+- **`kubectl`**
+- **Helm**
+- **KinD**
+- **`jq`**
+- **`curl`**
+- **OpenSSH tools**, including `ssh-keygen`, for Flux deploy keys
+
+### Optional Additions
+
+- **`fzf`**: Used by `devlab bootstrap` to choose the newest KinD node patch for each Kubernetes minor version. Without it, bootstrap provides a numbered prompt.
+- **Linkerd CLI**: Needed only for workflows that explicitly install or operate Linkerd through the legacy scripts; the Python CLI runs its Linkerd commands in a container.
+- **Flux CLI**: Needed only for legacy scripts; the Python CLI runs Flux in a container.
+- **Host `kubectl`, Helm, and KinD**: Optional with the Python CLI. Host KinD is used when available; otherwise the CLI builds and uses `devlab-kind:latest`.
+
 ## Quick Start
 
 ### Option 1: Python CLI (Recommended)
