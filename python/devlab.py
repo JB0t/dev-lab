@@ -360,6 +360,9 @@ class DevLabManager:
         # Create cluster
         if not self._create_cluster():
             return False
+
+        if not self._configure_kind_node_certificates():
+            return False
         
         # Setup bootstrap infrastructure
         if not self._setup_registry():
@@ -389,6 +392,53 @@ class DevLabManager:
         console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes ingress and sample apps)")
         console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages application infrastructure)")
         console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
+
+    def _configure_kind_node_certificates(self) -> bool:
+        """Install local CA certificates into all KinD nodes for containerd pulls."""
+        certificate_dir = PROJECT_ROOT / "python" / "certs"
+        certificates = list(certificate_dir.rglob("*.crt"))
+        if not certificates:
+            console.print("[yellow]No local CA certificates found; using node defaults[/yellow]")
+            return True
+
+        node_result = subprocess.run([
+            "docker", "ps", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER_NAME}",
+            "--format", "{{.Names}}"
+        ], capture_output=True, text=True)
+        if node_result.returncode != 0 or not node_result.stdout.strip():
+            console.print("[red]Could not find KinD nodes for CA installation[/red]")
+            return False
+
+        nodes = node_result.stdout.splitlines()
+        console.print(f"[blue]Installing {len(certificates)} custom CA certificate(s) into KinD nodes...[/blue]")
+        for node in nodes:
+            mkdir_result = subprocess.run([
+                "docker", "exec", node, "mkdir", "-p",
+                "/usr/local/share/ca-certificates/devlab"
+            ], capture_output=True, text=True)
+            if mkdir_result.returncode != 0:
+                console.print(f"[red]Failed to prepare CA directory on {node}: {mkdir_result.stderr}[/red]")
+                return False
+
+            copy_result = subprocess.run([
+                "docker", "cp", f"{certificate_dir}/.",
+                f"{node}:/usr/local/share/ca-certificates/devlab/"
+            ], capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                console.print(f"[red]Failed to copy CA certificates to {node}: {copy_result.stderr}[/red]")
+                return False
+
+            update_result = subprocess.run([
+                "docker", "exec", node, "sh", "-c",
+                "find /usr/local/share/ca-certificates/devlab -type f -name '*.crt' -exec cp {} /usr/local/share/ca-certificates/ \\; && "
+                "update-ca-certificates && (systemctl restart containerd || service containerd restart)"
+            ], capture_output=True, text=True)
+            if update_result.returncode != 0:
+                console.print(f"[red]Failed to update containerd trust on {node}: {update_result.stderr}[/red]")
+                return False
+
+        console.print("[green]Custom CA certificates installed in KinD nodes[/green]")
+        return True
 
     def _latest_kind_node_images(self, current_image: str):
         """Return the newest published KinD node image for each Kubernetes minor."""
@@ -602,6 +652,10 @@ class DevLabManager:
     def _setup_registry(self) -> bool:
         """Setup local container registry"""
         console.print("[blue]Setting up local container registry...[/blue]")
+
+        for image in ["registry:2.8", "joxit/docker-registry-ui:2.5.7"]:
+            if not self._load_kind_image(image):
+                return False
         
         # Create or reconcile the namespace without failing if it already exists.
         console.print("[blue]Ensuring registry namespace...[/blue]")
@@ -649,9 +703,41 @@ class DevLabManager:
         ], context=f"kind-{CLUSTER_NAME}")
         if result.returncode != 0:
             console.print("[red]Registry did not become ready[/red]")
+            console.print("[yellow]Registry pod diagnostics:[/yellow]")
+            self.tools.kubectl([
+                "get", "pods", "-n", "dev-lab-registry", "-o", "wide"
+            ])
+            self.tools.kubectl([
+                "get", "events", "-n", "dev-lab-registry", "--sort-by=.lastTimestamp"
+            ])
             return False
         
         console.print("[green]Registry setup completed[/green]")
+        return True
+
+    def _load_kind_image(self, image: str) -> bool:
+        """Ensure an image is available in every KinD node without node-side pulls."""
+        inspect_result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+        )
+        if inspect_result.returncode != 0:
+            console.print(f"[blue]Pulling {image} through the host Docker daemon...[/blue]")
+            pull_result = subprocess.run(["docker", "pull", image])
+            if pull_result.returncode != 0:
+                console.print(f"[red]Failed to pull {image}[/red]")
+                return False
+        else:
+            console.print(f"[blue]Using cached host image {image}[/blue]")
+
+        console.print(f"[blue]Loading {image} into KinD nodes...[/blue]")
+        load_result = self.tools.kind([
+            "load", "docker-image", image, "--name", CLUSTER_NAME
+        ])
+        if load_result.returncode != 0:
+            console.print(f"[red]Failed to load {image} into KinD[/red]")
+            return False
         return True
     
     def _setup_metrics_server(self) -> bool:
