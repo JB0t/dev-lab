@@ -124,14 +124,37 @@ class ContainerToolRunner:
         if helm_image is None:
             return subprocess.CompletedProcess([], 1, "", "Failed to build Helm image")
 
+        helm_args = list(args)
+        helm_state_dir = PROJECT_ROOT / ".helm"
+        helm_config_dir = helm_state_dir / "config"
+        helm_cache_dir = helm_state_dir / "cache"
+        helm_data_dir = helm_state_dir / "data"
+        for directory in (helm_config_dir, helm_cache_dir, helm_data_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        host_ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
+        ca_file = "/etc/ssl/certs/devlab-ca-bundle.pem"
+        host_ca_mount = []
+        if host_ca_bundle.exists():
+            ca_file = "/tmp/host-ca-certificates.crt"
+            host_ca_mount = [
+                "-v", f"{host_ca_bundle}:{ca_file}:ro",
+            ]
+        if len(helm_args) >= 2 and helm_args[:2] == ["repo", "add"]:
+            helm_args.extend(["--ca-file", ca_file])
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
+            "-v", f"{helm_config_dir}:/root/.config/helm:rw",
+            "-v", f"{helm_cache_dir}:/root/.cache/helm:rw",
+            "-v", f"{helm_data_dir}:/root/.local/share/helm:rw",
+            *host_ca_mount,
             helm_image,
-        ] + args
+        ] + helm_args
         
         if not capture_output:
             return subprocess.run(cmd, text=text, input=input)
@@ -345,6 +368,7 @@ class ContainerToolRunner:
         image_name = "devlab-helm:latest"
         certificate_files = sorted((PROJECT_ROOT / "python" / "certs").rglob("*.crt"))
         digest = hashlib.sha256()
+        digest.update((PROJECT_ROOT / "python" / "Dockerfile.helm").read_bytes())
         for certificate in certificate_files:
             digest.update(certificate.relative_to(PROJECT_ROOT).as_posix().encode())
             digest.update(certificate.read_bytes())
@@ -1025,14 +1049,22 @@ class DevLabManager:
             console.print("[red]Failed to install monitoring Helm chart[/red]")
             return False
         
-        # Wait for monitoring stack
+        # Wait for all pods belonging to the Helm release. Component-specific
+        # names vary across chart versions, while the release label is stable.
         result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod",
-            "-l", "app.kubernetes.io/name=kube-prometheus-stack",
+            "-l", "release=kube-prometheus-stack",
             "-n", "monitoring", "--timeout=300s"
         ])
         if result.returncode != 0:
             console.print("[red]Monitoring stack did not become ready[/red]")
+            console.print("[yellow]Monitoring pod diagnostics:[/yellow]")
+            self.tools.kubectl([
+                "get", "pods", "-n", "monitoring", "-o", "wide"
+            ])
+            self.tools.kubectl([
+                "get", "events", "-n", "monitoring", "--sort-by=.lastTimestamp"
+            ])
             return False
         
         console.print("[green]Monitoring stack deployed[/green]")
