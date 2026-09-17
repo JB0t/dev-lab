@@ -143,6 +143,17 @@ class ContainerToolRunner:
             return subprocess.CompletedProcess([], 1, "", str(e))
         
         console.print("[yellow]KinD not found on host, using local container image...[/yellow]")
+
+        container_args = []
+        for arg in args:
+            if isinstance(arg, Path):
+                try:
+                    workspace_path = arg.relative_to(PROJECT_ROOT).as_posix()
+                    container_args.append(f"/workspace/{workspace_path}")
+                    continue
+                except ValueError:
+                    pass
+            container_args.append(str(arg))
         
         cmd = [
             "docker", "run", "--rm", "-i",
@@ -152,7 +163,7 @@ class ContainerToolRunner:
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
             image_name
-        ] + args
+        ] + container_args
         
         return subprocess.run(cmd, capture_output=capture_output, text=True)
     
