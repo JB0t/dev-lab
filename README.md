@@ -27,7 +27,7 @@ A comprehensive local development environment with **dual deployment options**: 
 python3 python/setup.py
 
 # Put the wrapper script in your path so you can cd away from this repo
-export PATH="$PATH:$(pwd)/devlab"
+export PATH="$PATH:$(pwd)/python"
 
 # Build local tool container images (optional, built automatically when needed)
 devlab build-tools
@@ -72,7 +72,7 @@ devlab cleanup
 # 1. Install prerequisites (if needed)
 ./scripts/install-prerequisites.sh
 
-# 2. Bootstrap common infrastructure  
+# 2. Bootstrap common infrastructure
 ./scripts/bootstrap.sh
 
 # 3. Deploy either:
@@ -558,7 +558,7 @@ Edit `cluster/kind-config.yaml` to:
 This project uses **automated semantic versioning** based on branch naming conventions:
 
 - `feature/*` → `dev` = Minor version bump
-- `patch/*` → `dev` = Patch version bump  
+- `patch/*` → `dev` = Patch version bump
 - `dev` → `main` = Major version bump
 
 Check current version and rules:
