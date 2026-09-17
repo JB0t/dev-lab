@@ -119,7 +119,11 @@ devlab_script = Path(__file__).parent / "devlab.py"
 
 # Pass all arguments to the actual script
 cmd = [str(venv_python), str(devlab_script)] + sys.argv[1:]
-subprocess.run(cmd)
+try:
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+except KeyboardInterrupt:
+    sys.exit(130)
 '''
     
     wrapper_file = script_dir / "devlab"

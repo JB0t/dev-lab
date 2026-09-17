@@ -218,12 +218,25 @@ class ContainerToolRunner:
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
         ]
+
+        if "helm" in image:
+            cmd.extend([
+                "--entrypoint", "/bin/sh",
+                "-v", f"{PROJECT_ROOT / 'python' / 'certs'}:/tmp/local-ca:ro",
+            ])
         
         # Add user mapping for flux to read kubeconfig (flux runs as nobody:65534)
         if "flux" in image:
             cmd.extend(["-u", "root"])  # Run as root to access mounted kubeconfig
         
         cmd.append(image)
+
+        if "helm" in image:
+            cmd.extend([
+                "-c",
+                "find /tmp/local-ca -type f -name '*.crt' -exec cp {} /usr/local/share/ca-certificates/ \\; 2>/dev/null; update-ca-certificates >/dev/null 2>&1; exec helm \"$@\"",
+                "helm",
+            ])
         
         # Add kubeconfig and context flags for linkerd and flux
         if "linkerd" in image or "flux" in image:
@@ -572,23 +585,32 @@ class DevLabManager:
         console.print("[blue]Setting up metrics server...[/blue]")
         
         # Install metrics server
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "apply", "-f", 
             "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to install metrics server[/red]")
+            return False
         
         # Patch for KinD
         patch = '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "patch", "deployment", "metrics-server", "-n", "kube-system",
             "--type=json", f"--patch={patch}"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to configure metrics server[/red]")
+            return False
         
         # Wait for metrics server
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "wait", "--for=condition=available", "deployment/metrics-server",
             "-n", "kube-system", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Metrics server did not become ready[/red]")
+            return False
         
         console.print("[green]Metrics server setup completed[/green]")
         return True
@@ -682,16 +704,29 @@ class DevLabManager:
             return True
         
         # Add Helm repositories
-        self.tools.helm(["repo", "add", "prometheus-community", "https://prometheus-community.github.io/helm-charts"])
-        self.tools.helm(["repo", "add", "grafana", "https://grafana.github.io/helm-charts"])
-        self.tools.helm(["repo", "update"])
+        for repository in [
+            ["repo", "add", "prometheus-community", "https://prometheus-community.github.io/helm-charts"],
+            ["repo", "add", "grafana", "https://grafana.github.io/helm-charts"],
+            ["repo", "update"],
+        ]:
+            result = self.tools.helm(repository, capture_output=True, text=True)
+            if result.returncode != 0:
+                console.print(f"[red]Helm command failed: {' '.join(repository)}\n{result.stderr}[/red]")
+                return False
         
         # Create monitoring namespace
-        self.tools.kubectl([
+        namespace_result = self.tools.kubectl([
             "create", "namespace", "monitoring", 
             "--dry-run=client", "-o", "yaml"
-        ])
-        self.tools.kubectl(["apply", "-f", "-"])
+        ], capture_output=True, text=True)
+        if namespace_result.returncode != 0:
+            console.print("[red]Failed to generate monitoring namespace[/red]")
+            return False
+
+        result = self.tools.kubectl(["apply", "-f", "-"], input=namespace_result.stdout, text=True)
+        if result.returncode != 0:
+            console.print("[red]Failed to create monitoring namespace[/red]")
+            return False
         
         # Install Prometheus stack
         values_file = CONFIG_DIR / "monitoring" / "prometheus-values.yaml"
@@ -699,19 +734,25 @@ class DevLabManager:
             console.print(f"[red]Prometheus values not found at {values_file}[/red]")
             return False
         
-        self.tools.helm([
+        result = self.tools.helm([
             "upgrade", "--install", "kube-prometheus-stack",
             "prometheus-community/kube-prometheus-stack",
             "--namespace", "monitoring",
             "--values", "/workspace/config/monitoring/prometheus-values.yaml"
         ])
+        if result.returncode != 0:
+            console.print("[red]Failed to install monitoring Helm chart[/red]")
+            return False
         
         # Wait for monitoring stack
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod",
             "-l", "app.kubernetes.io/name=kube-prometheus-stack",
             "-n", "monitoring", "--timeout=300s"
         ])
+        if result.returncode != 0:
+            console.print("[red]Monitoring stack did not become ready[/red]")
+            return False
         
         console.print("[green]Monitoring stack deployed[/green]")
         return True
