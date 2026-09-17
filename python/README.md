@@ -224,7 +224,7 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 - **kubectl**: `alpine/kubectl:latest`
 - **helm**: `alpine/helm:v3.13.1`
 - **linkerd**: `linkerd/cli-bin:stable-2.14.5`
-- **kind**: `kindest/node:v1.35.1` (selected in `cluster/kind-config.yaml`)
+- **kind**: `kindest/node:v1.35.8` by default (selected at bootstrap with KinD's `--image` option)
 - **flux**: `fluxcd/flux-cli:v2.1.2`
 
 ### Volume Mounts
