@@ -28,6 +28,13 @@ The KinD container image is built automatically when:
 2. Builds the image as `devlab-kind:latest`
 3. Uses this image for all KinD operations
 
+### Network CA Certificates
+
+If your network performs TLS inspection, place its trusted root certificate(s)
+anywhere under `python/certs/` before building. All nested `.crt` files are
+loaded recursively and trusted automatically. The directory is ignored by Git
+so organization-specific certificates are not committed.
+
 ### Manual Build (Optional)
 
 You can also build the KinD image manually:

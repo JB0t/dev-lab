@@ -27,7 +27,7 @@ A comprehensive local development environment with **dual deployment options**: 
 python3 python/setup.py
 
 # Put the wrapper script in your path so you can cd away from this repo
-export PATH="$PATH:$(pwd)/python"
+export PATH="$PATH:$(pwd)/python" >> ~/.bashrc && source ~/.bashrc
 
 # Build local tool container images (optional, built automatically when needed)
 devlab build-tools
