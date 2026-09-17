@@ -39,8 +39,10 @@ Without `fzf`, the same choices are available through a numbered prompt.
 
 If your network performs TLS inspection, place its trusted root certificate(s)
 anywhere under `python/certs/` before building. All nested `.crt` files are
-loaded recursively and trusted automatically. The directory is ignored by Git
-so organization-specific certificates are not committed.
+loaded recursively and trusted automatically by the local tool image. During
+bootstrap they are also installed into every KinD node so containerd can pull
+images for future charts and workloads. The directory is ignored by Git so
+organization-specific certificates are not committed.
 
 ### Manual Build (Optional)
 

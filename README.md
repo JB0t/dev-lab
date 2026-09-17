@@ -26,7 +26,7 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Linux, macOS, or Windows with WSL2**: On Windows, run the Bash commands from a WSL2 distribution. WSL2 must be able to reach the Docker daemon.
 - **Docker daemon**: Must be installed, running, and usable by your current user. Docker Desktop with WSL integration or Docker installed directly in WSL both work.
 - **Network access**: Required during setup to download Python packages, container images, Kubernetes manifests, Helm charts, and KinD node images.
-- **Trusted CA certificates**: Required when your network performs TLS inspection. For the local KinD helper image, place trusted `.crt` files under `python/certs/`; nested directories are supported.
+- **Trusted CA certificates**: Required when your network performs TLS inspection. Place trusted `.crt` files under `python/certs/`; nested directories are supported. Bootstrap installs them into the KinD nodes so containerd can pull arbitrary images for future workloads.
 
 ### Required Packages
 
