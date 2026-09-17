@@ -1,0 +1,12 @@
+FROM alpine/helm:latest
+
+ARG CA_BUNDLE_VERSION
+COPY certs/ /tmp/local-ca/
+
+RUN set -eu; \
+  bundle=/etc/ssl/cert.pem; \
+  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then bundle=/etc/ssl/certs/ca-certificates.crt; fi; \
+  find /tmp/local-ca -type f -name '*.crt' -exec cat {} \; >> "$bundle"; \
+  rm -rf /tmp/local-ca
+
+LABEL devlab.ca-bundle-version="${CA_BUNDLE_VERSION}"
