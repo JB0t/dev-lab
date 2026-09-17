@@ -188,12 +188,21 @@ class ContainerToolRunner:
         # Fallback: use local kind container image
         image_name = "devlab-kind:latest"
         
-        # Check if our local kind image exists, build if not
+        # Check if our local kind image exists and matches the configured CLI version.
         try:
             result = subprocess.run(["docker", "image", "inspect", image_name], 
                                    capture_output=True, text=True)
-            if result.returncode != 0:
-                console.print("[blue]Building local KinD container image (one-time setup)...[/blue]")
+            version_result = subprocess.run([
+                "docker", "image", "inspect", image_name,
+                "--format", "{{index .Config.Labels \"devlab.kind.version\"}}"
+            ], capture_output=True, text=True)
+            image_needs_build = (
+                result.returncode != 0
+                or version_result.returncode != 0
+                or version_result.stdout.strip() != TOOL_VERSIONS["kind"]
+            )
+            if image_needs_build:
+                console.print("[blue]Building local KinD container image (version update)...[/blue]")
                 self._build_kind_image(image_name)
         except Exception as e:
             console.print(f"[red]Error checking/building KinD image: {e}[/red]")
@@ -231,10 +240,30 @@ class ContainerToolRunner:
         if not dockerfile_path.exists():
             raise FileNotFoundError(f"Dockerfile.kind not found at {dockerfile_path}")
         
+        architecture_result = subprocess.run(
+            ["docker", "info", "--format", "{{.Architecture}}"],
+            capture_output=True,
+            text=True,
+        )
+        target_arch = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "ppc64le": "ppc64le",
+            "s390x": "s390x",
+        }.get(architecture_result.stdout.strip())
+        if architecture_result.returncode != 0 or not target_arch:
+            raise RuntimeError(
+                f"Could not determine Docker architecture: {architecture_result.stderr.strip()}"
+            )
+
         build_cmd = [
             "docker", "build", 
             "-f", str(dockerfile_path),
             "-t", image_name,
+            "--build-arg", f"KIND_VERSION={TOOL_VERSIONS['kind']}",
+            "--build-arg", f"TARGETARCH={target_arch}",
             str(dockerfile_path.parent)
         ]
         
@@ -285,7 +314,12 @@ class ContainerToolRunner:
         if "helm" in image:
             cmd.extend([
                 "-c",
-                "find /tmp/local-ca -type f -name '*.crt' -exec cp {} /usr/local/share/ca-certificates/ \\; 2>/dev/null; update-ca-certificates >/dev/null 2>&1; exec helm \"$@\"",
+                "set -e; bundle=/tmp/devlab-ca.pem; "
+                "if [ -f /etc/ssl/cert.pem ]; then cat /etc/ssl/cert.pem > \"$bundle\"; "
+                "elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt > \"$bundle\"; "
+                "else : > \"$bundle\"; fi; "
+                "find /tmp/local-ca -type f -name '*.crt' -exec cat {} \\; >> \"$bundle\"; "
+                "export SSL_CERT_FILE=\"$bundle\"; exec helm \"$@\"",
                 "helm",
             ])
         
@@ -736,8 +770,65 @@ class DevLabManager:
             "load", "docker-image", image, "--name", CLUSTER_NAME
         ])
         if load_result.returncode != 0:
-            console.print(f"[red]Failed to load {image} into KinD[/red]")
+            console.print("[yellow]KinD image load failed; importing the Linux image directly...[/yellow]")
+            if not self._import_kind_image_directly(image):
+                console.print(f"[red]Failed to load {image} into KinD[/red]")
+                return False
+        return True
+
+    def _import_kind_image_directly(self, image: str) -> bool:
+        """Import only the node platform image when KinD's multi-platform import fails."""
+        nodes_result = subprocess.run([
+            "docker", "ps", "--filter", f"label=io.k8s.kind.cluster={CLUSTER_NAME}",
+            "--format", "{{.Names}}"
+        ], capture_output=True, text=True)
+        if not nodes_result.stdout.strip():
+            nodes_result = subprocess.run([
+                "docker", "ps", "--filter", f"name={CLUSTER_NAME}-",
+                "--format", "{{.Names}}"
+            ], capture_output=True, text=True)
+        if nodes_result.returncode != 0 or not nodes_result.stdout.strip():
+            console.print(
+                f"[red]Could not find KinD nodes for direct image import. "
+                f"Docker error: {nodes_result.stderr.strip() or 'none'}[/red]"
+            )
             return False
+
+        first_node = nodes_result.stdout.splitlines()[0]
+        architecture_result = subprocess.run(
+            ["docker", "exec", first_node, "uname", "-m"],
+            capture_output=True,
+            text=True,
+        )
+        architecture = {
+            "x86_64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "ppc64le": "ppc64le",
+            "s390x": "s390x",
+        }.get(architecture_result.stdout.strip())
+        if architecture_result.returncode != 0 or not architecture:
+            console.print(f"[red]Could not determine KinD node architecture: {architecture_result.stderr.strip()}[/red]")
+            return False
+
+        platform = f"linux/{architecture}"
+        console.print(f"[blue]Exporting the {platform} variant of {image} from host Docker...[/blue]")
+        save_result = subprocess.run([
+            "docker", "save", "--platform", platform, image
+        ], capture_output=True)
+        if save_result.returncode != 0:
+            console.print(f"[red]Failed to save {image} from the host Docker daemon: {save_result.stderr.decode(errors='replace')}[/red]")
+            return False
+
+        for node in nodes_result.stdout.splitlines():
+            import_result = subprocess.run([
+                "docker", "exec", "--privileged", "-i", node,
+                "ctr", "--namespace=k8s.io", "images", "import",
+                "--platform", platform, "--digests", "--snapshotter=overlayfs", "-"
+            ], input=save_result.stdout, capture_output=True)
+            if import_result.returncode != 0:
+                console.print(f"[red]Direct image import failed on {node}: {import_result.stderr.decode(errors='replace')}[/red]")
+                return False
         return True
     
     def _setup_metrics_server(self) -> bool:
