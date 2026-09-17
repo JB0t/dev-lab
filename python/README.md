@@ -144,9 +144,13 @@ This will:
 This will:
 
 - Create a KinD cluster with 3 nodes
-- Install Linkerd service mesh
-- Setup local container registry
-- Install metrics server
+- Install the metrics server
+- Set up the local container registry
+- Deploy the Prometheus and Grafana monitoring stack
+
+It does not install Gateway API CRDs or Linkerd. NGINX Ingress and sample
+applications are installed by `./devlab deploy-traditional` (or managed
+through Flux by `./devlab deploy-gitops`).
 
 ### 3. Deploy Applications
 
@@ -157,7 +161,6 @@ This will:
 This will:
 
 - Install NGINX Ingress Controller
-- Deploy Prometheus monitoring stack
 - Deploy sample applications
 - Show access information
 
