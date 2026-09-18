@@ -28,6 +28,7 @@ import hashlib
 
 # Third-party imports (will be in requirements.txt)
 import click
+from click.shell_completion import CompletionItem, get_completion_class
 import docker
 import yaml
 import requests
@@ -115,9 +116,9 @@ class ContainerToolRunner:
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
     
-    def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
+    def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run helm in container"""
-        if args:
+        if args and not quiet:
             console.print(f"[cyan]Running Helm: {' '.join(str(arg) for arg in args)}[/cyan]")
 
         helm_image = self._ensure_helm_image()
@@ -159,6 +160,9 @@ class ContainerToolRunner:
         if not capture_output:
             return subprocess.run(cmd, text=text, input=input)
 
+        if quiet:
+            return subprocess.run(cmd, capture_output=True, text=text, input=input)
+
         process = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE if input is not None else None,
@@ -199,7 +203,7 @@ class ContainerToolRunner:
             "".join(stderr_lines) if text else b"".join(stderr_lines),
         )
     
-    def kind(self, args: List[str], capture_output: bool = False) -> subprocess.CompletedProcess:
+    def kind(self, args: List[str], capture_output: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run kind CLI - try host first, then local container image as fallback"""
         # First try to use host kind binary for better performance
         try:
@@ -230,13 +234,16 @@ class ContainerToolRunner:
                 or version_result.stdout.strip() != TOOL_VERSIONS["kind"]
             )
             if image_needs_build:
-                console.print("[blue]Building local KinD container image (version update)...[/blue]")
+                if not quiet:
+                    console.print("[blue]Building local KinD container image (version update)...[/blue]")
                 self._build_kind_image(image_name)
         except Exception as e:
-            console.print(f"[red]Error checking/building KinD image: {e}[/red]")
+            if not quiet:
+                console.print(f"[red]Error checking/building KinD image: {e}[/red]")
             return subprocess.CompletedProcess([], 1, "", str(e))
         
-        console.print("[yellow]KinD not found on host, using local container image...[/yellow]")
+        if not quiet:
+            console.print("[yellow]KinD not found on host, using local container image...[/yellow]")
 
         container_args = []
         for arg in args:
@@ -317,7 +324,7 @@ class ContainerToolRunner:
                 # Create an empty kubeconfig file
                 self.shared_kubeconfig_path.write_text("apiVersion: v1\nclusters: []\ncontexts: []\ncurrent-context: \"\"\nkind: Config\npreferences: {}\nusers: []\n")
     
-    def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None) -> subprocess.CompletedProcess:
+    def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None, use_kubeconfig: bool = True) -> subprocess.CompletedProcess:
         """Run a tool in a container with shared kubeconfig and kind network"""
         cmd = [
             "docker", "run", "--rm", "-i",
@@ -352,7 +359,7 @@ class ContainerToolRunner:
             ])
         
         # Add kubeconfig and context flags for linkerd and flux
-        if "linkerd" in image or "flux" in image:
+        if use_kubeconfig and ("linkerd" in image or "flux" in image):
             cmd.extend(["--kubeconfig", "/root/.kube/config"])
             if context:
                 cmd.extend(["--context", context])
@@ -414,6 +421,27 @@ class ContainerToolRunner:
             text=text,
             input=input
         )
+
+    def complete(self, tool: str, args: List[str]) -> subprocess.CompletedProcess:
+        """Request shell completion candidates from a wrapped Cobra CLI."""
+        completion_args = ["__complete", *args]
+        if tool == "kubectl":
+            return self.kubectl(completion_args, capture_output=True, text=True)
+        if tool == "helm":
+            return self.helm(completion_args, capture_output=True, text=True, quiet=True)
+        if tool == "linkerd":
+            return self._run_container(
+                image="cr.l5d.io/linkerd/cli-bin:stable-2.14.5",
+                args=completion_args,
+                capture_output=True,
+                text=True,
+                use_kubeconfig=False,
+            )
+        if tool == "flux":
+            return self.flux(completion_args, capture_output=True, text=True)
+        if tool == "kind":
+            return self.kind(completion_args, capture_output=True, quiet=True)
+        raise ValueError(f"Unsupported completion tool: {tool}")
 
 class DevLabManager:
     """Main class for managing dev-lab operations"""
@@ -1425,6 +1453,36 @@ class DevLabManager:
         console.print("• Changes to dev-lab/ directory will be reconciled automatically")
         console.print("• Use Git commits to manage deployments")
 
+def parse_cobra_completions(output: str) -> List[CompletionItem]:
+    """Convert Cobra's __complete output into Click completion items."""
+    lines = output.splitlines()
+    if lines and re.fullmatch(r":\d+", lines[-1]):
+        lines.pop()
+
+    items = []
+    for line in lines:
+        if not line or line.startswith("_activeHelp_"):
+            continue
+        value, separator, help_text = line.partition("\t")
+        items.append(CompletionItem(value, help=help_text if separator else None))
+    return items
+
+
+def complete_tool(tool: str):
+    """Create a Click completion callback for a wrapped CLI."""
+    def shell_complete(ctx, param, incomplete):
+        args = [*ctx.params.get(param.name, ()), incomplete]
+        try:
+            result = ContainerToolRunner().complete(tool, args)
+        except (OSError, ValueError):
+            return []
+        if result.returncode != 0:
+            return []
+        return parse_cobra_completions(result.stdout)
+
+    return shell_complete
+
+
 @click.group()
 def cli():
     """Dev Lab - Platform-Agnostic Kubernetes Development Environment"""
@@ -1459,7 +1517,7 @@ def deploy():
     sys.exit(0 if success else 1)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kubectl"))
 def kubectl(args):
     """Run kubectl commands"""
     manager = DevLabManager()
@@ -1467,7 +1525,7 @@ def kubectl(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("helm"))
 def helm(args):
     """Run helm commands"""
     manager = DevLabManager()
@@ -1475,7 +1533,7 @@ def helm(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("linkerd"))
 def linkerd(args):
     """Run linkerd commands"""
     manager = DevLabManager()
@@ -1483,12 +1541,28 @@ def linkerd(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("flux"))
 def flux(args):
     """Run flux commands"""
     manager = DevLabManager()
     result = manager.tools.flux(list(args))
     sys.exit(result.returncode)
+
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kind"))
+def kind(args):
+    """Run kind commands"""
+    manager = DevLabManager()
+    result = manager.tools.kind(list(args))
+    sys.exit(result.returncode)
+
+@cli.command()
+@click.argument("shell", type=click.Choice(["bash"]))
+def completion(shell):
+    """Print a shell completion script"""
+    completion_class = get_completion_class(shell)
+    complete = completion_class(cli, {}, "devlab", "_DEVLAB_COMPLETE")
+    click.echo(complete.source())
 
 @cli.command()
 def status():
@@ -1571,7 +1645,10 @@ def cleanup():
 
 if __name__ == "__main__":
     try:
-        cli.main(standalone_mode=False)
+        cli.main(prog_name="devlab", standalone_mode=False)
     except (KeyboardInterrupt, click.Abort):
         console.print("\n[yellow]Interrupted. Exiting...[/yellow]")
         sys.exit(130)
+    except click.ClickException as exc:
+        exc.show()
+        sys.exit(exc.exit_code)

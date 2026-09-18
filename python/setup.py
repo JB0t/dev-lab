@@ -145,7 +145,29 @@ except KeyboardInterrupt:
     
     return wrapper_file
 
-def show_usage_instructions(wrapper_file):
+def install_bash_completion(wrapper_file):
+    """Install the generated Bash completion script for the current user."""
+    if platform.system() == "Windows":
+        return None
+
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    completion_dir = data_home / "bash-completion" / "completions"
+    completion_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [str(wrapper_file), "completion", "bash"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"Warning: unable to generate Bash completion: {result.stderr.strip()}")
+        return None
+
+    completion_file = completion_dir / "devlab"
+    completion_file.write_text(result.stdout)
+    return completion_file
+
+
+def show_usage_instructions(wrapper_file, completion_file=None):
     """Show usage instructions"""
     script_dir = Path(__file__).parent
     
@@ -169,6 +191,9 @@ def show_usage_instructions(wrapper_file):
         print("   ./devlab status             # Check status")
         print("   ./devlab kubectl -- get pods -A")
         print("   ./devlab cleanup            # Clean up everything")
+        if completion_file:
+            print(f"\nBash completion installed: {completion_file}")
+            print("Restart Bash or run: source <(./devlab completion bash)")
     
     print("\nContainer-based tools available:")
     print("   • kubectl (Kubernetes CLI)")
@@ -211,9 +236,12 @@ def main():
         
         # Create wrapper scripts
         wrapper_file = create_wrapper_scripts(venv_info)
+
+        # Install Bash completion where bash-completion discovers user scripts
+        completion_file = install_bash_completion(wrapper_file)
         
         # Show usage instructions
-        show_usage_instructions(wrapper_file)
+        show_usage_instructions(wrapper_file, completion_file)
         
     except Exception as e:
         print(f"Setup failed: {e}")
