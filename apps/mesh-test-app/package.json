@@ -1,6 +1,6 @@
 {
   "name": "mesh-test-app",
-  "version": "1.0.0",
+  "version": "v9",
   "description": "Test application for service mesh and zero-downtime deployment testing",
   "main": "server.js",
   "scripts": {

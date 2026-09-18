@@ -35,19 +35,17 @@ spec:
       labels:
         app: mesh-test-app
         version: v1
-      annotations:
-        flagger.app/restart: "2025-09-30-canary-test-v5"
     spec:
       containers:
       - name: mesh-test-app
-        image: localhost:5000/mesh-test-app:v4  # ← Change this to trigger canary
+        image: localhost:5000/mesh-test-app:v9
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
           name: http
         env:
         - name: APP_VERSION
-          value: "v5"  # ← Update version to trigger canary
+          value: "v9"  # ← Update version to trigger canary
         - name: REDIS_URL
           value: "redis://redis-service:6379"
         resources:

@@ -153,10 +153,10 @@ watch ./devlab flux -- get kustomizations -A
 
 ```bash
 # Check if secret exists
-./devlab kubectl -- get secret flux-system-auth -n flux-system
+./devlab kubectl -- get secret dev-lab-repo -n flux-system
 
 # Verify SSH key format
-./devlab kubectl -- get secret flux-system-auth -n flux-system -o yaml
+./devlab kubectl -- get secret dev-lab-repo -n flux-system -o yaml
 ```
 
 ### Repository Sync Issues

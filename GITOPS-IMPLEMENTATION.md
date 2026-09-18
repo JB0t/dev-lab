@@ -40,7 +40,7 @@ Successfully implemented GitOps functionality in the DevLab Python CLI, extendin
 1. **Bootstrap Check**: Ensures cluster is ready
 2. **Flux Installation**: Deploys Flux controllers to `flux-system` namespace
 3. **SSH Key Generation**: Creates ed25519 key pair for Git authentication
-4. **Secret Creation**: Creates `flux-system-auth` secret with SSH keys
+4. **Secret Creation**: Creates `dev-lab-repo` secret with SSH keys
 5. **Deploy Key Setup**: Interactive guide for adding public key to GitHub
 6. **GitRepository Creation**: Configures Git source with SSH authentication
 7. **Kustomization Deployment**: Applies infrastructure and app kustomizations

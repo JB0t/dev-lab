@@ -14,15 +14,15 @@ log() {
 }
 
 success() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}✓ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN} $1${NC}"
 }
 
 error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED}✗ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED} $1${NC}"
 }
 
 warn() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW}⚠ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW} $1${NC}"
 }
 
 # Script directory
@@ -97,15 +97,15 @@ monitor_linkerd_traffic() {
     log "Monitoring Linkerd traffic statistics..."
     
     echo ""
-    echo "📊 Service Statistics:"
+    echo "Service Statistics:"
     linkerd viz stat -n mesh-test --from deploy/mesh-test-app --to svc/mesh-test-app-service
     
     echo ""
-    echo "📊 Traffic Split Statistics:"
+    echo "Traffic Split Statistics:"
     linkerd viz stat -n mesh-test svc
     
     echo ""
-    echo "📈 Success Rate and Latency:"
+    echo "Success Rate and Latency:"
     linkerd viz stat -n mesh-test --from deploy/mesh-test-app-v2 --to svc/redis-service
 }
 
@@ -123,19 +123,19 @@ analyze_live_traffic() {
 check_mesh_health() {
     log "Checking Linkerd mesh health..."
     
-    echo "🔍 Linkerd Control Plane:"
+    echo "Linkerd Control Plane:"
     linkerd check
     
     echo ""
-    echo "📡 Linkerd Viz Extension:"  
+    echo "Linkerd Viz Extension:"  
     linkerd viz check
     
     echo ""
-    echo "🕸️ Service Mesh Status:"
+    echo "Service Mesh Status:"
     linkerd viz edges -n mesh-test
     
     echo ""
-    echo "🔒 mTLS Status:"
+    echo "mTLS Status:"
     linkerd viz edges -n mesh-test --as table
 }
 
@@ -145,27 +145,27 @@ progressive_canary() {
     
     # Step 1: 10% canary
     deploy_httproute_canary 90 10
-    log "🎯 Step 1: 10% traffic to canary. Testing for 30 seconds..."
+    log "Step 1: 10% traffic to canary. Testing for 30 seconds..."
     sleep 30
     
     # Step 2: 25% canary
     deploy_httproute_canary 75 25
-    log "🎯 Step 2: 25% traffic to canary. Testing for 30 seconds..."
+    log "Step 2: 25% traffic to canary. Testing for 30 seconds..."
     sleep 30
     
     # Step 3: 50% canary
     deploy_httproute_canary 50 50
-    log "🎯 Step 3: 50% traffic to canary. Testing for 30 seconds..."
+    log "Step 3: 50% traffic to canary. Testing for 30 seconds..."
     sleep 30
     
     # Step 4: 75% canary
     deploy_httproute_canary 25 75
-    log "🎯 Step 4: 75% traffic to canary. Testing for 30 seconds..."
+    log "Step 4: 75% traffic to canary. Testing for 30 seconds..."
     sleep 30
     
     # Step 5: 100% canary
     deploy_httproute_canary 0 100
-    log "🎯 Step 5: 100% traffic to canary - deployment complete!"
+    log "Step 5: 100% traffic to canary - deployment complete!"
     
     success "Progressive canary deployment completed successfully"
 }
@@ -181,17 +181,17 @@ automated_canary() {
     for weight in "${weights[@]}"; do
         local v1_weight=$((100 - weight))
         
-        log "🎯 Deploying ${weight}% canary traffic..."
+        log "Deploying ${weight}% canary traffic..."
         deploy_httproute_canary $v1_weight $weight
         
-        log "⏱️ Monitoring for ${check_interval} seconds..."
+        log "Monitoring for ${check_interval} seconds..."
         sleep $check_interval
         
         # Check error rates
-        log "📊 Checking error rates..."
+        log "Checking error rates..."
         error_rate=$(linkerd viz stat -n mesh-test svc/mesh-test-app-service-v2 -o json | jq -r '.[0].stats.successRate' 2>/dev/null || echo "100%")
         
-        log "📈 Canary error rate: $error_rate"
+        log "Canary error rate: $error_rate"
         
         # Simple health check (in real scenario, you'd have more sophisticated checks)
         if [[ "$error_rate" == "100%" ]]; then

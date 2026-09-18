@@ -170,7 +170,7 @@ app.get('/', async (req, res) => {
     }
 
     res.json({
-      message: '🌟 Service Mesh Test Application v3 - Premium Edition',
+      message: 'Service Mesh Test Application v3 - Premium Edition',
       version: version,
       counter: counter + 1,
       startup_time: startupTime,
@@ -284,10 +284,10 @@ async function startServer() {
   await connectRedis();
 
   app.listen(PORT, () => {
-    console.log(`🚀 Mesh Test App v${APP_VERSION} listening on port ${PORT}`);
-    console.log(`📊 Metrics available at http://localhost:${PORT}/metrics`);
-    console.log(`🏥 Health check at http://localhost:${PORT}/health`);
-    console.log(`📡 Redis connected: ${redisConnected}`);
+    console.log(`Mesh Test App v${APP_VERSION} listening on port ${PORT}`);
+    console.log(`Metrics available at http://localhost:${PORT}/metrics`);
+    console.log(`Health check at http://localhost:${PORT}/health`);
+    console.log(`Redis connected: ${redisConnected}`);
   });
 }
 

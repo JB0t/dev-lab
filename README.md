@@ -1,8 +1,10 @@
 # Local Kubernetes Development Lab
 
+![Version](https://img.shields.io/badge/Version-v0.5.1-blue)
+
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
-> **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
+> **For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
 
 ## Features
 
@@ -16,6 +18,40 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Metrics Server**: For cluster autoscaling and resource monitoring
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
 
+## Pre-requisites
+
+### Runtime Environment
+
+- **Bash**: Recommended for the smoothest experience and required by the legacy scripts.
+- **Linux, macOS, or Windows with WSL2**: On Windows, run the Bash commands from a WSL2 distribution. WSL2 must be able to reach the Docker daemon.
+- **Docker daemon**: Must be installed, running, and usable by your current user. Docker Desktop with WSL integration or Docker installed directly in WSL both work.
+- **Network access**: Required during setup to download Python packages, container images, Kubernetes manifests, Helm charts, and KinD node images.
+- **Trusted CA certificates**: Required when your network performs TLS inspection. Place trusted `.crt` files under `python/certs/`; nested directories are supported. Bootstrap installs them into the KinD nodes so containerd can pull arbitrary images for future workloads.
+
+### Required Packages
+
+For the recommended Python CLI:
+
+- **Python 3.8 or newer** with `venv` and `pip` support. `python/setup.py` installs the Python dependencies listed in `python/requirements.txt`.
+- **Docker CLI and daemon**. The CLI uses Docker to run `kubectl`, Helm, Flux, and Linkerd containers, and to create the KinD cluster.
+- **Git** for working with this repository and for GitOps workflows.
+
+For the legacy Bash scripts, install these on the host as well:
+
+- **`kubectl`**
+- **Helm**
+- **KinD**
+- **`jq`**
+- **`curl`**
+- **OpenSSH tools**, including `ssh-keygen`, for Flux deploy keys
+
+### Optional Additions
+
+- **`fzf`**: Used by `devlab bootstrap` to choose the newest KinD node patch for each Kubernetes minor version. Without it, bootstrap provides a numbered prompt.
+- **Linkerd CLI**: Needed only for workflows that explicitly install or operate Linkerd through the legacy scripts; the Python CLI runs its Linkerd commands in a container.
+- **Flux CLI**: Needed only for legacy scripts; the Python CLI runs Flux in a container.
+- **Host `kubectl`, Helm, and KinD**: Optional with the Python CLI. Host KinD is used when available; otherwise the CLI builds and uses `devlab-kind:latest`.
+
 ## Quick Start
 
 ### Option 1: Python CLI (Recommended)
@@ -24,29 +60,49 @@ A comprehensive local development environment with **dual deployment options**: 
 # Setup Python environment
 python3 python/setup.py
 
+# Persist the wrapper path and tab completion for future Bash sessions
+# Replace ~/.bashrc with ~/.bash_profile or the startup file your Bash installation uses
+DEVLAB_DIR="$(pwd)/python"
+printf '\nexport PATH="$PATH:%s"\n' "$DEVLAB_DIR" >> ~/.bashrc
+printf 'source <(devlab completion bash)\n' >> ~/.bashrc
+source ~/.bashrc
+
 # Build local tool container images (optional, built automatically when needed)
-./devlab build-tools
+devlab build-tools
 
 # Bootstrap the cluster
-./devlab bootstrap
+devlab bootstrap
 
 # Deploy using traditional method
-./devlab deploy-traditional
+devlab deploy-traditional
 
 # OR deploy using GitOps method
-./devlab deploy-gitops
+devlab deploy-gitops
 
 # Check status
-./devlab status
+devlab status
 
 # Use container-based tools
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
-./devlab flux -- get all -A
+devlab kubectl -- get pods -A
+devlab helm -- list -A
+devlab linkerd -- check
+devlab flux -- get all -A
+devlab kind -- get clusters
+
+# Do this if you hate typing
+## Then create some aliases
+alias kubectl='devlab kubectl --'
+alias helm='devlab helm --'
+alias linkerd='devlab linkerd --'
+alias flux='devlab flux --'
+
+# Do this if you hate typing
+alias kubectl='./devlab kubectl --'
+alias helm='./devlab helm --'
+alias flux='./devlab flux --'
 
 # Cleanup when done
-./devlab cleanup
+devlab cleanup
 ```
 
 ### Option 2: Bash Scripts (Legacy)
@@ -55,7 +111,7 @@ python3 python/setup.py
 # 1. Install prerequisites (if needed)
 ./scripts/install-prerequisites.sh
 
-# 2. Bootstrap common infrastructure  
+# 2. Bootstrap common infrastructure
 ./scripts/bootstrap.sh
 
 # 3. Deploy either:
@@ -185,6 +241,7 @@ The dev-lab includes a comprehensive service mesh testing environment with Linke
 - **Production-Ready Test App**: Node.js application with health checks, metrics, and Redis backend
 
 ### Canary Deployment Methods
+
 `<!-- TODO: update canary tests (include flagger) -->`
 
 #### Method 1: Linkerd Native HTTPRoute (Recommended)
@@ -348,13 +405,13 @@ The mesh test application demonstrates production patterns:
 
 ### Production-Ready Features
 
-- ✅ **Health Probes**: Kubernetes liveness and readiness checks
-- ✅ **Graceful Shutdown**: Proper SIGTERM handling
-- ✅ **Resource Limits**: CPU and memory constraints
-- ✅ **Security**: mTLS encryption for all service communication
-- ✅ **Observability**: Comprehensive metrics and tracing
-- ✅ **Zero Downtime**: Proven deployment strategies
-- ✅ **Automated Testing**: Load generation and health verification
+- **Health Probes**: Kubernetes liveness and readiness checks
+- **Graceful Shutdown**: Proper SIGTERM handling
+- **Resource Limits**: CPU and memory constraints
+- **Security**: mTLS encryption for all service communication
+- **Observability**: Comprehensive metrics and tracing
+- **Zero Downtime**: Proven deployment strategies
+- **Automated Testing**: Load generation and health verification
 
 ## Monitoring Access
 
@@ -535,12 +592,37 @@ Edit `cluster/kind-config.yaml` to:
 - Configure networking
 - Add extra mounts
 
+## Versioning
+
+This project uses **automated semantic versioning** based on branch naming conventions:
+
+- `feature/*` → `dev` = Minor version bump
+- `patch/*` → `dev` = Patch version bump
+- `dev` → `main` = Major version bump
+
+Check current version and rules:
+
+```bash
+./scripts/version-info.sh        # Show version info
+./scripts/version-info.sh rules  # Show versioning rules
+```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed workflow guidelines.
+
 ## Performance Tips
 
 1. **Resource Allocation**: The lightweight monitoring configuration reduces resource usage significantly
 2. **Image Management**: Use `kind load` for development, registry for CI/CD simulation
 3. **Persistent Storage**: Registry data persists in `/var/lib/registry` on control-plane node
 4. **Port Forwarding**: Use kubectl port-forward instead of NodePort for better performance
+
+## Misc
+
+Lint markdown like this:
+
+```bash
+mkdownfix --exclude-dirs apps/mesh-test-app/node_modules
+```
 
 ## License
 

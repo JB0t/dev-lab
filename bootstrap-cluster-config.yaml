@@ -1,0 +1,16 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-lab-cluster-config
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 5m
+  path: "./clusters/dev-lab"
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: dev-lab-repo
+  timeout: 2m
+  wait: true

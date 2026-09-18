@@ -1,0 +1,22 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-service-mesh-layer
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+spec:
+  interval: 30s
+  ref:
+    branch: main
+  url: ssh://git@github.com/amelcocloud/flux-service-mesh-layer.git
+  secretRef:
+    name: flux-service-mesh-layer
+  # ignore: |
+  #   # Ignore non-kubernetes files
+  #   *.md
+  #   # Ignore example directories
+  #   /examples/
+  #   # Ignore gitops files
+  #   .commit-check.yml

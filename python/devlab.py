@@ -21,11 +21,17 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import argparse
 import time
+import re
+import shutil
+import threading
+import hashlib
 
 # Third-party imports (will be in requirements.txt)
 import click
+from click.shell_completion import CompletionItem, get_completion_class
 import docker
 import yaml
+import requests
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -41,13 +47,16 @@ CLUSTER_NAME = "dev-lab"
 REGISTRY_PORT = 5000
 KEY_PATH = str(PROJECT_ROOT / "flux-deploy-key")
 REPO_URL = "ssh://git@github.com/jbotstevens/notes.git"
+KIND_NODE_REPOSITORY = "kindest/node"
+KIND_NODE_TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+DEFAULT_KIND_NODE_IMAGE = "kindest/node:v1.35.8"
 
 # Container tool versions
 TOOL_VERSIONS = {
     "kubectl": "v1.28.3",
     "helm": "v3.13.1",
     "linkerd": "stable-2.14.5",
-    "kind": "v0.20.0",
+    "kind": "v0.33.0",
     "flux": "v2.1.2"
 }
 
@@ -84,6 +93,12 @@ class ContainerToolRunner:
     
     def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run kubectl in container"""
+        if args and args[0] == "apply":
+            target = " ".join(str(arg) for arg in args[1:]) or "manifest from stdin"
+            if target == "-f -":
+                target = "generated manifest from stdin"
+            console.print(f"[cyan]Applying Kubernetes resources: {target}[/cyan]")
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -101,20 +116,94 @@ class ContainerToolRunner:
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
     
-    def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
+    def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run helm in container"""
+        if args and not quiet:
+            console.print(f"[cyan]Running Helm: {' '.join(str(arg) for arg in args)}[/cyan]")
+
+        helm_image = self._ensure_helm_image()
+        if helm_image is None:
+            return subprocess.CompletedProcess([], 1, "", "Failed to build Helm image")
+
+        helm_args = list(args)
+        helm_state_dir = PROJECT_ROOT / ".helm"
+        helm_config_dir = helm_state_dir / "config"
+        helm_cache_dir = helm_state_dir / "cache"
+        helm_data_dir = helm_state_dir / "data"
+        for directory in (helm_config_dir, helm_cache_dir, helm_data_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        host_ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
+        ca_file = "/etc/ssl/certs/devlab-ca-bundle.pem"
+        host_ca_mount = []
+        if host_ca_bundle.exists():
+            ca_file = "/tmp/host-ca-certificates.crt"
+            host_ca_mount = [
+                "-v", f"{host_ca_bundle}:{ca_file}:ro",
+            ]
+        if len(helm_args) >= 2 and helm_args[:2] == ["repo", "add"]:
+            helm_args.extend(["--ca-file", ca_file])
+
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
-            "alpine/helm:latest",
-        ] + args
+            "-v", f"{helm_config_dir}:/root/.config/helm:rw",
+            "-v", f"{helm_cache_dir}:/root/.cache/helm:rw",
+            "-v", f"{helm_data_dir}:/root/.local/share/helm:rw",
+            *host_ca_mount,
+            helm_image,
+        ] + helm_args
         
-        return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
+        if not capture_output:
+            return subprocess.run(cmd, text=text, input=input)
+
+        if quiet:
+            return subprocess.run(cmd, capture_output=True, text=text, input=input)
+
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE if input is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+        )
+        stdout_lines = []
+        stderr_lines = []
+
+        def stream_output(stream, lines, target):
+            for line in iter(stream.readline, "" if text else b""):
+                lines.append(line)
+                target.write(line)
+                target.flush()
+            stream.close()
+
+        stdout_thread = threading.Thread(
+            target=stream_output, args=(process.stdout, stdout_lines, sys.stdout)
+        )
+        stderr_thread = threading.Thread(
+            target=stream_output, args=(process.stderr, stderr_lines, sys.stderr)
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        if input is not None:
+            process.stdin.write(input)
+            process.stdin.close()
+        return_code = process.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+        return subprocess.CompletedProcess(
+            cmd,
+            return_code,
+            "".join(stdout_lines) if text else b"".join(stdout_lines),
+            "".join(stderr_lines) if text else b"".join(stderr_lines),
+        )
     
-    def kind(self, args: List[str], capture_output: bool = False) -> subprocess.CompletedProcess:
+    def kind(self, args: List[str], capture_output: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run kind CLI - try host first, then local container image as fallback"""
         # First try to use host kind binary for better performance
         try:
@@ -131,18 +220,41 @@ class ContainerToolRunner:
         # Fallback: use local kind container image
         image_name = "devlab-kind:latest"
         
-        # Check if our local kind image exists, build if not
+        # Check if our local kind image exists and matches the configured CLI version.
         try:
             result = subprocess.run(["docker", "image", "inspect", image_name], 
                                    capture_output=True, text=True)
-            if result.returncode != 0:
-                console.print("[blue]Building local KinD container image (one-time setup)...[/blue]")
+            version_result = subprocess.run([
+                "docker", "image", "inspect", image_name,
+                "--format", "{{index .Config.Labels \"devlab.kind.version\"}}"
+            ], capture_output=True, text=True)
+            image_needs_build = (
+                result.returncode != 0
+                or version_result.returncode != 0
+                or version_result.stdout.strip() != TOOL_VERSIONS["kind"]
+            )
+            if image_needs_build:
+                if not quiet:
+                    console.print("[blue]Building local KinD container image (version update)...[/blue]")
                 self._build_kind_image(image_name)
         except Exception as e:
-            console.print(f"[red]Error checking/building KinD image: {e}[/red]")
+            if not quiet:
+                console.print(f"[red]Error checking/building KinD image: {e}[/red]")
             return subprocess.CompletedProcess([], 1, "", str(e))
         
-        console.print("[yellow]KinD not found on host, using local container image...[/yellow]")
+        if not quiet:
+            console.print("[yellow]KinD not found on host, using local container image...[/yellow]")
+
+        container_args = []
+        for arg in args:
+            if isinstance(arg, Path):
+                try:
+                    workspace_path = arg.relative_to(PROJECT_ROOT).as_posix()
+                    container_args.append(f"/workspace/{workspace_path}")
+                    continue
+                except ValueError:
+                    pass
+            container_args.append(str(arg))
         
         cmd = [
             "docker", "run", "--rm", "-i",
@@ -152,7 +264,7 @@ class ContainerToolRunner:
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
             image_name
-        ] + args
+        ] + container_args
         
         return subprocess.run(cmd, capture_output=capture_output, text=True)
     
@@ -163,10 +275,30 @@ class ContainerToolRunner:
         if not dockerfile_path.exists():
             raise FileNotFoundError(f"Dockerfile.kind not found at {dockerfile_path}")
         
+        architecture_result = subprocess.run(
+            ["docker", "info", "--format", "{{.Architecture}}"],
+            capture_output=True,
+            text=True,
+        )
+        target_arch = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "ppc64le": "ppc64le",
+            "s390x": "s390x",
+        }.get(architecture_result.stdout.strip())
+        if architecture_result.returncode != 0 or not target_arch:
+            raise RuntimeError(
+                f"Could not determine Docker architecture: {architecture_result.stderr.strip()}"
+            )
+
         build_cmd = [
             "docker", "build", 
             "-f", str(dockerfile_path),
             "-t", image_name,
+            "--build-arg", f"KIND_VERSION={TOOL_VERSIONS['kind']}",
+            "--build-arg", f"TARGETARCH={target_arch}",
             str(dockerfile_path.parent)
         ]
         
@@ -178,7 +310,7 @@ class ContainerToolRunner:
             console.print(result.stderr)
             raise RuntimeError(f"Failed to build {image_name}")
         
-        console.print(f"[green]✅ Successfully built {image_name}[/green]")
+        console.print(f"[green]Successfully built {image_name}[/green]")
     
     def _ensure_shared_kubeconfig(self):
         """Ensure shared kubeconfig exists, copy from user's if needed"""
@@ -192,7 +324,7 @@ class ContainerToolRunner:
                 # Create an empty kubeconfig file
                 self.shared_kubeconfig_path.write_text("apiVersion: v1\nclusters: []\ncontexts: []\ncurrent-context: \"\"\nkind: Config\npreferences: {}\nusers: []\n")
     
-    def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None) -> subprocess.CompletedProcess:
+    def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None, use_kubeconfig: bool = True) -> subprocess.CompletedProcess:
         """Run a tool in a container with shared kubeconfig and kind network"""
         cmd = [
             "docker", "run", "--rm", "-i",
@@ -201,15 +333,33 @@ class ContainerToolRunner:
             "-v", f"{PROJECT_ROOT}:/workspace:rw",
             "-w", "/workspace",
         ]
+
+        if "helm" in image:
+            cmd.extend([
+                "--entrypoint", "/bin/sh",
+                "-v", f"{PROJECT_ROOT / 'python' / 'certs'}:/tmp/local-ca:ro",
+            ])
         
         # Add user mapping for flux to read kubeconfig (flux runs as nobody:65534)
         if "flux" in image:
             cmd.extend(["-u", "root"])  # Run as root to access mounted kubeconfig
         
         cmd.append(image)
+
+        if "helm" in image:
+            cmd.extend([
+                "-c",
+                "set -e; bundle=/tmp/devlab-ca.pem; "
+                "if [ -f /etc/ssl/cert.pem ]; then cat /etc/ssl/cert.pem > \"$bundle\"; "
+                "elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then cat /etc/ssl/certs/ca-certificates.crt > \"$bundle\"; "
+                "else : > \"$bundle\"; fi; "
+                "find /tmp/local-ca -type f -name '*.crt' -exec cat {} \\; >> \"$bundle\"; "
+                "export SSL_CERT_FILE=\"$bundle\"; exec helm \"$@\"",
+                "helm",
+            ])
         
         # Add kubeconfig and context flags for linkerd and flux
-        if "linkerd" in image or "flux" in image:
+        if use_kubeconfig and ("linkerd" in image or "flux" in image):
             cmd.extend(["--kubeconfig", "/root/.kube/config"])
             if context:
                 cmd.extend(["--context", context])
@@ -219,6 +369,37 @@ class ContainerToolRunner:
         cmd.extend(args)
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
+
+    def _ensure_helm_image(self) -> Optional[str]:
+        """Build a cached Helm image containing the current local CA bundle."""
+        image_name = "devlab-helm:latest"
+        certificate_files = sorted((PROJECT_ROOT / "python" / "certs").rglob("*.crt"))
+        digest = hashlib.sha256()
+        digest.update((PROJECT_ROOT / "python" / "Dockerfile.helm").read_bytes())
+        for certificate in certificate_files:
+            digest.update(certificate.relative_to(PROJECT_ROOT).as_posix().encode())
+            digest.update(certificate.read_bytes())
+        ca_bundle_version = digest.hexdigest()
+
+        inspect_result = subprocess.run([
+            "docker", "image", "inspect", image_name,
+            "--format", "{{index .Config.Labels \"devlab.ca-bundle-version\"}}"
+        ], capture_output=True, text=True)
+        if inspect_result.returncode == 0 and inspect_result.stdout.strip() == ca_bundle_version:
+            return image_name
+
+        dockerfile_path = Path(__file__).parent / "Dockerfile.helm"
+        console.print("[blue]Building local Helm image with custom CA certificates...[/blue]")
+        build_result = subprocess.run([
+            "docker", "build", "-f", str(dockerfile_path),
+            "-t", image_name,
+            "--build-arg", f"CA_BUNDLE_VERSION={ca_bundle_version}",
+            str(dockerfile_path.parent),
+        ], capture_output=True, text=True)
+        if build_result.returncode != 0:
+            console.print(f"[red]Failed to build Helm image:\n{build_result.stderr}[/red]")
+            return None
+        return image_name
     
     def linkerd(self, args, capture_output=False, text=False, input=None, context=None):
         """Run linkerd CLI in container"""
@@ -240,6 +421,27 @@ class ContainerToolRunner:
             text=text,
             input=input
         )
+
+    def complete(self, tool: str, args: List[str]) -> subprocess.CompletedProcess:
+        """Request shell completion candidates from a wrapped Cobra CLI."""
+        completion_args = ["__complete", *args]
+        if tool == "kubectl":
+            return self.kubectl(completion_args, capture_output=True, text=True)
+        if tool == "helm":
+            return self.helm(completion_args, capture_output=True, text=True, quiet=True)
+        if tool == "linkerd":
+            return self._run_container(
+                image="cr.l5d.io/linkerd/cli-bin:stable-2.14.5",
+                args=completion_args,
+                capture_output=True,
+                text=True,
+                use_kubeconfig=False,
+            )
+        if tool == "flux":
+            return self.flux(completion_args, capture_output=True, text=True)
+        if tool == "kind":
+            return self.kind(completion_args, capture_output=True, quiet=True)
+        raise ValueError(f"Unsupported completion tool: {tool}")
 
 class DevLabManager:
     """Main class for managing dev-lab operations"""
@@ -268,7 +470,7 @@ class DevLabManager:
     
     def bootstrap(self) -> bool:
         """Bootstrap the complete dev-lab environment"""
-        console.print("[bold blue]🚀 Bootstrapping Dev Lab Environment[/bold blue]")
+        console.print("[bold blue]Bootstrapping Dev Lab Environment[/bold blue]")
         
         if not self.check_docker():
             return False
@@ -279,18 +481,27 @@ class DevLabManager:
         # Create cluster
         if not self._create_cluster():
             return False
-        
-        # Setup Linkerd
-        if not self._setup_linkerd():
+
+        if not self._configure_kind_node_certificates():
             return False
         
-        console.print("\n[bold green]🎉 Bootstrap completed successfully![/bold green]")
+        # Setup bootstrap infrastructure
+        if not self._setup_registry():
+            return False
+
+        if not self._setup_metrics_server():
+            return False
+
+        if not self._deploy_monitoring():
+            return False
+        
+        console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
         self._show_bootstrap_info()
         return True
     
     def _show_bootstrap_info(self) -> None:
         """Display helpful information after bootstrap"""
-        console.print("\n[bold cyan]🎯 What's Next?[/bold cyan]")
+        console.print("\n[bold cyan]What's Next?[/bold cyan]")
         console.print("\n[green]Available Commands:[/green]")
         console.print("  • [cyan]./devlab kubectl get nodes[/cyan] - Check cluster status")
         console.print("  • [cyan]./devlab linkerd check[/cyan] - Verify Linkerd installation")
@@ -299,9 +510,115 @@ class DevLabManager:
         console.print("\n[green]Access Points:[/green]")
         console.print(f"  • [cyan]Linkerd Viz:[/cyan] http://localhost:50750 (after: ./devlab linkerd viz dashboard)")
         console.print("\n[yellow]Next Steps:[/yellow]")
-        console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes registry, metrics-server, ingress, monitoring)")
-        console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages all infrastructure including metrics-server)")
+        console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes ingress and sample apps)")
+        console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages application infrastructure)")
         console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
+
+    def _configure_kind_node_certificates(self) -> bool:
+        """Install local CA certificates into all KinD nodes for containerd pulls."""
+        certificate_dir = PROJECT_ROOT / "python" / "certs"
+        certificates = list(certificate_dir.rglob("*.crt"))
+        if not certificates:
+            console.print("[yellow]No local CA certificates found; using node defaults[/yellow]")
+            return True
+
+        node_result = subprocess.run([
+            "docker", "ps", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER_NAME}",
+            "--format", "{{.Names}}"
+        ], capture_output=True, text=True)
+        if node_result.returncode != 0 or not node_result.stdout.strip():
+            console.print("[red]Could not find KinD nodes for CA installation[/red]")
+            return False
+
+        nodes = node_result.stdout.splitlines()
+        console.print(f"[blue]Installing {len(certificates)} custom CA certificate(s) into KinD nodes...[/blue]")
+        for node in nodes:
+            mkdir_result = subprocess.run([
+                "docker", "exec", node, "mkdir", "-p",
+                "/usr/local/share/ca-certificates/devlab"
+            ], capture_output=True, text=True)
+            if mkdir_result.returncode != 0:
+                console.print(f"[red]Failed to prepare CA directory on {node}: {mkdir_result.stderr}[/red]")
+                return False
+
+            copy_result = subprocess.run([
+                "docker", "cp", f"{certificate_dir}/.",
+                f"{node}:/usr/local/share/ca-certificates/devlab/"
+            ], capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                console.print(f"[red]Failed to copy CA certificates to {node}: {copy_result.stderr}[/red]")
+                return False
+
+            update_result = subprocess.run([
+                "docker", "exec", node, "sh", "-c",
+                "find /usr/local/share/ca-certificates/devlab -type f -name '*.crt' -exec cp {} /usr/local/share/ca-certificates/ \\; && "
+                "update-ca-certificates && (systemctl restart containerd || service containerd restart)"
+            ], capture_output=True, text=True)
+            if update_result.returncode != 0:
+                console.print(f"[red]Failed to update containerd trust on {node}: {update_result.stderr}[/red]")
+                return False
+
+        console.print("[green]Custom CA certificates installed in KinD nodes[/green]")
+        return True
+
+    def _latest_kind_node_images(self, current_image: str):
+        """Return the newest published KinD node image for each Kubernetes minor."""
+        images = {}
+        url = "https://registry.hub.docker.com/v2/repositories/kindest/node/tags"
+        params = {"page_size": 100, "ordering": "last_updated"}
+        ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+        system_ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
+        if not ca_bundle and system_ca_bundle.exists():
+            ca_bundle = str(system_ca_bundle)
+
+        try:
+            while url:
+                response = requests.get(url, params=params, timeout=15, verify=ca_bundle or True)
+                response.raise_for_status()
+                payload = response.json()
+                for tag in payload.get("results", []):
+                    match = KIND_NODE_TAG_PATTERN.match(tag.get("name", ""))
+                    if not match:
+                        continue
+                    version = tuple(int(part) for part in match.groups())
+                    minor = version[:2]
+                    if minor not in images or version > images[minor][0]:
+                        images[minor] = (version, f"{KIND_NODE_REPOSITORY}:v{'.'.join(map(str, version))}")
+                url = payload.get("next")
+                params = None
+        except (requests.RequestException, ValueError) as error:
+            console.print(f"[yellow]Could not list latest KinD node images: {error}[/yellow]")
+
+        current_match = re.match(r"^kindest/node:(v\d+\.\d+\.\d+)$", current_image)
+        if current_match:
+            version = tuple(int(part) for part in current_match.group(1)[1:].split("."))
+            images.setdefault(version[:2], (version, current_image))
+
+        return [image for _, image in sorted(images.values(), reverse=True)]
+
+    def _select_kind_node_image(self, current_image: str):
+        """Let the user keep the configured image or select a current minor release."""
+        options = [f"Keep current: {current_image}"]
+        options.extend(self._latest_kind_node_images(current_image))
+        options = list(dict.fromkeys(options))
+
+        if shutil.which("fzf"):
+            result = subprocess.run(
+                ["fzf", "--height=40%", "--layout=reverse", "--header=Select Kubernetes version"],
+                input="\n".join(options),
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 130:
+                raise KeyboardInterrupt
+            if result.returncode != 0:
+                return current_image
+            selection = result.stdout.strip()
+        else:
+            console.print("[blue]fzf is not installed; choose a Kubernetes version:[/blue]")
+            selection = click.prompt("Selection", type=click.Choice(options), default=options[0])
+
+        return current_image if selection.startswith("Keep current:") else selection
     
     def _create_cluster(self) -> bool:
         """Create KinD cluster"""
@@ -322,10 +639,16 @@ class DevLabManager:
         if not config_file.exists():
             console.print(f"[red]Kind config not found at {config_file}[/red]")
             return False
+
+        config = yaml.safe_load(config_file.read_text()) or {}
+        current_image = config.get("image", DEFAULT_KIND_NODE_IMAGE)
+        selected_image = self._select_kind_node_image(current_image)
+        console.print(f"[blue]Using Kubernetes node image: {selected_image}[/blue]")
         
         result = self.tools.kind([
             "create", "cluster", 
-            "--config", "/workspace/cluster/kind-config.yaml",
+            "--config", config_file,
+            "--image", selected_image,
             "--wait", "300s"
         ])
         
@@ -341,7 +664,7 @@ class DevLabManager:
         console.print("[blue]Waiting for nodes to be ready...[/blue]")
         self.tools.kubectl(["wait", "--for=condition=Ready", "nodes", "--all", "--timeout=300s"], context="kind-dev-lab")
         
-        console.print("[green]✅ Cluster created successfully[/green]")
+        console.print("[green]Cluster created successfully[/green]")
         return True
     
     def _fix_kubeconfig_for_containers(self) -> bool:
@@ -379,7 +702,7 @@ class DevLabManager:
             with open(kubeconfig_path, 'w') as f:
                 yaml.safe_dump(config, f, default_flow_style=False)
             
-            console.print("[green]✅ Kubeconfig updated for container networking[/green]")
+            console.print("[green]Kubeconfig updated for container networking[/green]")
             return True
             
         except Exception as e:
@@ -444,18 +767,36 @@ class DevLabManager:
             "-n", "linkerd-viz", "--all", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
         
-        console.print("[green]✅ Linkerd setup completed[/green]")
+        console.print("[green]Linkerd setup completed[/green]")
         return True
     
     def _setup_registry(self) -> bool:
         """Setup local container registry"""
         console.print("[blue]Setting up local container registry...[/blue]")
+
+        for image in ["registry:2.8", "joxit/docker-registry-ui:2.5.7"]:
+            if not self._load_kind_image(image):
+                return False
         
-        # Create namespace
-        console.print("[blue]Creating registry namespace...[/blue]")
-        self.tools.kubectl([
-            "create", "namespace", "dev-lab-registry"
-        ], context=f"kind-{CLUSTER_NAME}")
+        # Create or reconcile the namespace without failing if it already exists.
+        console.print("[blue]Ensuring registry namespace...[/blue]")
+        namespace_result = self.tools.kubectl([
+            "create", "namespace", "dev-lab-registry",
+            "--dry-run=client", "-o", "yaml"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        if namespace_result.returncode != 0:
+            console.print("[red]Failed to generate registry namespace[/red]")
+            return False
+
+        result = self.tools.kubectl(
+            ["apply", "-f", "-"],
+            input=namespace_result.stdout,
+            text=True,
+            context=f"kind-{CLUSTER_NAME}"
+        )
+        if result.returncode != 0:
+            console.print("[red]Failed to ensure registry namespace[/red]")
+            return False
         
         # Apply registry configuration
         registry_config = CONFIG_DIR / "registry" / "registry-daemonset.yaml"
@@ -463,20 +804,113 @@ class DevLabManager:
             console.print(f"[red]Registry config not found at {registry_config}[/red]")
             return False
         
-        self.tools.kubectl(["apply", "-f", f"/workspace/config/registry/registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
+        result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to apply registry configuration[/red]")
+            return False
         
         # Apply registry UI
         registry_ui_config = CONFIG_DIR / "registry" / "registry-ui.yaml"
         if registry_ui_config.exists():
-            self.tools.kubectl(["apply", "-f", f"/workspace/config/registry/registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
+            result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
+            if result.returncode != 0:
+                console.print("[red]Failed to apply registry UI configuration[/red]")
+                return False
         
         # Wait for registry to be ready
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod", 
             "-l", "app=docker-registry", "-n", "dev-lab-registry", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Registry did not become ready[/red]")
+            console.print("[yellow]Registry pod diagnostics:[/yellow]")
+            self.tools.kubectl([
+                "get", "pods", "-n", "dev-lab-registry", "-o", "wide"
+            ])
+            self.tools.kubectl([
+                "get", "events", "-n", "dev-lab-registry", "--sort-by=.lastTimestamp"
+            ])
+            return False
         
-        console.print("[green]✅ Registry setup completed[/green]")
+        console.print("[green]Registry setup completed[/green]")
+        return True
+
+    def _load_kind_image(self, image: str) -> bool:
+        """Ensure an image is available in every KinD node without node-side pulls."""
+        inspect_result = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+        )
+        if inspect_result.returncode != 0:
+            console.print(f"[blue]Pulling {image} through the host Docker daemon...[/blue]")
+            pull_result = subprocess.run(["docker", "pull", image])
+            if pull_result.returncode != 0:
+                console.print(f"[red]Failed to pull {image}[/red]")
+                return False
+        else:
+            console.print(f"[blue]Using cached host image {image}[/blue]")
+
+        console.print(f"[blue]Loading the host image into KinD nodes...[/blue]")
+        if not self._import_kind_image_directly(image):
+            console.print(f"[red]Failed to load {image} into KinD[/red]")
+            return False
+        return True
+
+    def _import_kind_image_directly(self, image: str) -> bool:
+        """Import only the node platform image when KinD's multi-platform import fails."""
+        nodes_result = subprocess.run([
+            "docker", "ps", "--filter", f"label=io.k8s.kind.cluster={CLUSTER_NAME}",
+            "--format", "{{.Names}}"
+        ], capture_output=True, text=True)
+        if not nodes_result.stdout.strip():
+            nodes_result = subprocess.run([
+                "docker", "ps", "--filter", f"name={CLUSTER_NAME}-",
+                "--format", "{{.Names}}"
+            ], capture_output=True, text=True)
+        if nodes_result.returncode != 0 or not nodes_result.stdout.strip():
+            console.print(
+                f"[red]Could not find KinD nodes for direct image import. "
+                f"Docker error: {nodes_result.stderr.strip() or 'none'}[/red]"
+            )
+            return False
+
+        first_node = nodes_result.stdout.splitlines()[0]
+        architecture_result = subprocess.run(
+            ["docker", "exec", first_node, "uname", "-m"],
+            capture_output=True,
+            text=True,
+        )
+        architecture = {
+            "x86_64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+            "ppc64le": "ppc64le",
+            "s390x": "s390x",
+        }.get(architecture_result.stdout.strip())
+        if architecture_result.returncode != 0 or not architecture:
+            console.print(f"[red]Could not determine KinD node architecture: {architecture_result.stderr.strip()}[/red]")
+            return False
+
+        platform = f"linux/{architecture}"
+        console.print(f"[blue]Exporting the {platform} variant of {image} from host Docker...[/blue]")
+        save_result = subprocess.run([
+            "docker", "save", "--platform", platform, image
+        ], capture_output=True)
+        if save_result.returncode != 0:
+            console.print(f"[red]Failed to save {image} from the host Docker daemon: {save_result.stderr.decode(errors='replace')}[/red]")
+            return False
+
+        for node in nodes_result.stdout.splitlines():
+            import_result = subprocess.run([
+                "docker", "exec", "--privileged", "-i", node,
+                "ctr", "--namespace=k8s.io", "images", "import",
+                "--platform", platform, "--digests", "--snapshotter=overlayfs", "-"
+            ], input=save_result.stdout, capture_output=True)
+            if import_result.returncode != 0:
+                console.print(f"[red]Direct image import failed on {node}: {import_result.stderr.decode(errors='replace')}[/red]")
+                return False
         return True
     
     def _setup_metrics_server(self) -> bool:
@@ -484,48 +918,62 @@ class DevLabManager:
         console.print("[blue]Setting up metrics server...[/blue]")
         
         # Install metrics server
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "apply", "-f", 
             "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to install metrics server[/red]")
+            return False
         
-        # Patch for KinD
-        patch = '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
-        self.tools.kubectl([
-            "patch", "deployment", "metrics-server", "-n", "kube-system",
-            "--type=json", f"--patch={patch}"
-        ], context=f"kind-{CLUSTER_NAME}")
+        # Patch for KinD only when the argument is not already present.
+        args_result = self.tools.kubectl([
+            "get", "deployment", "metrics-server", "-n", "kube-system",
+            "-o", "jsonpath={.spec.template.spec.containers[0].args}"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        if args_result.returncode != 0:
+            console.print("[red]Failed to inspect metrics server configuration[/red]")
+            return False
+
+        if "--kubelet-insecure-tls" not in args_result.stdout:
+            patch = '[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+            result = self.tools.kubectl([
+                "patch", "deployment", "metrics-server", "-n", "kube-system",
+                "--type=json", f"--patch={patch}"
+            ], context=f"kind-{CLUSTER_NAME}")
+            if result.returncode != 0:
+                console.print("[red]Failed to configure metrics server[/red]")
+                return False
         
         # Wait for metrics server
-        self.tools.kubectl([
+        result = self.tools.kubectl([
             "wait", "--for=condition=available", "deployment/metrics-server",
             "-n", "kube-system", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Metrics server did not become ready[/red]")
+            return False
         
-        console.print("[green]✅ Metrics server setup completed[/green]")
+        console.print("[green]Metrics server setup completed[/green]")
         return True
     
     def deploy_traditional(self) -> bool:
         """Deploy using traditional script-based method"""
-        console.print("[bold blue]🚀 Traditional Deployment[/bold blue]")
+        console.print("[bold blue]Traditional Deployment[/bold blue]")
         
         if not self._check_bootstrap():
             return False
         
-        # Setup container registry (not included in bootstrap for GitOps compatibility)
+        # Ensure the container registry is present
         if not self._setup_registry():
             return False
         
-        # Setup metrics server (not included in bootstrap for GitOps compatibility)
+        # Ensure the metrics server is present
         if not self._setup_metrics_server():
             return False
         
         # Install NGINX Ingress
         if not self._install_nginx_ingress():
-            return False
-        
-        # Deploy monitoring
-        if not self._deploy_monitoring():
             return False
         
         # Deploy sample apps
@@ -545,12 +993,6 @@ class DevLabManager:
             console.print("[red]dev-lab cluster not found or not accessible[/red]")
             return False
         
-        # Check Linkerd
-        result = self.tools.kubectl(["get", "ns", "linkerd"], capture_output=True)
-        if result.returncode != 0:
-            console.print("[red]Linkerd not found[/red]")
-            return False
-        
         # Check registry
         result = self.tools.kubectl([
             "get", "pods", "-n", "dev-lab-registry", 
@@ -560,7 +1002,7 @@ class DevLabManager:
             console.print("[red]Local registry not running[/red]")
             return False
         
-        console.print("[green]✅ Bootstrap prerequisites verified[/green]")
+        console.print("[green]Bootstrap prerequisites verified[/green]")
         return True
     
     def _install_nginx_ingress(self) -> bool:
@@ -587,33 +1029,37 @@ class DevLabManager:
             "--timeout=300s"
         ])
         
-        console.print("[green]✅ NGINX Ingress Controller installed[/green]")
+        console.print("[green]NGINX Ingress Controller installed[/green]")
         return True
     
     def _deploy_monitoring(self) -> bool:
         """Deploy monitoring stack"""
         console.print("[blue]Deploying monitoring stack...[/blue]")
         
-        # Check if already installed
-        result = self.tools.kubectl([
-            "get", "deployment", "-n", "monitoring", 
-            "kube-prometheus-stack-operator"
-        ], capture_output=True)
-        if result.returncode == 0:
-            console.print("[yellow]Monitoring stack already installed[/yellow]")
-            return True
-        
         # Add Helm repositories
-        self.tools.helm(["repo", "add", "prometheus-community", "https://prometheus-community.github.io/helm-charts"])
-        self.tools.helm(["repo", "add", "grafana", "https://grafana.github.io/helm-charts"])
-        self.tools.helm(["repo", "update"])
+        for repository in [
+            ["repo", "add", "--force-update", "prometheus-community", "https://prometheus-community.github.io/helm-charts"],
+            ["repo", "add", "--force-update", "grafana", "https://grafana.github.io/helm-charts"],
+            ["repo", "update"],
+        ]:
+            result = self.tools.helm(repository, capture_output=True, text=True)
+            if result.returncode != 0:
+                console.print(f"[red]Helm command failed: {' '.join(repository)}\n{result.stderr}[/red]")
+                return False
         
         # Create monitoring namespace
-        self.tools.kubectl([
+        namespace_result = self.tools.kubectl([
             "create", "namespace", "monitoring", 
             "--dry-run=client", "-o", "yaml"
-        ])
-        self.tools.kubectl(["apply", "-f", "-"])
+        ], capture_output=True, text=True)
+        if namespace_result.returncode != 0:
+            console.print("[red]Failed to generate monitoring namespace[/red]")
+            return False
+
+        result = self.tools.kubectl(["apply", "-f", "-"], input=namespace_result.stdout, text=True)
+        if result.returncode != 0:
+            console.print("[red]Failed to create monitoring namespace[/red]")
+            return False
         
         # Install Prometheus stack
         values_file = CONFIG_DIR / "monitoring" / "prometheus-values.yaml"
@@ -621,21 +1067,35 @@ class DevLabManager:
             console.print(f"[red]Prometheus values not found at {values_file}[/red]")
             return False
         
-        self.tools.helm([
+        result = self.tools.helm([
             "upgrade", "--install", "kube-prometheus-stack",
             "prometheus-community/kube-prometheus-stack",
             "--namespace", "monitoring",
             "--values", "/workspace/config/monitoring/prometheus-values.yaml"
         ])
+        if result.returncode != 0:
+            console.print("[red]Failed to install monitoring Helm chart[/red]")
+            return False
         
-        # Wait for monitoring stack
-        self.tools.kubectl([
+        # Wait for all pods belonging to the Helm release. Component-specific
+        # names vary across chart versions, while the release label is stable.
+        result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod",
-            "-l", "app.kubernetes.io/name=kube-prometheus-stack",
+            "-l", "release=kube-prometheus-stack",
             "-n", "monitoring", "--timeout=300s"
         ])
+        if result.returncode != 0:
+            console.print("[red]Monitoring stack did not become ready[/red]")
+            console.print("[yellow]Monitoring pod diagnostics:[/yellow]")
+            self.tools.kubectl([
+                "get", "pods", "-n", "monitoring", "-o", "wide"
+            ])
+            self.tools.kubectl([
+                "get", "events", "-n", "monitoring", "--sort-by=.lastTimestamp"
+            ])
+            return False
         
-        console.print("[green]✅ Monitoring stack deployed[/green]")
+        console.print("[green]Monitoring stack deployed[/green]")
         return True
     
     def _deploy_sample_apps(self) -> bool:
@@ -669,12 +1129,12 @@ class DevLabManager:
             "-n", "mesh-test", "--timeout=300s"
         ])
         
-        console.print("[green]✅ Sample applications deployed[/green]")
+        console.print("[green]Sample applications deployed[/green]")
         return True
     
     def _show_access_info(self):
         """Show access information"""
-        console.print("\n[bold green]🎉 Dev Lab deployment completed![/bold green]\n")
+        console.print("\n[bold green]Dev Lab deployment completed![/bold green]\n")
         
         table = Table(title="Access Information")
         table.add_column("Service", style="cyan")
@@ -696,7 +1156,7 @@ class DevLabManager:
     
     def deploy_gitops(self) -> bool:
         """Deploy using GitOps method with Flux CD"""
-        console.print("[bold blue]🚀 GitOps Deployment[/bold blue]")
+        console.print("[bold blue]GitOps Deployment[/bold blue]")
         
         if not self._check_bootstrap():
             return False
@@ -739,7 +1199,7 @@ class DevLabManager:
             console.print("[yellow]Flux controllers may already be installed[/yellow]")
             result = self.tools.kubectl(["get", "deployment", "-n", "flux-system", "source-controller"], capture_output=True)
             if result.returncode == 0:
-                console.print("[green]✅ Flux controllers already installed[/green]")
+                console.print("[green]Flux controllers already installed[/green]")
                 return True
         
         # Install Flux controllers
@@ -755,7 +1215,7 @@ class DevLabManager:
             "-n", "flux-system", "--timeout=300s"
         ])
         
-        console.print("[green]✅ Flux controllers installed and ready[/green]")
+        console.print("[green]Flux controllers installed and ready[/green]")
         return True
     
     def _generate_deploy_key(self) -> bool:
@@ -779,7 +1239,7 @@ class DevLabManager:
             console.print("[red]Failed to generate SSH key[/red]")
             return False
         
-        console.print("[green]✅ SSH key pair generated[/green]")
+        console.print("[green]SSH key pair generated[/green]")
         return True
     
     def _create_flux_secret(self) -> bool:
@@ -788,7 +1248,7 @@ class DevLabManager:
         
         # Delete existing secret if it exists
         self.tools.kubectl([
-            "delete", "secret", "flux-system-auth", "-n", "flux-system", "--ignore-not-found=true"
+            "delete", "secret", "dev-lab-repo", "-n", "flux-system", "--ignore-not-found=true"
         ])
         
         # Get GitHub known hosts
@@ -803,7 +1263,7 @@ class DevLabManager:
         # Use workspace paths that are accessible inside the container
         key_path_container = "/workspace/flux-deploy-key"
         result = self.tools.kubectl([
-            "create", "secret", "generic", "flux-system-auth",
+            "create", "secret", "generic", "dev-lab-repo",
             f"--from-file=identity={key_path_container}",
             f"--from-file=identity.pub={key_path_container}.pub",
             f"--from-literal=known_hosts={known_hosts}",
@@ -816,16 +1276,16 @@ class DevLabManager:
         
         # Label the secret
         self.tools.kubectl([
-            "label", "secret", "flux-system-auth", "-n", "flux-system", 
+            "label", "secret", "dev-lab-repo", "-n", "flux-system", 
             "app.kubernetes.io/part-of=flux"
         ])
         
-        console.print("[green]✅ flux-system-auth secret created[/green]")
+        console.print("[green]dev-lab-repo secret created[/green]")
         return True
     
     def _show_deploy_key(self):
         """Display deploy key for GitHub setup"""
-        console.print("\n[bold blue]📋 GitHub Deploy Key Setup[/bold blue]\n")
+        console.print("\n[bold blue]GitHub Deploy Key Setup[/bold blue]\n")
         
         console.print("[cyan]Add this public key as a deploy key to your GitHub repository:[/cyan]")
         console.print(f"[cyan]Repository:[/cyan] https://github.com/jbotstevens/notes")
@@ -837,7 +1297,7 @@ class DevLabManager:
             console.print(f.read().strip())
         console.print("─" * 50)
         
-        console.print("\n[yellow]⚠️  Make sure to:[/yellow]")
+        console.print("\n[yellow] Make sure to:[/yellow]")
         console.print(f"  1. Give the key a descriptive title (e.g., 'flux-dev-lab-{time.strftime('%Y%m%d')}')")  
         console.print("  2. Paste the public key above")
         console.print("  3. Leave 'Allow write access' UNCHECKED (read-only)")
@@ -881,9 +1341,9 @@ class DevLabManager:
         ], capture_output=True)
         
         if result.returncode == 0:
-            console.print("[green]✅ GitRepository synced successfully[/green]")
+            console.print("[green]GitRepository synced successfully[/green]")
         else:
-            console.print("[yellow]⚠️  GitRepository may not be ready yet. Continuing...[/yellow]")
+            console.print("[yellow] GitRepository may not be ready yet. Continuing...[/yellow]")
         
         return True
     
@@ -894,7 +1354,7 @@ class DevLabManager:
         # Apply the cluster-specific kustomizations
         kustomizations_file = PROJECT_ROOT / "clusters" / "dev-lab" / "dev-lab-kustomizations.yaml"
         if not kustomizations_file.exists():
-            console.print(f"[yellow]⚠️  Kustomizations file not found at {kustomizations_file}[/yellow]")
+            console.print(f"[yellow] Kustomizations file not found at {kustomizations_file}[/yellow]")
             console.print("[yellow]GitOps setup complete, but manual kustomizations not applied[/yellow]")
             return True
         
@@ -903,13 +1363,13 @@ class DevLabManager:
             console.print("[red]Failed to apply kustomizations[/red]")
             return False
         
-        console.print("[green]✅ Git-managed kustomizations applied[/green]")
+        console.print("[green]Git-managed kustomizations applied[/green]")
         console.print("[blue]Infrastructure and applications will be deployed automatically from Git[/blue]")
         return True
     
     def _wait_for_gitops_deployment(self):
         """Wait for GitOps deployment completion"""
-        console.print("\n[bold blue]🕐 Waiting for GitOps Deployment[/bold blue]\n")
+        console.print("\n[bold blue]Waiting for GitOps Deployment[/bold blue]\n")
         
         console.print("[blue]Monitoring infrastructure deployment...[/blue]")
         console.print("[cyan]This may take several minutes as Flux deploys:[/cyan]")
@@ -942,21 +1402,21 @@ class DevLabManager:
             console.print(f"\r[blue]Infrastructure: {infra_ready}, Apps: {apps_ready} ({elapsed}s elapsed)[/blue]", end="")
             
             if infra_ready == "True" and apps_ready == "True":
-                console.print("\n[green]✅ GitOps deployment completed successfully![/green]")
+                console.print("\n[green]GitOps deployment completed successfully![/green]")
                 return
             
             time.sleep(interval)
             elapsed += interval
         
-        console.print("\n[yellow]⚠️  Deployment is taking longer than expected, but may still be in progress[/yellow]")
+        console.print("\n[yellow] Deployment is taking longer than expected, but may still be in progress[/yellow]")
         console.print("[yellow]Use './devlab flux -- get kustomizations -A' to monitor status[/yellow]")
     
     def _show_gitops_info(self):
         """Show GitOps status and access information"""
-        console.print("\n[bold green]🎉 Dev Lab GitOps deployment setup complete![/bold green]\n")
+        console.print("\n[bold green]Dev Lab GitOps deployment setup complete![/bold green]\n")
         
         # Show GitOps status
-        console.print("[bold blue]🔄 GitOps Status:[/bold blue]")
+        console.print("[bold blue]GitOps Status:[/bold blue]")
         result = self.tools.flux(["get", "all", "-A"], capture_output=True)
         if result.returncode == 0:
             # Show first 20 lines
@@ -965,7 +1425,7 @@ class DevLabManager:
                 if line.strip():
                     console.print(line)
         
-        console.print("\n[bold blue]📊 Access Information:[/bold blue]")
+        console.print("\n[bold blue]Access Information:[/bold blue]")
         table = Table(title="Service Access")
         table.add_column("Service", style="cyan")
         table.add_column("Command", style="green")
@@ -978,20 +1438,50 @@ class DevLabManager:
         
         console.print(table)
         
-        console.print("\n[bold blue]🔧 GitOps Monitoring Commands:[/bold blue]")
+        console.print("\n[bold blue]GitOps Monitoring Commands:[/bold blue]")
         console.print("• ./devlab flux -- get all -A                    # Overview of all Flux resources")
         console.print("• ./devlab flux -- logs --all-namespaces        # Controller logs")
         console.print("• watch ./devlab flux -- get kustomizations -A  # Watch reconciliation")
         console.print("• ./devlab kubectl -- get events -n flux-system # System events")
         
-        console.print("\n[bold blue]🚀 Sample Application:[/bold blue]")
+        console.print("\n[bold blue]Sample Application:[/bold blue]")
         console.print("• Add to /etc/hosts: 127.0.0.1 sample-app.local")
         console.print("• Access at: http://sample-app.local")
         
-        console.print("\n[bold blue]📝 Notes:[/bold blue]")
+        console.print("\n[bold blue]Notes:[/bold blue]")
         console.print("• Infrastructure and apps are automatically deployed from Git")
         console.print("• Changes to dev-lab/ directory will be reconciled automatically")
         console.print("• Use Git commits to manage deployments")
+
+def parse_cobra_completions(output: str) -> List[CompletionItem]:
+    """Convert Cobra's __complete output into Click completion items."""
+    lines = output.splitlines()
+    if lines and re.fullmatch(r":\d+", lines[-1]):
+        lines.pop()
+
+    items = []
+    for line in lines:
+        if not line or line.startswith("_activeHelp_"):
+            continue
+        value, separator, help_text = line.partition("\t")
+        items.append(CompletionItem(value, help=help_text if separator else None))
+    return items
+
+
+def complete_tool(tool: str):
+    """Create a Click completion callback for a wrapped CLI."""
+    def shell_complete(ctx, param, incomplete):
+        args = [*ctx.params.get(param.name, ()), incomplete]
+        try:
+            result = ContainerToolRunner().complete(tool, args)
+        except (OSError, ValueError):
+            return []
+        if result.returncode != 0:
+            return []
+        return parse_cobra_completions(result.stdout)
+
+    return shell_complete
+
 
 @click.group()
 def cli():
@@ -1027,7 +1517,7 @@ def deploy():
     sys.exit(0 if success else 1)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kubectl"))
 def kubectl(args):
     """Run kubectl commands"""
     manager = DevLabManager()
@@ -1035,7 +1525,7 @@ def kubectl(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("helm"))
 def helm(args):
     """Run helm commands"""
     manager = DevLabManager()
@@ -1043,7 +1533,7 @@ def helm(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("linkerd"))
 def linkerd(args):
     """Run linkerd commands"""
     manager = DevLabManager()
@@ -1051,12 +1541,28 @@ def linkerd(args):
     sys.exit(result.returncode)
 
 @cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-@click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("flux"))
 def flux(args):
     """Run flux commands"""
     manager = DevLabManager()
     result = manager.tools.flux(list(args))
     sys.exit(result.returncode)
+
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kind"))
+def kind(args):
+    """Run kind commands"""
+    manager = DevLabManager()
+    result = manager.tools.kind(list(args))
+    sys.exit(result.returncode)
+
+@cli.command()
+@click.argument("shell", type=click.Choice(["bash"]))
+def completion(shell):
+    """Print a shell completion script"""
+    completion_class = get_completion_class(shell)
+    complete = completion_class(cli, {}, "devlab", "_DEVLAB_COMPLETE")
+    click.echo(complete.source())
 
 @cli.command()
 def status():
@@ -1067,17 +1573,17 @@ def status():
     
     # Check Docker
     if manager.check_docker():
-        console.print("[green]✅ Docker is running[/green]")
+        console.print("[green]Docker is running[/green]")
     else:
-        console.print("[red]❌ Docker is not available[/red]")
+        console.print("[red]Docker is not available[/red]")
         return
     
     # Check cluster
     result = manager.tools.kubectl(["cluster-info"], capture_output=True)
     if result.returncode == 0:
-        console.print("[green]✅ Cluster is accessible[/green]")
+        console.print("[green]Cluster is accessible[/green]")
     else:
-        console.print("[red]❌ Cluster is not accessible[/red]")
+        console.print("[red]Cluster is not accessible[/red]")
         return
     
     # Check nodes
@@ -1102,7 +1608,7 @@ def status():
 @cli.command(name='build-tools')
 def build_tools():
     """Build/rebuild local tool container images"""
-    console.print("[bold blue]🔨 Building Local Tool Images[/bold blue]")
+    console.print("[bold blue]Building Local Tool Images[/bold blue]")
     
     manager = DevLabManager()
     
@@ -1111,12 +1617,18 @@ def build_tools():
         image_name = "devlab-kind:latest"
         console.print(f"[blue]Building {image_name}...[/blue]")
         manager.tools._build_kind_image(image_name)
-        console.print("[green]✅ KinD image built successfully[/green]")
+        console.print("[green]KinD image built successfully[/green]")
     except Exception as e:
-        console.print(f"[red]❌ Failed to build KinD image: {e}[/red]")
+        console.print(f"[red]Failed to build KinD image: {e}[/red]")
         sys.exit(1)
+
+    helm_image = manager.tools._ensure_helm_image()
+    if helm_image is None:
+        console.print("[red]Failed to build Helm image[/red]")
+        sys.exit(1)
+    console.print(f"[green]Helm image ready: {helm_image}[/green]")
     
-    console.print("[green]🎉 All tool images built successfully![/green]")
+    console.print("[green]All tool images built successfully![/green]")
 
 @cli.command()
 def cleanup():
@@ -1127,9 +1639,16 @@ def cleanup():
         console.print("[blue]Cleaning up dev-lab environment...[/blue]")
         result = manager.tools.kind(["delete", "cluster", "--name", CLUSTER_NAME])
         if result.returncode == 0:
-            console.print("[green]✅ Cleanup completed[/green]")
+            console.print("[green]Cleanup completed[/green]")
         else:
-            console.print("[red]❌ Cleanup failed[/red]")
+            console.print("[red]Cleanup failed[/red]")
 
 if __name__ == "__main__":
-    cli()
+    try:
+        cli.main(prog_name="devlab", standalone_mode=False)
+    except (KeyboardInterrupt, click.Abort):
+        console.print("\n[yellow]Interrupted. Exiting...[/yellow]")
+        sys.exit(130)
+    except click.ClickException as exc:
+        exc.show()
+        sys.exit(exc.exit_code)

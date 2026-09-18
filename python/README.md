@@ -24,9 +24,25 @@ The KinD container image is built automatically when:
 
 **Build Process:**
 
-1. Creates `Dockerfile.kind` with Alpine Linux + curl + docker-cli + KinD binary
-2. Builds the image as `devlab-kind:latest`
-3. Uses this image for all KinD operations
+1. Builds `devlab-kind:latest` from `Dockerfile.kind`
+2. Builds `devlab-helm:latest` from `Dockerfile.helm` with the local CA bundle
+3. Uses these images for KinD and Helm operations
+
+### Kubernetes Version Selection
+
+When creating a new cluster, `devlab bootstrap` checks the published
+`kindest/node` images and offers the newest patch release for each Kubernetes
+minor version. Use `fzf` to select a version, or keep the configured image.
+Without `fzf`, the same choices are available through a numbered prompt.
+
+### Network CA Certificates
+
+If your network performs TLS inspection, place its trusted root certificate(s)
+anywhere under `python/certs/` before building. All nested `.crt` files are
+loaded recursively and trusted automatically by the local tool image. During
+bootstrap they are also installed into every KinD node so containerd can pull
+images for future charts and workloads. The directory is ignored by Git so
+organization-specific certificates are not committed.
 
 ### Manual Build (Optional)
 
@@ -34,7 +50,7 @@ You can also build the KinD image manually:
 
 ```bash
 cd python/
-docker build -f Dockerfile.kind -t devlab-kind:latest .
+docker build --build-arg KIND_VERSION=<configured-kind-version> --build-arg TARGETARCH=<docker-architecture> -f Dockerfile.kind -t devlab-kind:latest .
 ```
 
 ### KinD Image Components
@@ -43,7 +59,7 @@ The `devlab-kind:latest` image contains:
 
 - **Base**: Alpine Linux (minimal, secure)
 - **Dependencies**: curl, docker-cli
-- **KinD Binary**: Downloaded from GitHub releases (v0.20.0)
+- **KinD Binary**: Downloaded from the version configured in `python/devlab.py`
 - **Docker Access**: Can manage Docker containers via mounted socket
 - **Networking**: Configured for container-to-container communication
 
@@ -56,7 +72,9 @@ FROM alpine:latest
 RUN apk add --no-cache curl docker-cli
 
 # Install KinD
-RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 && \
+ARG KIND_VERSION
+ARG TARGETARCH
+RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${TARGETARCH} && \
     chmod +x ./kind && \
     mv ./kind /usr/local/bin/kind
 
@@ -130,9 +148,13 @@ This will:
 This will:
 
 - Create a KinD cluster with 3 nodes
-- Install Linkerd service mesh
-- Setup local container registry
-- Install metrics server
+- Install the metrics server
+- Set up the local container registry
+- Deploy the Prometheus and Grafana monitoring stack
+
+It does not install Gateway API CRDs or Linkerd. NGINX Ingress and sample
+applications are installed by `./devlab deploy-traditional` (or managed
+through Flux by `./devlab deploy-gitops`).
 
 ### 3. Deploy Applications
 
@@ -143,7 +165,6 @@ This will:
 This will:
 
 - Install NGINX Ingress Controller
-- Deploy Prometheus monitoring stack
 - Deploy sample applications
 - Show access information
 
@@ -207,10 +228,10 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 
 ### Tool Containers Used
 
-- **kubectl**: `bitnami/kubectl:v1.28.3`
+- **kubectl**: `alpine/kubectl:latest`
 - **helm**: `alpine/helm:v3.13.1`
 - **linkerd**: `linkerd/cli-bin:stable-2.14.5`
-- **kind**: `kindest/node:v0.20.0`
+- **kind**: `kindest/node:v1.35.8` by default (selected at bootstrap with KinD's `--image` option)
 - **flux**: `fluxcd/flux-cli:v2.1.2`
 
 ### Volume Mounts
@@ -221,11 +242,11 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 
 ### Benefits
 
-- ✅ **Consistent versions** across all platforms
-- ✅ **No local installation** required
-- ✅ **Easy updates** - just change container tags
-- ✅ **Isolation** - no conflicts with existing tools
-- ✅ **Security** - containers provide sandboxing
+- **Consistent versions** across all platforms
+- **No local installation** required
+- **Easy updates** - just change container tags
+- **Isolation** - no conflicts with existing tools
+- **Security** - containers provide sandboxing
 
 ## Technical Details
 

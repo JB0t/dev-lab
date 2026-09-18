@@ -1,0 +1,111 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: SERVICE_NAME_PLACEHOLDER
+  labels:
+    name: SERVICE_NAME_PLACEHOLDER
+  annotations:
+    linkerd.io/inject: enabled
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: SERVICE_NAME_PLACEHOLDER
+  namespace: SERVICE_NAME_PLACEHOLDER
+  labels:
+    app: SERVICE_NAME_PLACEHOLDER
+    version: v1
+spec:
+  replicas: 3
+  revisionHistoryLimit: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: SERVICE_NAME_PLACEHOLDER
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: SERVICE_NAME_PLACEHOLDER
+        version: v1
+    spec:
+      containers:
+      - name: SERVICE_NAME_PLACEHOLDER
+        image: localhost:5000/SERVICE_NAME_PLACEHOLDER:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: PORT_PLACEHOLDER
+          name: http
+        env:
+        - name: APP_VERSION
+          value: "v1"
+        - name: NODE_ENV
+          value: "production"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: PORT_PLACEHOLDER
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: PORT_PLACEHOLDER
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: SERVICE_NAME_PLACEHOLDER
+  namespace: SERVICE_NAME_PLACEHOLDER
+  labels:
+    app: SERVICE_NAME_PLACEHOLDER
+spec:
+  selector:
+    app: SERVICE_NAME_PLACEHOLDER
+  ports:
+  - port: 80
+    targetPort: PORT_PLACEHOLDER
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: SERVICE_NAME_PLACEHOLDER-ingress
+  namespace: SERVICE_NAME_PLACEHOLDER
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: SERVICE_NAME_PLACEHOLDER.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: SERVICE_NAME_PLACEHOLDER
+            port:
+              number: 80

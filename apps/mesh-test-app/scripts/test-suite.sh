@@ -15,19 +15,19 @@ log() {
 }
 
 success() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}✓ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN} $1${NC}"
 }
 
 error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED}✗ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED} $1${NC}"
 }
 
 warn() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW}⚠ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW} $1${NC}"
 }
 
 info() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${PURPLE}ℹ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${PURPLE} $1${NC}"
 }
 
 # Script directory
@@ -277,10 +277,10 @@ analyze_results() {
     echo ""
     
     if [[ $total_errors -eq 0 && $health_failures -eq 0 ]]; then
-        success "✅ ZERO-DOWNTIME DEPLOYMENT SUCCESSFUL!"
+        success "ZERO-DOWNTIME DEPLOYMENT SUCCESSFUL!"
         success "   No errors or health check failures detected"
     else
-        error "❌ DEPLOYMENT HAD ISSUES:"
+        error "DEPLOYMENT HAD ISSUES:"
         error "   Total errors: $total_errors"
         error "   Health failures: $health_failures"
     fi

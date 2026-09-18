@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: SERVICE_NAME_PLACEHOLDER
+
+resources:
+  - base.yaml
+  - canary.yaml
+  - loadtester.yaml
+  - metrics.yaml
+
+commonLabels:
+  app.kubernetes.io/name: SERVICE_NAME_PLACEHOLDER
+  app.kubernetes.io/part-of: dev-lab
+  app.kubernetes.io/component: canary-service

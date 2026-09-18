@@ -11,15 +11,12 @@ metadata:
 resources:
   # Core services (metrics-server, namespaces, etc.) - deployed first
   - base/
-  
-  # Networking (ingress controller) - needed for service access
+
+  # Networking (ingress controller)
   - networking/
   
   # Container registry - needed for custom images
   - container-registry/
-  
-  # Service mesh - will be installed via script after Flux completes
-  # - service-mesh/
   
   # Flagger (progressive delivery) - requires Linkerd and Prometheus
   - flagger/
