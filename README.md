@@ -60,8 +60,12 @@ For the legacy Bash scripts, install these on the host as well:
 # Setup Python environment
 python3 python/setup.py
 
-# Put the wrapper script in your path so you can cd away from this repo
-export PATH="$PATH:$(pwd)/python" >> ~/.bashrc && source ~/.bashrc
+# Persist the wrapper path and tab completion for future Bash sessions
+# Replace ~/.bashrc with ~/.bash_profile or the startup file your Bash installation uses
+DEVLAB_DIR="$(pwd)/python"
+printf '\nexport PATH="$PATH:%s"\n' "$DEVLAB_DIR" >> ~/.bashrc
+printf 'source <(devlab completion bash)\n' >> ~/.bashrc
+source ~/.bashrc
 
 # Build local tool container images (optional, built automatically when needed)
 devlab build-tools
@@ -83,6 +87,7 @@ devlab kubectl -- get pods -A
 devlab helm -- list -A
 devlab linkerd -- check
 devlab flux -- get all -A
+devlab kind -- get clusters
 
 # Do this if you hate typing
 ## Then create some aliases
