@@ -61,10 +61,10 @@ spec:
           value: "/var/lib/registry"
         resources:
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "1Gi"
+            cpu: "300m"
           requests:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "100m"
       volumes:
       - name: registry-data
