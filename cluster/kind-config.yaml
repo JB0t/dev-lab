@@ -24,6 +24,7 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
+        
     extraPortMappings:
       # Expose registry port
       - containerPort: 5000
@@ -44,6 +45,14 @@ nodes:
       - containerPort: 3000
         hostPort: 30030
         protocol: TCP
+      - containerPort: 9001 # Expose Minio Console 
+        hostPort: 9001
+        listenAddress: "0.0.0.0"
+        protocol: TCP
+      - containerPort: 30060 # Expose Dagster UI
+        hostPort: 8060
+        listenAddress: "0.0.0.0"
+        protocol: TCP
     extraMounts:
       # Mount local registry data (ensure directory exists)
       - hostPath: /tmp/dev-lab-registry
@@ -57,6 +66,10 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
+    extraMounts:
+      # Mount local registry data (ensure directory exists)
+      - hostPath: /tmp/dev-lab-registry
+        containerPath: /var/lib/registry
 
   # Worker node 2  
   - role: worker
@@ -66,6 +79,10 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
+    extraMounts:
+      # Mount local registry data (ensure directory exists)
+      - hostPath: /tmp/dev-lab-registry
+        containerPath: /var/lib/registry
 
 # Container runtime configuration for local registry
 containerdConfigPatches:

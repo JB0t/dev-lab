@@ -93,6 +93,7 @@ class ContainerToolRunner:
     
     def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run kubectl in container"""
+        
         if args and args[0] == "apply":
             target = " ".join(str(arg) for arg in args[1:]) or "manifest from stdin"
             if target == "-f -":
@@ -103,7 +104,7 @@ class ContainerToolRunner:
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
-            "-v", f"{PROJECT_ROOT}:/workspace:rw",
+            "-v", f"{os.getcwd()}:/workspace:rw",
             "-w", "/workspace",
             "alpine/kubectl:latest",
         ]
@@ -148,9 +149,10 @@ class ContainerToolRunner:
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
-            "-v", f"{PROJECT_ROOT}:/workspace:rw",
+            "-v", f"{os.getcwd()}:/workspace:rw",
             "-w", "/workspace",
             "-v", f"{helm_config_dir}:/root/.config/helm:rw",
+            "-v", f"{helm_state_dir}:/workspace/.helm:rw",
             "-v", f"{helm_cache_dir}:/root/.cache/helm:rw",
             "-v", f"{helm_data_dir}:/root/.local/share/helm:rw",
             *host_ca_mount,
@@ -803,20 +805,20 @@ class DevLabManager:
         if not registry_config.exists():
             console.print(f"[red]Registry config not found at {registry_config}[/red]")
             return False
-        
-        result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
+        workdir=os.getcwd() 
+        os.chdir(CONFIG_DIR / "registry")
+        result = self.tools.kubectl(["apply", "-f", "registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
         if result.returncode != 0:
             console.print("[red]Failed to apply registry configuration[/red]")
             return False
-        
         # Apply registry UI
         registry_ui_config = CONFIG_DIR / "registry" / "registry-ui.yaml"
         if registry_ui_config.exists():
-            result = self.tools.kubectl(["apply", "-f", "/workspace/config/registry/registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
+            result = self.tools.kubectl(["apply", "-f", "registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
             if result.returncode != 0:
                 console.print("[red]Failed to apply registry UI configuration[/red]")
                 return False
-        
+        os.chdir(workdir)
         # Wait for registry to be ready
         result = self.tools.kubectl([
             "wait", "--for=condition=ready", "pod", 
@@ -832,7 +834,6 @@ class DevLabManager:
                 "get", "events", "-n", "dev-lab-registry", "--sort-by=.lastTimestamp"
             ])
             return False
-        
         console.print("[green]Registry setup completed[/green]")
         return True
 
@@ -1066,13 +1067,15 @@ class DevLabManager:
         if not values_file.exists():
             console.print(f"[red]Prometheus values not found at {values_file}[/red]")
             return False
-        
+        workdir=os.getcwd()
+        os.chdir(CONFIG_DIR / "monitoring")
         result = self.tools.helm([
             "upgrade", "--install", "kube-prometheus-stack",
             "prometheus-community/kube-prometheus-stack",
             "--namespace", "monitoring",
-            "--values", "/workspace/config/monitoring/prometheus-values.yaml"
+            "--values", "prometheus-values.yaml"
         ])
+        os.chdir(workdir)
         if result.returncode != 0:
             console.print("[red]Failed to install monitoring Helm chart[/red]")
             return False
