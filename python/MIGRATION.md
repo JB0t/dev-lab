@@ -10,9 +10,8 @@ This guide helps you migrate from the bash-based dev-lab scripts to the new Pyth
 
 ```bash
 cd dev-lab/python
-python setup.py
+python3 setup.py
 ./devlab bootstrap
-./devlab deploy
 ```
 
 ### 2. Compare Functionality
@@ -20,11 +19,11 @@ python setup.py
 | Bash Script | Python Command | Notes |
 |-------------|----------------|--------|
 | `./scripts/install-prerequisites.sh` | Not needed | Only Docker required |
-| `./scripts/bootstrap.sh` | `./devlab bootstrap` | Same functionality |
-| `./scripts/deploy-traditional.sh` | `./devlab deploy` | Same functionality |
-| `kubectl ...` | `./devlab kubectl -- ...` | Container-based |
-| `helm ...` | `./devlab helm -- ...` | Container-based |
-| `linkerd ...` | `./devlab linkerd -- ...` | Container-based |
+| `./scripts/bootstrap.sh` + `./scripts/deploy-traditional.sh` | `./devlab bootstrap` | Bootstrap also installs the registry, Traefik ingress, and monitoring |
+| `./scripts/deploy-gitops.sh` | `./devlab deploy-gitops` | Optional |
+| `kubectl ...` | `./devlab kubectl ...` | Container-based |
+| `helm ...` | `./devlab helm ...` | Container-based |
+| `linkerd ...` | `./devlab linkerd ...` | Container-based |
 
 ### 3. Key Differences
 
@@ -58,10 +57,11 @@ python setup.py
 # New way (only Docker needed)
 cd python
 ./devlab bootstrap
-./devlab deploy
 ```
 
-Both should produce identical clusters and deployments.
+The Python version uses the Traefik ingress instead of NGINX and does not
+deploy a sample app, so the clusters are not identical. See
+[NETWORKING.md](../NETWORKING.md) for how services are exposed.
 
 ## Rollback Plan
 
@@ -74,4 +74,4 @@ Once comfortable with the Python version:
 1. Update documentation to reference Python commands
 2. Consider deprecating bash scripts
 3. Train team on new workflow
-4. Enjoy platform-agnostic development! 🎉
+4. Enjoy platform-agnostic development! 

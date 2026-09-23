@@ -2,18 +2,25 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 metadata:
-  name: dev-lab-monitoring
+  name: dev-lab-monitoring-extras
   namespace: monitoring
 
 resources:
-  - prometheus-stack.yaml
-  
   # Linkerd service mesh monitoring
   - linkerd-servicemonitors.yaml
   - linkerd-podmonitor-simple.yaml
   
   # Flagger progressive delivery monitoring
   - flagger-servicemonitor.yaml
-  
-  # Grafana dashboards
-  - grafana-dashboard-configmap.yaml
+
+# Generate ConfigMaps from external files
+configMapGenerator:
+  - name: dashboards
+    namespace: monitoring
+    files:
+      - linkerd-canary-dashboard.json
+      - multi-app-canary-dashboard.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+        release: kube-prometheus-stack

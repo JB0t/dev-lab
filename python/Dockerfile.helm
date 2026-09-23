@@ -1,0 +1,20 @@
+FROM alpine/helm:latest
+
+ARG CA_BUNDLE_VERSION
+COPY certs/ /tmp/local-ca/
+
+RUN set -eu; \
+  apk add --no-cache --no-check-certificate ca-certificates; \
+  base=/etc/ssl/cert.pem; \
+  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then base=/etc/ssl/certs/ca-certificates.crt; fi; \
+  cp "$base" /tmp/base-ca.pem; \
+  cat /tmp/base-ca.pem > /etc/ssl/certs/devlab-ca-bundle.pem; \
+  find /tmp/local-ca -type f -name '*.crt' -exec cat {} \; >> /etc/ssl/certs/devlab-ca-bundle.pem; \
+  cp /etc/ssl/certs/devlab-ca-bundle.pem /etc/ssl/certs/ca-certificates.crt; \
+  cp /etc/ssl/certs/devlab-ca-bundle.pem /etc/ssl/cert.pem; \
+  update-ca-certificates; \
+  rm -rf /tmp/local-ca
+
+LABEL devlab.ca-bundle-version="${CA_BUNDLE_VERSION}"
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_DIR=/etc/ssl/certs

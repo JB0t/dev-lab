@@ -6,7 +6,7 @@ metadata:
   name: flagger
   namespace: flux-system
 spec:
-  interval: 1h
+  interval: 5m
   url: https://flagger.app
   type: default
 
@@ -29,7 +29,7 @@ spec:
     spec:
       chart: flagger
       version: "1.37.x"  # Latest stable version
-      interval: 1h
+      interval: 5m
       sourceRef:
         kind: HelmRepository
         name: flagger

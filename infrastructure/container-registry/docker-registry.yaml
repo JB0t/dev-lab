@@ -32,55 +32,55 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: ""
       tolerations:
-      - key: node-role.kubernetes.io/control-plane
-        operator: Exists
-        effect: NoSchedule
-      - key: node-role.kubernetes.io/master
-        operator: Exists
-        effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
       containers:
-      - name: registry
-        image: registry:2.8
-        ports:
-        - containerPort: 5000
-          name: registry
-          protocol: TCP
-        env:
-        - name: REGISTRY_CONFIG_PATH
-          value: /etc/docker/registry/config.yml
-        volumeMounts:
-        - name: registry-config
-          mountPath: /etc/docker/registry
-          readOnly: true
-        - name: registry-storage
-          mountPath: /var/lib/registry
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-        livenessProbe:
-          httpGet:
-            path: /v2/
-            port: 5000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /v2/
-            port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 5
+        - name: registry
+          image: registry:2.8
+          ports:
+            - containerPort: 5000
+              name: registry
+              protocol: TCP
+          env:
+            - name: REGISTRY_CONFIG_PATH
+              value: /etc/docker/registry/config.yml
+          volumeMounts:
+            - name: registry-config
+              mountPath: /etc/docker/registry
+              readOnly: true
+            - name: registry-storage
+              mountPath: /var/lib/registry
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
-      - name: registry-config
-        configMap:
-          name: registry-config
-      - name: registry-storage
-        hostPath:
-          path: /var/lib/registry
-          type: DirectoryOrCreate
+        - name: registry-config
+          configMap:
+            name: registry-config
+        - name: registry-storage
+          hostPath:
+            path: /var/lib/registry
+            type: DirectoryOrCreate
 
 ---
 apiVersion: v1
@@ -102,8 +102,6 @@ data:
         service: registry
         environment: development
     storage:
-      cache:
-        blobdescriptor: inmemory
       filesystem:
         rootdirectory: /var/lib/registry
       delete:
@@ -137,10 +135,10 @@ spec:
   selector:
     app: docker-registry
   ports:
-  - port: 5000
-    targetPort: 5000
-    protocol: TCP
-    name: registry
+    - port: 5000
+      targetPort: 5000
+      protocol: TCP
+      name: registry
   type: ClusterIP
 
 ---
@@ -164,35 +162,35 @@ spec:
         app: docker-registry-ui
     spec:
       containers:
-      - name: registry-ui
-        image: joxit/docker-registry-ui:2.5.7
-        ports:
-        - containerPort: 80
-          name: http
-        env:
-        - name: SINGLE_REGISTRY
-          value: "true"
-        - name: REGISTRY_TITLE
-          value: "Dev Lab Registry"
-        - name: DELETE_IMAGES
-          value: "true"
-        - name: SHOW_CONTENT_DIGEST
-          value: "true"
-        - name: NGINX_PROXY_PASS_URL
-          value: "http://docker-registry:5000"
-        - name: SHOW_CATALOG_NB_TAGS
-          value: "true"
-        - name: CATALOG_MIN_BRANCHES
-          value: "1"
-        - name: CATALOG_MAX_BRANCHES
-          value: "1"
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "100m"
+        - name: registry-ui
+          image: joxit/docker-registry-ui:2.5.7
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: SINGLE_REGISTRY
+              value: "true"
+            - name: REGISTRY_TITLE
+              value: "Dev Lab Registry"
+            - name: DELETE_IMAGES
+              value: "true"
+            - name: SHOW_CONTENT_DIGEST
+              value: "true"
+            - name: NGINX_PROXY_PASS_URL
+              value: "http://docker-registry:5000"
+            - name: SHOW_CATALOG_NB_TAGS
+              value: "true"
+            - name: CATALOG_MIN_BRANCHES
+              value: "1"
+            - name: CATALOG_MAX_BRANCHES
+              value: "1"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
 
 ---
 apiVersion: v1
@@ -207,10 +205,10 @@ spec:
   selector:
     app: docker-registry-ui
   ports:
-  - port: 80
-    targetPort: 80
-    protocol: TCP
-    name: http
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
   type: NodePort
   # Make it accessible on port 5001
 ---
@@ -227,13 +225,13 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: registry.dev-lab.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: docker-registry-ui
-            port:
-              number: 80
+    - host: registry.dev-lab.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: docker-registry-ui
+                port:
+                  number: 80

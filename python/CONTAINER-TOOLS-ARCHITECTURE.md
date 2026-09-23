@@ -28,9 +28,17 @@ DevLab uses a hybrid approach for tool execution that prioritizes performance wh
 - **Image**: `devlab-kind:latest` (~20MB)
 - **Mount**: Docker socket for container management
 
-### Other Tools (kubectl, helm, linkerd, flux)
+### kubectl and Helm
 
-- **Use official container images** from respective projects
+- **Local images** built on top of the official `alpine/kubectl` and `alpine/helm` images
+- **`devlab-kubectl:latest`** (`Dockerfile.kubectl`): adds krew, git, bash, fzf, and the local CA bundle. Plugins persist in `.krew/` at the repository root.
+- **`devlab-helm:latest`** (`Dockerfile.helm`): adds the local CA bundle. Helm state persists in `.helm/`.
+- **Rebuilt automatically** when the Dockerfile, build arguments, or certificates under `python/certs/` change
+- **Built for the Docker host platform** (amd64 or arm64)
+
+### linkerd and flux
+
+- **Use official container images** from the respective projects
 - **Always containerized** for consistency
 - **Volume mounts** for kubeconfig and workspace access
 
@@ -56,9 +64,9 @@ DevLab uses a hybrid approach for tool execution that prioritizes performance wh
 
 | Method | Speed | Setup | Platform Support |
 |--------|-------|--------|------------------|
-| Host Binary | ⚡ Fastest | ❌ Manual install | ⚠️ Platform specific |
-| Pre-built Container | 🚀 Fast | ✅ Auto-build | ✅ Universal |
-| Ephemeral Download | 🐌 Slow | ✅ No setup | ✅ Universal |
+| Host Binary | Fastest | Manual install | Platform specific |
+| Pre-built Container | Fast | Auto-build | Universal |
+| Ephemeral Download | Slow | No setup | Universal |
 
 ## Benefits of This Approach
 
@@ -98,19 +106,19 @@ DevLab uses a hybrid approach for tool execution that prioritizes performance wh
                        │ Host Binary?    │──YES─▶│ Direct Execution │
                        └─────────────────┘       └──────────────────┘
                                 │                         │
-                                NO                       ⚡ FASTEST
+                                 NO                       FASTEST
                                 ▼                         
                        ┌─────────────────┐       ┌──────────────────┐
                        │ Local Image?    │──YES─▶│ Container Exec   │
                        └─────────────────┘       └──────────────────┘
                                 │                         │
-                                NO                       🚀 FAST
+                                NO                       FAST
                                 ▼                         
                        ┌─────────────────┐       ┌──────────────────┐
                        │ Build Image     │──────▶│ Container Exec   │
                        └─────────────────┘       └──────────────────┘
                                                           │
-                                                       ✅ RELIABLE
+                                                       RELIABLE
 ```
 
 ## Maintenance

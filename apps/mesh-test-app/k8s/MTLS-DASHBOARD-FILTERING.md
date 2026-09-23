@@ -1,19 +1,23 @@
 # mTLS Security Status Dashboard Updates
 
 ## Problem
+
 The mTLS Security Status panel was including health check traffic, which created "noise" in the metrics. Health checks (like `/health/live`, `/health/ready`, `/metrics`) are infrastructure traffic and don't represent actual application communication that should be secured with mTLS.
 
 ## Solution
+
 Updated the Prometheus queries in two dashboard panels to filter out health check traffic:
 
 ### 1. mTLS Security Status Panel (ID: 11)
 
 **Before:**
+
 ```promql
 sum(rate(response_total{namespace="mesh-test",direction="inbound",tls="true",dst_service_name!~".*health.*"}[1m])) / sum(rate(response_total{namespace="mesh-test",direction="inbound",dst_service_name!~".*health.*"}[1m])) * 100
 ```
 
 **After:**
+
 ```promql
 sum(rate(response_total{namespace="mesh-test",direction="inbound",tls="true",target_port="3000",path!~"/health.*|/live|/ready|/metrics",status_code!~"404"}[1m])) / sum(rate(response_total{namespace="mesh-test",direction="inbound",target_port="3000",path!~"/health.*|/live|/ready|/metrics",status_code!~"404"}[1m])) * 100
 ```
@@ -21,11 +25,13 @@ sum(rate(response_total{namespace="mesh-test",direction="inbound",tls="true",tar
 ### 2. TLS Connection Breakdown Panel (ID: 12)
 
 **Before:**
+
 ```promql
 sum(rate(response_total{namespace="mesh-test",direction="inbound"}[1m])) by (tls)
 ```
 
 **After:**
+
 ```promql
 sum(rate(response_total{namespace="mesh-test",direction="inbound",target_port="3000",path!~"/health.*|/live|/ready|/metrics",status_code!~"404"}[1m])) by (tls)
 ```
@@ -38,7 +44,7 @@ sum(rate(response_total{namespace="mesh-test",direction="inbound",target_port="3
    - `/live` - Liveness probes  
    - `/ready` - Readiness probes
    - `/metrics` - Prometheus scraping
-3. **`status_code!~"404"`** - Excludes 404 errors (often from health check misconfigurations)
+1. **`status_code!~"404"`** - Excludes 404 errors (often from health check misconfigurations)
 
 ## Expected Result
 

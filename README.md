@@ -1,8 +1,10 @@
 # Local Kubernetes Development Lab
 
+![Version](https://img.shields.io/badge/Version-v0.5.1-blue)
+
 A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
 
-> **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
+> **For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
 
 ## Features
 
@@ -12,9 +14,44 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Service Mesh Testing**: Complete Linkerd service mesh with canary deployments and mTLS
 - **Monitoring Stack**: Lightweight Prometheus, Grafana, and AlertManager
 - **Local Container Registry**: Docker registry accessible at localhost:5000
-- **Ingress Controller**: NGINX ingress for local service exposure
-- **Metrics Server**: For cluster autoscaling and resource monitoring
+- **Ingress Controller**: Traefik ingress on host ports 80/443, with services reached by `*.localhost` hostnames
+- **Metrics Server**: For HPA and resource monitoring
+- **Autoscaling Addons**: KEDA event-driven pod autoscaling and cluster-autoscaler node autoscaling with simulated KWOK nodes (`devlab addon enable keda node-autoscaler`, see [AUTOSCALING.md](./AUTOSCALING.md))
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
+
+## Pre-requisites
+
+### Runtime Environment
+
+- **Bash**: Recommended for the smoothest experience and required by the legacy scripts.
+- **Linux, macOS, or Windows with WSL2**: On Windows, run the Bash commands from a WSL2 distribution. WSL2 must be able to reach the Docker daemon.
+- **Docker daemon**: Must be installed, running, and usable by your current user. Docker Desktop with WSL integration or Docker installed directly in WSL both work.
+- **Network access**: Required during setup to download Python packages, container images, Kubernetes manifests, Helm charts, and KinD node images.
+- **Trusted CA certificates**: Required when your network performs TLS inspection. Place trusted `.crt` files under `python/certs/`; nested directories are supported. Bootstrap installs them into the KinD nodes so containerd can pull arbitrary images for future workloads.
+
+### Required Packages
+
+For the recommended Python CLI:
+
+- **Python 3.8 or newer** with `venv` and `pip` support. `python/setup.py` installs the Python dependencies listed in `python/requirements.txt`.
+- **Docker CLI and daemon**. The CLI uses Docker to run `kubectl`, Helm, Flux, and Linkerd containers, and to create the KinD cluster.
+- **Git** for working with this repository and for GitOps workflows.
+
+For the legacy Bash scripts, install these on the host as well:
+
+- **`kubectl`**
+- **Helm**
+- **KinD**
+- **`jq`**
+- **`curl`**
+- **OpenSSH tools**, including `ssh-keygen`, for Flux deploy keys
+
+### Optional Additions
+
+- **`fzf`**: Used by `devlab bootstrap` to choose the newest KinD node patch for each Kubernetes minor version. Without it, bootstrap provides a numbered prompt.
+- **Linkerd CLI**: Needed only for workflows that explicitly install or operate Linkerd through the legacy scripts; the Python CLI runs its Linkerd commands in a container.
+- **Flux CLI**: Needed only for legacy scripts; the Python CLI runs Flux in a container.
+- **Host `kubectl`, Helm, and KinD**: Optional with the Python CLI. Host KinD is used when available; otherwise the CLI builds and uses `devlab-kind:latest`.
 
 ## Quick Start
 
@@ -24,30 +61,60 @@ A comprehensive local development environment with **dual deployment options**: 
 # Setup Python environment
 python3 python/setup.py
 
+# Persist the wrapper path and tab completion for future Bash sessions
+# Replace ~/.bashrc with ~/.bash_profile or the startup file your Bash installation uses
+DEVLAB_DIR="$(pwd)/python"
+printf '\nexport PATH="$PATH:%s"\n' "$DEVLAB_DIR" >> ~/.bashrc
+printf 'source <(devlab completion bash)\n' >> ~/.bashrc
+source ~/.bashrc
+
 # Build local tool container images (optional, built automatically when needed)
-./devlab build-tools
+devlab build-tools
 
-# Bootstrap the cluster
-./devlab bootstrap
+# Bootstrap the cluster (prints the access points when done)
+devlab bootstrap
 
-# Deploy using traditional method
-./devlab deploy-traditional
-
-# OR deploy using GitOps method
-./devlab deploy-gitops
+# Optional: deploy using the GitOps method
+devlab deploy-gitops
 
 # Check status
-./devlab status
+devlab status
 
 # Use container-based tools
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
-./devlab flux -- get all -A
+devlab kubectl get pods -A
+devlab helm list -A
+devlab linkerd check
+devlab flux get all -A
+devlab kind get clusters
+
+# Optional: create aliases if you hate typing
+alias kubectl='devlab kubectl'
+alias helm='devlab helm'
+alias linkerd='devlab linkerd'
+alias flux='devlab flux'
 
 # Cleanup when done
-./devlab cleanup
+devlab cleanup
 ```
+
+`devlab bootstrap` creates a KinD cluster (1 control-plane + 2 workers),
+installs your custom CA certificates into the nodes, and installs the local
+registry, metrics-server, the Traefik ingress controller, the
+kube-prometheus-stack monitoring stack, and the default krew plugins. When it
+finishes, these services are available:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | <http://grafana.localhost> | admin / admin123 |
+| Prometheus | <http://prometheus.localhost> | - |
+| Alertmanager | <http://alertmanager.localhost> | - |
+| Registry UI | <http://registry.localhost> | - |
+| Traefik dashboard | <http://traefik.localhost/dashboard/> | - |
+| Registry API | <http://localhost:5000> | - |
+
+Browsers and `curl` resolve `*.localhost` to the loopback address, so no
+`/etc/hosts` entries are needed. See [NETWORKING.md](./NETWORKING.md) for how
+ingress and port mappings work.
 
 ### Option 2: Bash Scripts (Legacy)
 
@@ -55,7 +122,7 @@ python3 python/setup.py
 # 1. Install prerequisites (if needed)
 ./scripts/install-prerequisites.sh
 
-# 2. Bootstrap common infrastructure  
+# 2. Bootstrap common infrastructure
 ./scripts/bootstrap.sh
 
 # 3. Deploy either:
@@ -79,57 +146,59 @@ curl -s http://localhost:5000/v2/_catalog
 
 ## Image Workflow
 
-For KinD clusters, there are two approaches for container images:
-
-### Method 1: Direct Load (Recommended for Development)
-
-```bash
-# Build your image
-docker build -t my-app:latest .
-
-# Load directly into KinD cluster
-kind load docker-image my-app:latest --name dev-lab
-
-# Deploy with imagePullPolicy: Never
-kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: my-app
-  template:
-    metadata:
-      labels:
-        app: my-app
-    spec:
-      containers:
-      - name: my-app
-        image: my-app:latest
-        imagePullPolicy: Never
-        ports:
-        - containerPort: 80
-EOF
-```
-
-### Method 2: Registry Push (For Simulation of Production)
+Build and push images to the local registry at `localhost:5000`. Nodes pull
+from it through a containerd mirror, so `kind load` and
+`imagePullPolicy: Never` are not needed.
 
 ```bash
-# Build and tag for registry
-docker build -t localhost:5000/my-app:latest .
+# Build as localhost:5000/my-app:1 and push (extra args go to docker build)
+devlab build -t my-app:1 --push .
+devlab build -t my-app:1 -f docker/Dockerfile --build-arg VERSION=1 .
 
-# Push to local registry
-docker push localhost:5000/my-app:latest
+# Push an image you already built with plain docker build
+devlab push my-app:1
 
 # Verify in registry
 curl -s http://localhost:5000/v2/_catalog
-
-# Note: Due to KinD networking, you'll need to load the image anyway:
-kind load docker-image localhost:5000/my-app:latest --name dev-lab
 ```
+
+Reference the image as `image: localhost:5000/my-app:1` in manifests.
+
+See [NETWORKING.md](./NETWORKING.md) for how the registry, port mappings, and
+ingress are wired.
+
+## kubectl Plugins (krew)
+
+`devlab kubectl` runs in a local `devlab-kubectl` image that includes
+[krew](https://krew.sigs.k8s.io/). Plugins live in `.krew/` at the repository
+root, so they persist between runs. The default plugins (`ctx`, `gpugo`,
+`neat`, `ns`, `tree`, `who-can`) install on first use of `devlab kubectl`, at
+the end of `devlab bootstrap`, or with `devlab krew-sync`.
+
+```bash
+devlab kubectl ns monitoring
+devlab kubectl krew install <plugin>
+```
+
+## Shell Completion for a kubectl Alias
+
+To complete an alias of `devlab kubectl` such as `k`, pass the alias name to
+setup. The option is repeatable; leave it out to skip alias completion.
+
+```bash
+python3 python/setup.py --kubectl-alias k
+echo "alias k='devlab kubectl'" >> ~/.bashrc
+```
+
+This installs `~/.local/share/bash-completion/completions/k`. To turn the
+alias completion off again, delete that file. A `complete ... k` line in
+`~/.bashrc` overrides the installed file. When you source completion from
+`~/.bashrc` instead, use `source <(devlab completion bash --kubectl-alias k)`.
+
+`devlab kubectl exec <pod> -- <cmd>` passes the `--` through to kubectl, and
+`-it` gets a TTY when you run it from a terminal. `devlab kubectl port-forward`
+publishes the forwarded ports on the host, so `http://localhost:<port>` works
+as with a local kubectl.
 
 ## Helm Chart Development
 
@@ -158,17 +227,13 @@ helm test my-release
 ### Chart Testing with Built Images
 
 ```bash
-# Build your app image
-docker build -t my-app:latest .
+# Build your app image and push it to the local registry
+devlab build -t my-app:latest --push .
 
-# Load into KinD
-kind load docker-image my-app:latest --name dev-lab
-
-# Install chart with local image
+# Install chart with the registry image
 helm install my-release ./my-chart \
-  --set image.repository=my-app \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never
+  --set image.repository=localhost:5000/my-app \
+  --set image.tag=latest
 ```
 
 ## Service Mesh Testing with Linkerd
@@ -185,6 +250,7 @@ The dev-lab includes a comprehensive service mesh testing environment with Linke
 - **Production-Ready Test App**: Node.js application with health checks, metrics, and Redis backend
 
 ### Canary Deployment Methods
+
 `<!-- TODO: update canary tests (include flagger) -->`
 
 #### Method 1: Linkerd Native HTTPRoute (Recommended)
@@ -213,11 +279,16 @@ Route specific traffic to canary based on HTTP headers:
 ./scripts/linkerd-canary.sh header-canary
 
 # Test canary version
-curl -H 'x-canary: true' http://mesh-test.local:30080/
+curl -H 'x-canary: true' http://mesh-test.local/
 
 # Regular traffic goes to stable version
-curl http://mesh-test.local:30080/
+curl http://mesh-test.local/
 ```
+
+Traffic reaches the app through the Traefik ingress on port 80. The Ingress
+host must resolve to your machine: either give the Ingress a `*.localhost`
+name (for example `mesh-test.localhost`) or add `127.0.0.1 mesh-test.local` to
+`/etc/hosts`.
 
 #### Method 3: SMI TrafficSplit (Traditional)
 
@@ -263,9 +334,7 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 #### Command-line Monitoring
 
 ```bash
-# Add Linkerd CLI to path
-export PATH=$PATH:/home/jstevens/.linkerd2/bin
-
+# linkerd below is the devlab linkerd alias from Quick Start
 # Service statistics
 linkerd viz stat deploy -n mesh-test
 
@@ -318,7 +387,7 @@ The mesh test application demonstrates production patterns:
 ```text
 ┌─────────────────┐    ┌─────────────────┐
 │   Load Balancer │    │     Ingress     │
-│     (nginx)     │────│   Controller    │
+│    (Traefik)    │────│   Controller    │
 └─────────────────┘    └─────────────────┘
                                 │
                        ┌─────────────────┐
@@ -348,30 +417,29 @@ The mesh test application demonstrates production patterns:
 
 ### Production-Ready Features
 
-- ✅ **Health Probes**: Kubernetes liveness and readiness checks
-- ✅ **Graceful Shutdown**: Proper SIGTERM handling
-- ✅ **Resource Limits**: CPU and memory constraints
-- ✅ **Security**: mTLS encryption for all service communication
-- ✅ **Observability**: Comprehensive metrics and tracing
-- ✅ **Zero Downtime**: Proven deployment strategies
-- ✅ **Automated Testing**: Load generation and health verification
+- **Health Probes**: Kubernetes liveness and readiness checks
+- **Graceful Shutdown**: Proper SIGTERM handling
+- **Resource Limits**: CPU and memory constraints
+- **Security**: mTLS encryption for all service communication
+- **Observability**: Comprehensive metrics and tracing
+- **Zero Downtime**: Proven deployment strategies
+- **Automated Testing**: Load generation and health verification
 
 ## Monitoring Access
 
-### Port Forwards for Monitoring UIs
+### Monitoring UIs
+
+The monitoring UIs are served through the Traefik ingress:
+
+- **Grafana**: <http://grafana.localhost> (admin / admin123)
+- **Prometheus**: <http://prometheus.localhost>
+- **Alertmanager**: <http://alertmanager.localhost>
+
+For ad hoc access to other services, use a port forward. `devlab kubectl
+port-forward` publishes the port on the host:
 
 ```bash
-# Prometheus (metrics and targets)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
-# Access: http://localhost:9090
-
-# Grafana (dashboards and visualization)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-# Access: http://localhost:3000
-# Default: admin / prom-operator
-
-# AlertManager (alert management)
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093
+devlab kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093
 # Access: http://localhost:9093
 ```
 
@@ -387,39 +455,50 @@ kubectl get secret -n monitoring kube-prometheus-stack-grafana -o jsonpath="{.da
 - **Kubernetes / Compute Resources / Namespace (Pods)**: Pod-level metrics
 - **Node Exporter / Nodes**: Node hardware metrics
 
-## Cluster Autoscaling Simulation
+## Resource Load Testing
 
-### Deploy Sample Workload
-
-```bash
-# Deploy a resource-intensive workload
-kubectl apply -f examples/sample-workload.yaml
-
-# Monitor resource usage
-kubectl top nodes
-kubectl top pods
-
-# Watch scaling in Grafana dashboards
-```
-
-### Manual Scaling Tests
+The metrics server (installed by bootstrap) powers `kubectl top` and the
+Grafana resource dashboards. Generate some CPU load and watch it:
 
 ```bash
-# Scale deployment up
-kubectl scale deployment sample-app --replicas=10
+# A busy-loop workload with a CPU request, so the scheduler accounts for it
+devlab kubectl create deployment cpu-load --image=busybox:1.36 -- sh -c 'while :; do :; done'
+devlab kubectl set resources deployment cpu-load --requests=cpu=100m --limits=cpu=200m
 
-# Watch resource consumption
-watch kubectl top nodes
+# Scale it up and watch resource use per node and per pod
+devlab kubectl scale deployment cpu-load --replicas=10
+watch devlab kubectl top nodes
+devlab kubectl top pods
 
-# Check metrics in Prometheus
-# Query: sum(rate(container_cpu_usage_seconds_total[5m])) by (pod)
+# Prometheus query: sum(rate(container_cpu_usage_seconds_total[5m])) by (pod)
+
+# Clean up
+devlab kubectl delete deployment cpu-load
 ```
+
+## Autoscaling (KEDA and Node Autoscaling)
+
+Pod and node autoscaling are optional addons:
+
+```bash
+devlab addon enable keda node-autoscaler
+devlab addon list
+
+# Run the scenario tests: KEDA scale-from-zero, node scale-up/down, pool limits
+apps/autoscaling-demo/scripts/test-autoscaling.sh
+```
+
+`node-autoscaler` runs the real cluster-autoscaler with its `kwok` provider.
+New nodes are simulated by KWOK: they are Ready in seconds and cost almost
+nothing, but run no containers. See [AUTOSCALING.md](./AUTOSCALING.md) for how
+it works, how to add node pools, and more test scenarios.
 
 ## Directory Structure
 
 ```text
 dev-lab/
 ├── apps/
+│   ├── autoscaling-demo/        # KEDA + node autoscaling demo and scenario tests
 │   └── mesh-test-app/           # Service mesh testing application
 │       ├── server.js            # Node.js application with Redis integration
 │       ├── package.json         # Dependencies and scripts
@@ -439,16 +518,22 @@ dev-lab/
 │           └── test-suite.sh             # Comprehensive testing framework
 ├── cluster/
 │   └── kind-config.yaml         # KinD cluster configuration
-├── monitoring/
-│   ├── prometheus-values-lightweight.yaml    # Prometheus stack values
-│   └── custom-monitoring.yaml  # Additional monitoring resources
-├── registry/
-│   └── registry-k8s-daemonset.yaml          # Registry deployment
-├── scripts/
-│   ├── setup.sh                # Main setup script
-│   └── test-environment.sh     # Environment testing script
+├── config/
+│   ├── addons/                  # Optional addons (devlab addon enable ...)
+│   │   ├── keda/                # KEDA Helm values
+│   │   └── node-autoscaler/     # cluster-autoscaler values and KWOK node pools
+│   ├── gitops/                  # Flux GitRepository configuration
+│   ├── ingress/
+│   │   └── traefik-values.yaml  # Traefik Helm values
+│   ├── monitoring/
+│   │   └── prometheus-values.yaml # kube-prometheus-stack Helm values
+│   └── registry/
+│       ├── registry.yaml        # Registry Deployment
+│       └── registry-ui.yaml     # Registry UI
+├── python/                      # devlab CLI (devlab.py, setup.py, Dockerfiles)
+├── scripts/                     # Legacy Bash scripts
 ├── examples/
-│   └── sample-workload.yaml    # Example workload for testing
+│   └── gitops-linkerd/         # GitOps + Linkerd example (git submodule)
 └── README.md                   # This file
 ```
 
@@ -479,9 +564,9 @@ curl -s http://localhost:5000/v2/
 
 #### Pods Stuck in ImagePullBackOff
 
-- For KinD: Use `kind load docker-image <image> --name dev-lab`
-- Check image exists: `docker images | grep <image>`
-- Verify imagePullPolicy is set to `Never` for local images
+- Push the image to the local registry: `devlab push <image>`
+- Check the image is in the registry: `curl -s http://localhost:5000/v2/_catalog`
+- Reference the image as `localhost:5000/<image>` in the manifest
 
 #### Monitoring Stack Not Starting
 
@@ -499,10 +584,8 @@ curl -s http://localhost:5000/v2/
 
 ```bash
 # Delete the entire cluster
-./scripts/setup.sh cleanup
+devlab cleanup
 
-# Or manually:
-kind delete cluster --name dev-lab
 docker system prune -f  # Optional: clean up images
 ```
 
@@ -510,7 +593,7 @@ docker system prune -f  # Optional: clean up images
 
 ### Custom Monitoring
 
-Edit `monitoring/prometheus-values-lightweight.yaml` to:
+Edit `config/monitoring/prometheus-values.yaml` to:
 
 - Add custom metrics endpoints
 - Configure alert rules
@@ -519,7 +602,7 @@ Edit `monitoring/prometheus-values-lightweight.yaml` to:
 
 ### Registry Configuration
 
-Edit `registry/registry-k8s-daemonset.yaml` to:
+Edit `config/registry/registry.yaml` to:
 
 - Change storage backend
 - Add authentication
@@ -528,19 +611,46 @@ Edit `registry/registry-k8s-daemonset.yaml` to:
 
 ### Cluster Scaling
 
-Edit `cluster/kind-config.yaml` to:
+For autoscaled capacity, use the `node-autoscaler` addon and its node pools
+(see [AUTOSCALING.md](./AUTOSCALING.md)). For more real nodes, edit
+`cluster/kind-config.yaml` to:
 
 - Add more worker nodes
 - Adjust resource limits
 - Configure networking
 - Add extra mounts
 
+## Versioning
+
+This project uses **automated semantic versioning** based on branch naming conventions:
+
+- `feature/*` → `dev` = Minor version bump
+- `patch/*` → `dev` = Patch version bump
+- `dev` → `main` = Major version bump
+
+Check current version and rules:
+
+```bash
+./scripts/version-info.sh        # Show version info
+./scripts/version-info.sh rules  # Show versioning rules
+```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed workflow guidelines.
+
 ## Performance Tips
 
 1. **Resource Allocation**: The lightweight monitoring configuration reduces resource usage significantly
-2. **Image Management**: Use `kind load` for development, registry for CI/CD simulation
-3. **Persistent Storage**: Registry data persists in `/var/lib/registry` on control-plane node
-4. **Port Forwarding**: Use kubectl port-forward instead of NodePort for better performance
+2. **Image Management**: Push images to the local registry with `devlab build --push` or `devlab push`
+3. **Persistent Storage**: Registry data persists in `/tmp/dev-lab-registry` on the Docker host, so it survives a cluster recreate
+4. **Service Access**: Expose services through the Traefik ingress with a `*.localhost` host, or use `devlab kubectl port-forward` for ad hoc access
+
+## Misc
+
+Lint markdown like this:
+
+```bash
+mkdownfix --exclude-dirs apps/mesh-test-app/node_modules
+```
 
 ## License
 

@@ -64,4 +64,23 @@ spec:
   - port: 80
     targetPort: 80
     name: http
-  type: NodePort
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docker-registry-ui
+  namespace: dev-lab-registry
+spec:
+  # Explicit because this is applied before Traefik installs the default IngressClass
+  ingressClassName: traefik
+  rules:
+  - host: registry.localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: docker-registry-ui
+            port:
+              number: 80

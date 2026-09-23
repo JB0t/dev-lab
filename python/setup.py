@@ -12,6 +12,7 @@ import os
 import sys
 import subprocess
 import platform
+import argparse
 from pathlib import Path
 
 def run_command(cmd, check=True, capture_output=False):
@@ -32,28 +33,28 @@ def run_command(cmd, check=True, capture_output=False):
 def check_python():
     """Check Python version"""
     if sys.version_info < (3, 8):
-        print("❌ Python 3.8 or higher is required")
+        print("Python 3.8 or higher is required")
         return False
     
-    print(f"✅ Python {sys.version.split()[0]} detected")
+    print(f"Python {sys.version.split()[0]} detected")
     return True
 
 def check_docker():
     """Check if Docker is available"""
     try:
         result = run_command("docker --version", capture_output=True)
-        print(f"✅ {result.stdout.strip()}")
+        print(f"{result.stdout.strip()}")
         
         # Check if Docker daemon is running
         result = run_command("docker info", capture_output=True, check=False)
         if result.returncode != 0:
-            print("❌ Docker daemon is not running. Please start Docker.")
+            print("Docker daemon is not running. Please start Docker.")
             return False
         
-        print("✅ Docker daemon is running")
+        print("Docker daemon is running")
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("❌ Docker is not installed or not in PATH")
+        print("Docker is not installed or not in PATH")
         print("Please install Docker from: https://docs.docker.com/get-docker/")
         return False
 
@@ -63,11 +64,11 @@ def setup_venv():
     venv_dir = script_dir / "venv"
     
     if venv_dir.exists():
-        print("🔄 Virtual environment already exists")
+        print("Virtual environment already exists")
     else:
-        print("🐍 Creating Python virtual environment...")
+        print("Creating Python virtual environment...")
         run_command(f"{sys.executable} -m venv {venv_dir}")
-        print("✅ Virtual environment created")
+        print("Virtual environment created")
     
     # Determine activation script based on platform
     if platform.system() == "Windows":
@@ -82,12 +83,12 @@ def setup_venv():
     # Install requirements
     requirements_file = script_dir / "requirements.txt"
     if requirements_file.exists():
-        print("📦 Installing Python dependencies...")
+        print("Installing Python dependencies...")
         run_command(f"{pip_executable} install --upgrade pip")
         run_command(f"{pip_executable} install -r {requirements_file}")
-        print("✅ Dependencies installed")
+        print("Dependencies installed")
     else:
-        print(f"❌ Requirements file not found: {requirements_file}")
+        print(f"Requirements file not found: {requirements_file}")
         return False
     
     return {
@@ -101,6 +102,7 @@ def create_wrapper_scripts(venv_info):
     """Create platform-specific wrapper scripts"""
     script_dir = Path(__file__).parent
     venv_python = venv_info["python_executable"]
+    venv_bin_dir = "Scripts" if sys.platform == "win32" else "bin"
     
     # Create cross-platform wrapper
     wrapper_content = f'''#!/usr/bin/env python3
@@ -113,12 +115,16 @@ import subprocess
 from pathlib import Path
 
 # Use the virtual environment Python
-venv_python = Path(__file__).parent / "venv" / {"Scripts" if sys.platform == "win32" else "bin"} / "python"
+venv_python = Path(__file__).parent / "venv" / "{venv_bin_dir}" / "python"
 devlab_script = Path(__file__).parent / "devlab.py"
 
 # Pass all arguments to the actual script
 cmd = [str(venv_python), str(devlab_script)] + sys.argv[1:]
-subprocess.run(cmd)
+try:
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+except KeyboardInterrupt:
+    sys.exit(130)
 '''
     
     wrapper_file = script_dir / "devlab"
@@ -140,55 +146,103 @@ subprocess.run(cmd)
     
     return wrapper_file
 
-def show_usage_instructions(wrapper_file):
+def install_bash_completion(wrapper_file, kubectl_aliases=()):
+    """Install the generated Bash completion scripts for the current user.
+
+    bash-completion lazily loads completions/<command> the first time <command>
+    is completed, so each kubectl alias gets its own file that carries the full
+    devlab completion plus the alias hook.
+    """
+    if platform.system() == "Windows":
+        return []
+
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    completion_dir = data_home / "bash-completion" / "completions"
+    completion_dir.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    targets = [("devlab", [])] + [(alias, ["--kubectl-alias", alias]) for alias in kubectl_aliases]
+    for name, extra_args in targets:
+        result = subprocess.run(
+            [str(wrapper_file), "completion", "bash", *extra_args],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"Warning: unable to generate Bash completion for {name}: {result.stderr.strip()}")
+            continue
+        completion_file = completion_dir / name
+        completion_file.write_text(result.stdout)
+        installed.append(completion_file)
+    return installed
+
+
+def show_usage_instructions(wrapper_file, completion_files=(), kubectl_aliases=()):
     """Show usage instructions"""
     script_dir = Path(__file__).parent
     
     print("\n" + "="*60)
-    print("🎉 Dev Lab Setup Complete!")
+    print("Dev Lab Setup Complete!")
     print("="*60)
     print("\nThe dev-lab environment is now ready to use.")
     print("All Kubernetes tools run in containers - no local installation needed!")
-    print("\n📖 Quick Start:")
+    print("\nQuick Start:")
     print(f"   cd {script_dir}")
     
     if platform.system() == "Windows":
         print("   .\\devlab.bat bootstrap      # Create cluster and setup services")
-        print("   .\\devlab.bat deploy         # Deploy applications")
+        print("   .\\devlab.bat build -t my-app:1 --push .  # Build and push to the local registry")
         print("   .\\devlab.bat status         # Check status")
-        print("   .\\devlab.bat kubectl -- get pods -A")
+        print("   .\\devlab.bat kubectl get pods -A")
         print("   .\\devlab.bat cleanup        # Clean up everything")
     else:
         print("   ./devlab bootstrap          # Create cluster and setup services")
-        print("   ./devlab deploy             # Deploy applications")
+        print("   ./devlab build -t my-app:1 --push .  # Build and push to the local registry")
         print("   ./devlab status             # Check status")
-        print("   ./devlab kubectl -- get pods -A")
+        print("   ./devlab kubectl get pods -A")
         print("   ./devlab cleanup            # Clean up everything")
+        for completion_file in completion_files:
+            print(f"\nBash completion installed: {completion_file}")
+        if completion_files:
+            print("Restart Bash or run: source <(./devlab completion bash)")
+        for alias in kubectl_aliases:
+            print(f"\nAdd to ~/.bashrc to use the '{alias}' alias:")
+            print(f"   alias {alias}='devlab kubectl'")
+            print(f"Remove any existing 'complete ... {alias}' line; it overrides the installed completion.")
     
-    print("\n🐳 Container-based tools available:")
+    print("\nContainer-based tools available:")
     print("   • kubectl (Kubernetes CLI)")
     print("   • helm (Package manager)")
     print("   • linkerd (Service mesh CLI)")
     print("   • kind (Kubernetes in Docker)")
     print("   • flux (GitOps toolkit)")
     
-    print("\n🌟 Benefits:")
-    print("   ✅ Platform-agnostic (Windows, macOS, Linux)")
-    print("   ✅ Only requires Docker")
-    print("   ✅ No local tool installation")
-    print("   ✅ Clean, reproducible environment")
-    print("   ✅ Easy cleanup and reset")
+    print("\nBenefits:")
+    print("   Platform-agnostic (Windows, macOS, Linux)")
+    print("   Only requires Docker")
+    print("   No local tool installation")
+    print("   Clean, reproducible environment")
+    print("   Easy cleanup and reset")
     
-    print("\n📁 Project structure:")
+    print("\nProject structure:")
     print(f"   {script_dir.parent}/")
     print("   ├── python/              # Python-based dev-lab tools")
     print("   ├── config/              # External configuration files")
     print("   ├── cluster/             # Cluster configuration")
     print("   └── scripts/             # Original bash scripts (deprecated)")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Set up the dev-lab Python environment")
+    parser.add_argument(
+        "--kubectl-alias", action="append", default=[], metavar="NAME",
+        help="Install Bash completion for NAME as an alias of 'devlab kubectl' (repeatable, e.g. k)",
+    )
+    return parser.parse_args()
+
 def main():
     """Main setup function"""
-    print("🚀 Dev Lab Platform-Agnostic Setup")
+    args = parse_args()
+    print("Dev Lab Platform-Agnostic Setup")
     print("=" * 40)
     
     # Check prerequisites
@@ -206,12 +260,15 @@ def main():
         
         # Create wrapper scripts
         wrapper_file = create_wrapper_scripts(venv_info)
+
+        # Install Bash completion where bash-completion discovers user scripts
+        completion_files = install_bash_completion(wrapper_file, args.kubectl_alias)
         
         # Show usage instructions
-        show_usage_instructions(wrapper_file)
+        show_usage_instructions(wrapper_file, completion_files, args.kubectl_alias)
         
     except Exception as e:
-        print(f"❌ Setup failed: {e}")
+        print(f"Setup failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

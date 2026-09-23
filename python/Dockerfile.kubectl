@@ -1,0 +1,31 @@
+FROM alpine/kubectl:latest
+
+ARG CA_BUNDLE_VERSION
+ARG KREW_VERSION
+ARG TARGETARCH
+COPY certs/ /tmp/local-ca/
+
+RUN set -eu; \
+  apk add --no-cache --no-check-certificate bash ca-certificates curl fzf git ncurses; \
+  find /tmp/local-ca -type f -name '*.crt' -exec sh -c \
+    'for certificate; do cp "$certificate" "/usr/local/share/ca-certificates/$(sha256sum "$certificate" | cut -d" " -f1).crt"; done' \
+    sh {} +; \
+  rm -rf /tmp/local-ca; \
+  update-ca-certificates
+
+# Krew runs as a standalone kubectl plugin; KREW_ROOT is a persistent host mount
+# so plugins installed at runtime survive the --rm containers. bash and fzf are
+# needed by the ctx/ns plugins (fzf gives them an interactive picker, ncurses
+# provides tput for highlighting).
+RUN set -eu; \
+  curl -fsSL "https://github.com/kubernetes-sigs/krew/releases/download/${KREW_VERSION}/krew-linux_${TARGETARCH}.tar.gz" \
+    | tar -xz -C /tmp "./krew-linux_${TARGETARCH}"; \
+  mv "/tmp/krew-linux_${TARGETARCH}" /usr/local/bin/kubectl-krew; \
+  chmod +x /usr/local/bin/kubectl-krew
+
+LABEL devlab.ca-bundle-version="${CA_BUNDLE_VERSION}"
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV KREW_ROOT=/root/.krew
+ENV PATH="/root/.krew/bin:${PATH}"
+
+ENTRYPOINT ["kubectl"]

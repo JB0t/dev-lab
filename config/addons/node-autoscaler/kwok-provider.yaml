@@ -1,0 +1,48 @@
+# Node pool templates for cluster-autoscaler's kwok provider.
+# devlab replaces ${ARCH} with the KinD nodes' architecture and applies this
+# after the Helm release, replacing the chart's sample templates. The chart's
+# own provider config (kwok-provider-config) groups nodes by the
+# kwok-nodegroup label and reads templates from this ConfigMap.
+#
+# Each template Node is one node group, sized by the min/max annotations. Add
+# more items to model more pools (for example a large or GPU pool); the
+# expander (least-waste) picks between them. Nodes created from these
+# templates get the taint kwok-provider=true:NoSchedule, so only workloads
+# that tolerate it (and select devlab.io/node-pool=kwok) land on them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kwok-provider-templates
+  namespace: kube-system
+data:
+  templates: |
+    apiVersion: v1
+    kind: List
+    items:
+    - apiVersion: v1
+      kind: Node
+      metadata:
+        name: kwok-small
+        annotations:
+          cluster-autoscaler.kwok.nodegroup/min-count: "0"
+          cluster-autoscaler.kwok.nodegroup/max-count: "5"
+        labels:
+          kwok-nodegroup: kwok-small
+          devlab.io/node-pool: kwok
+          node.kubernetes.io/instance-type: kwok-small
+          kubernetes.io/arch: ${ARCH}
+          kubernetes.io/os: linux
+      status:
+        allocatable:
+          cpu: "4"
+          memory: 16Gi
+          ephemeral-storage: 100Gi
+          pods: "110"
+        capacity:
+          cpu: "4"
+          memory: 16Gi
+          ephemeral-storage: 100Gi
+          pods: "110"
+        nodeInfo:
+          architecture: ${ARCH}
+          operatingSystem: linux

@@ -31,25 +31,25 @@ docker: Error response from daemon: manifest for kindest/node:v0.20.0 not found:
 
 ## Key Benefits
 
-### ⚡ **Performance**
+### **Performance**
 
 - Host binary: **Zero overhead** (when available)
 - Container image: **Fast startup** (~200ms vs 5+ seconds download)
 - Cached builds: **No network dependency** during runtime
 
-### 🌍 **Platform Independence**
+### **Platform Independence**
 
 - **Works everywhere**: Windows, macOS, Linux
 - **Single dependency**: Only Docker required
 - **Consistent behavior**: Same experience across platforms
 
-### 🛡️ **Robustness**
+### **Robustness**
 
 - **Network resilient**: No runtime downloads
 - **Version consistency**: Fixed KinD version in container
 - **Graceful fallback**: Automatic detection and switching
 
-### 🧑‍💻 **Developer Experience**
+### **Developer Experience**
 
 - **Transparent**: Users don't need to know which method is used
 - **No setup required**: Tools work out of the box
@@ -97,17 +97,17 @@ def kind(self, args):
 ```bash
 # Cleanup uses fastest available method
 ./devlab cleanup
-# ✅ Uses host kind (50ms startup)
+# Uses host kind (50ms startup)
 
 # On system without kind installed
 ./devlab cleanup
-# 🔨 Building local KinD container image (one-time setup)...
-# ✅ Uses container kind (200ms startup)
+# Building local KinD container image (one-time setup)...
+# Uses container kind (200ms startup)
 
 # Manual image management
 ./devlab build-tools
-# 🔨 Building Local Tool Images
-# ✅ Successfully built devlab-kind:latest
+# Building Local Tool Images
+# Successfully built devlab-kind:latest
 ```
 
 ## Maintenance

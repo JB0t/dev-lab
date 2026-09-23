@@ -1,0 +1,72 @@
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: SERVICE_NAME_PLACEHOLDER
+  namespace: SERVICE_NAME_PLACEHOLDER
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: SERVICE_NAME_PLACEHOLDER
+  
+  service:
+    port: 80
+    targetPort: PORT_PLACEHOLDER
+    portDiscovery: true
+  
+  analysis:
+    interval: 45s
+    threshold: 3
+    maxWeight: 30
+    stepWeight: 5
+    primaryReadyThreshold: 1
+    canaryReadyThreshold: 1
+    
+    metrics:
+    - name: success-rate
+      templateRef:
+        name: linkerd-success-rate
+        namespace: SERVICE_NAME_PLACEHOLDER
+      thresholdRange:
+        min: 97
+      interval: 1m
+    
+    - name: latency
+      templateRef:
+        name: linkerd-request-duration
+        namespace: SERVICE_NAME_PLACEHOLDER
+      thresholdRange:
+        max: 300
+      interval: 1m
+    
+    webhooks:
+    # Basic health check
+    - name: SERVICE_NAME_PLACEHOLDER-health-check
+      url: http://flagger-loadtester.SERVICE_NAME_PLACEHOLDER/
+      timeout: 15s
+      type: pre-rollout
+      metadata:
+        type: bash
+        cmd: |
+          curl -sf http://SERVICE_NAME_PLACEHOLDER-canary.SERVICE_NAME_PLACEHOLDER/health/live > /dev/null &&
+          curl -sf http://SERVICE_NAME_PLACEHOLDER-canary.SERVICE_NAME_PLACEHOLDER/health/ready > /dev/null
+    
+    # Load testing
+    - name: SERVICE_NAME_PLACEHOLDER-load-test
+      url: http://flagger-loadtester.SERVICE_NAME_PLACEHOLDER/
+      timeout: 30s
+      metadata:
+        type: cmd
+        cmd: "hey -z 25s -q 8 -c 2 -H 'User-Agent: Flagger-SERVICE_NAME_PLACEHOLDER' http://SERVICE_NAME_PLACEHOLDER-canary.SERVICE_NAME_PLACEHOLDER/"
+    
+    # Basic functional test
+    - name: SERVICE_NAME_PLACEHOLDER-functional-test
+      url: http://flagger-loadtester.SERVICE_NAME_PLACEHOLDER/
+      timeout: 20s
+      type: pre-rollout
+      metadata:
+        type: bash
+        cmd: |
+          # Basic endpoint test
+          response=$(curl -sf http://SERVICE_NAME_PLACEHOLDER-canary.SERVICE_NAME_PLACEHOLDER/)
+          echo "$response" | grep -q "SERVICE_NAME_PLACEHOLDER"

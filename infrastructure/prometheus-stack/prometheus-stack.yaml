@@ -1,0 +1,166 @@
+# Monitoring namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+    app.kubernetes.io/managed-by: flux
+
+---
+# Prometheus Community Helm Repository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: monitoring
+spec:
+  interval: 24h
+  url: https://prometheus-community.github.io/helm-charts
+
+---
+# Grafana Helm Repository  
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  interval: 24h
+  url: https://grafana.github.io/helm-charts
+
+---
+# Prometheus Stack HelmRelease
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: ">=61.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+      interval: 12h
+  values:
+    # Global settings
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+
+    # Prometheus configuration
+    prometheus:
+      prometheusSpec:
+        # Reduce resources for local development
+        resources:
+          requests:
+            memory: "400Mi"
+            cpu: "100m"
+          limits:
+            memory: "800Mi"
+            cpu: "200m"
+        
+        # Reduce retention for faster startup
+        retention: "1d"
+        retentionSize: "1GB"
+        
+        # Disable some features for faster startup
+        enableAdminAPI: false
+        disableCompaction: true
+        
+        # NodePort for easy access
+        service:
+          type: NodePort
+          nodePort: 30090
+
+    # Grafana configuration  
+    grafana:
+      # Reduce resources
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "50m"
+        limits:
+          memory: "256Mi"
+          cpu: "100m"
+      
+      # Enable admin access
+      adminPassword: "admin123"
+      
+      # Expose via NodePort for easy access
+      service:
+        type: NodePort
+        nodePort: 30030
+        
+      # Default dashboards
+      defaultDashboardsEnabled: true
+      
+      # Plugins
+      plugins:
+        - grafana-piechart-panel
+        - grafana-clock-panel
+
+    # AlertManager configuration
+    alertmanager:
+      # Reduce resources
+      alertmanagerSpec:
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "10m"
+          limits:
+            memory: "128Mi"
+            cpu: "50m"
+        
+        # NodePort for access
+        service:
+          type: NodePort
+          nodePort: 30093
+
+    # Node exporter
+    nodeExporter:
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "64Mi"
+          cpu: "50m"
+
+    # Kube state metrics
+    kubeStateMetrics:
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "10m"
+        limits:
+          memory: "128Mi"
+          cpu: "50m"
+
+    # Prometheus operator
+    prometheusOperator:
+      resources:
+        requests:
+          memory: "64Mi"
+          cpu: "10m"
+        limits:
+          memory: "128Mi"
+          cpu: "50m"
+
+    # Disable some heavy components for faster startup
+    kubeApiServer:
+      enabled: false
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+    kubeDns:
+      enabled: false

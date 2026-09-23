@@ -1,0 +1,35 @@
+# cluster-autoscaler (chart autoscaler/cluster-autoscaler) with the kwok cloud
+# provider, installed by `devlab addon enable node-autoscaler`.
+#
+# The kwok provider "provisions" nodes by creating Node objects from the
+# templates in kwok-provider.yaml (applied by devlab over the
+# chart's samples); the KWOK controller then simulates their
+# kubelets. devlab sets image.tag to match the cluster's Kubernetes minor.
+
+cloudProvider: kwok
+fullnameOverride: cluster-autoscaler
+# Not used by the kwok provider, but required by the chart
+autoDiscovery:
+  clusterName: dev-lab
+
+# Timings shortened from the defaults (10s scan, 10m scale-down) so scale-down
+# can be observed in a couple of minutes
+extraArgs:
+  scan-interval: 10s
+  scale-down-delay-after-add: 1m
+  scale-down-delay-after-delete: 10s
+  scale-down-unneeded-time: 1m
+  # Nodes found busy are otherwise skipped for 5m after they empty
+  unremovable-node-recheck-timeout: 1m
+  expander: least-waste
+  skip-nodes-with-local-storage: false
+
+serviceMonitor:
+  enabled: true
+  namespace: kube-system
+  selector:
+    release: kube-prometheus-stack
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}

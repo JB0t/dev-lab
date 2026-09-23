@@ -1,14 +1,25 @@
 FROM alpine:latest
 
+COPY certs/ /tmp/local-ca/
+
 # Install curl, docker, and other utilities
-RUN apk add --no-cache curl ca-certificates docker-cli
+RUN apk add --no-cache --no-check-certificate curl ca-certificates docker-cli && \
+  find /tmp/local-ca -type f -name '*.crt' -exec sh -c \
+    'for certificate; do cp "$certificate" "/usr/local/share/ca-certificates/$(sha256sum "$certificate" | cut -d" " -f1).crt"; done' \
+    sh {} + && \
+  rm -rf /tmp/local-ca && \
+  update-ca-certificates
 
 # Download and install KinD CLI
-RUN curl -L https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 -o /usr/local/bin/kind && \
+ARG KIND_VERSION
+ARG TARGETARCH
+RUN curl -L https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${TARGETARCH} -o /usr/local/bin/kind && \
   chmod +x /usr/local/bin/kind
 
 # Verify installation
 RUN kind version
+
+LABEL devlab.kind.version="${KIND_VERSION}"
 
 # Set working directory
 WORKDIR /workspace

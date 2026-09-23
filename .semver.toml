@@ -1,0 +1,42 @@
+# Dev Lab Semantic Versioning Configuration
+# This file defines the versioning behavior for the project
+
+# Version format: MAJOR.MINOR.PATCH
+# Example: v1.2.3
+
+# Branch patterns and their corresponding version bump types
+[version_bumps]
+# feature/* branches merged to dev trigger minor version bumps
+feature_to_dev = "minor"
+
+# patch/* branches merged to dev trigger patch version bumps  
+patch_to_dev = "patch"
+
+# dev branch merged to main triggers major version bumps
+dev_to_main = "major"
+
+# Branches that don't trigger version bumps
+[no_version_bump]
+patterns = ["docs/*", "ci/*", "hotfix/*"]
+
+# Release settings
+[release]
+# Automatically create GitHub releases
+create_github_release = true
+
+# Include changelog in releases
+include_changelog = true
+
+# Mark releases as prerelease based on branch
+prerelease_branches = ["dev"]
+
+# Version file settings
+[version_file]
+# File to store current version
+path = "VERSION"
+
+# Update version badge in README
+update_readme_badge = true
+
+# README badge pattern to replace
+readme_badge_pattern = "Version-v[0-9]+\\.[0-9]+\\.[0-9]+"

@@ -191,14 +191,14 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 
 ### Expected Results
 
-✅ **Successful Zero-Downtime Deployment**:
+**Successful Zero-Downtime Deployment**:
 
 - 0 request failures during deployment
 - 0 health check failures
 - Smooth traffic transition between versions
 - mTLS encryption maintained
 
-❌ **Failed Deployment** (triggers rollback):
+**Failed Deployment** (triggers rollback):
 
 - Increased error rate in canary version
 - Health check failures
@@ -211,9 +211,8 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 **Pods in ImagePullBackOff**:
 
 ```bash
-# Rebuild and load images
-docker build -t mesh-test-app:v1 .
-kind load docker-image mesh-test-app:v1 --name dev-lab
+# Rebuild and push to the local registry (manifests use localhost:5000/mesh-test-app)
+devlab build -t mesh-test-app:v9 --push .
 ```
 
 **Linkerd Proxy Injection Not Working**:
@@ -263,7 +262,7 @@ kubectl top pods -n mesh-test
 ```
 ┌─────────────────┐    ┌─────────────────┐
 │   Load Balancer │    │     Ingress     │
-│     (nginx)     │────│   Controller    │
+│    (Traefik)    │────│   Controller    │
 └─────────────────┘    └─────────────────┘
                                 │
                        ┌─────────────────┐

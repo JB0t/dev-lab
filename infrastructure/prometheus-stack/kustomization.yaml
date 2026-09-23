@@ -2,8 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 metadata:
-  name: dev-lab-service-mesh
-  namespace: linkerd
+  name: dev-lab-prometheus-stack
+  namespace: monitoring
 
 resources:
-  - linkerd.yaml
+  - prometheus-stack.yaml

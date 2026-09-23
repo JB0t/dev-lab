@@ -14,15 +14,15 @@ log() {
 }
 
 success() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN}✓ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${GREEN} $1${NC}"
 }
 
 error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED}✗ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${RED} $1${NC}"
 }
 
 warn() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW}⚠ $1${NC}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${YELLOW} $1${NC}"
 }
 
 # Script directory
@@ -218,16 +218,16 @@ show_help() {
 show_status() {
     echo "=== Canary Deployment Status ==="
     echo ""
-    echo "📊 Traffic Split:"
+    echo "Traffic Split:"
     kubectl get trafficsplit -n mesh-test 2>/dev/null || echo "No traffic split configured"
     echo ""
-    echo "🚀 Deployments:"
+    echo "Deployments:"
     kubectl get deployments -n mesh-test -l app=mesh-test-app
     echo ""
-    echo "🎯 Pods:"
+    echo "Pods:"
     kubectl get pods -n mesh-test -l app=mesh-test-app
     echo ""
-    echo "🔗 Services:"
+    echo "Services:"
     kubectl get services -n mesh-test -l app=mesh-test-app
 }
 
