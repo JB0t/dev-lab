@@ -1,0 +1,57 @@
+# Traefik ingress controller for dev-lab (chart traefik/traefik).
+#
+# KinD has no LoadBalancer, so Traefik binds hostPort 80/443 on the
+# control-plane node, which is the only node with host port mappings
+# (cluster/kind-config.yaml). Every Ingress is then reachable on the host at
+# http://<name>.localhost. See NETWORKING.md.
+
+deployment:
+  kind: Deployment
+  replicas: 1
+
+# hostPort pods cannot surge: the new pod would need the port the old one holds.
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+ports:
+  web:
+    hostPort: 80
+  websecure:
+    hostPort: 443
+
+service:
+  spec:
+    type: ClusterIP
+
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+
+providers:
+  kubernetesIngress:
+    publishedService:
+      enabled: false
+
+ingressRoute:
+  dashboard:
+    enabled: true
+    matchRule: Host(`traefik.localhost`)
+    entryPoints: ["web"]
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi

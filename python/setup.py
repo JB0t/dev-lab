@@ -12,6 +12,7 @@ import os
 import sys
 import subprocess
 import platform
+import argparse
 from pathlib import Path
 
 def run_command(cmd, check=True, capture_output=False):
@@ -145,29 +146,38 @@ except KeyboardInterrupt:
     
     return wrapper_file
 
-def install_bash_completion(wrapper_file):
-    """Install the generated Bash completion script for the current user."""
+def install_bash_completion(wrapper_file, kubectl_aliases=()):
+    """Install the generated Bash completion scripts for the current user.
+
+    bash-completion lazily loads completions/<command> the first time <command>
+    is completed, so each kubectl alias gets its own file that carries the full
+    devlab completion plus the alias hook.
+    """
     if platform.system() == "Windows":
-        return None
+        return []
 
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     completion_dir = data_home / "bash-completion" / "completions"
     completion_dir.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [str(wrapper_file), "completion", "bash"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"Warning: unable to generate Bash completion: {result.stderr.strip()}")
-        return None
 
-    completion_file = completion_dir / "devlab"
-    completion_file.write_text(result.stdout)
-    return completion_file
+    installed = []
+    targets = [("devlab", [])] + [(alias, ["--kubectl-alias", alias]) for alias in kubectl_aliases]
+    for name, extra_args in targets:
+        result = subprocess.run(
+            [str(wrapper_file), "completion", "bash", *extra_args],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"Warning: unable to generate Bash completion for {name}: {result.stderr.strip()}")
+            continue
+        completion_file = completion_dir / name
+        completion_file.write_text(result.stdout)
+        installed.append(completion_file)
+    return installed
 
 
-def show_usage_instructions(wrapper_file, completion_file=None):
+def show_usage_instructions(wrapper_file, completion_files=(), kubectl_aliases=()):
     """Show usage instructions"""
     script_dir = Path(__file__).parent
     
@@ -181,19 +191,24 @@ def show_usage_instructions(wrapper_file, completion_file=None):
     
     if platform.system() == "Windows":
         print("   .\\devlab.bat bootstrap      # Create cluster and setup services")
-        print("   .\\devlab.bat deploy         # Deploy applications")
+        print("   .\\devlab.bat build -t my-app:1 --push .  # Build and push to the local registry")
         print("   .\\devlab.bat status         # Check status")
-        print("   .\\devlab.bat kubectl -- get pods -A")
+        print("   .\\devlab.bat kubectl get pods -A")
         print("   .\\devlab.bat cleanup        # Clean up everything")
     else:
         print("   ./devlab bootstrap          # Create cluster and setup services")
-        print("   ./devlab deploy             # Deploy applications")
+        print("   ./devlab build -t my-app:1 --push .  # Build and push to the local registry")
         print("   ./devlab status             # Check status")
-        print("   ./devlab kubectl -- get pods -A")
+        print("   ./devlab kubectl get pods -A")
         print("   ./devlab cleanup            # Clean up everything")
-        if completion_file:
+        for completion_file in completion_files:
             print(f"\nBash completion installed: {completion_file}")
+        if completion_files:
             print("Restart Bash or run: source <(./devlab completion bash)")
+        for alias in kubectl_aliases:
+            print(f"\nAdd to ~/.bashrc to use the '{alias}' alias:")
+            print(f"   alias {alias}='devlab kubectl'")
+            print(f"Remove any existing 'complete ... {alias}' line; it overrides the installed completion.")
     
     print("\nContainer-based tools available:")
     print("   • kubectl (Kubernetes CLI)")
@@ -216,8 +231,17 @@ def show_usage_instructions(wrapper_file, completion_file=None):
     print("   ├── cluster/             # Cluster configuration")
     print("   └── scripts/             # Original bash scripts (deprecated)")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Set up the dev-lab Python environment")
+    parser.add_argument(
+        "--kubectl-alias", action="append", default=[], metavar="NAME",
+        help="Install Bash completion for NAME as an alias of 'devlab kubectl' (repeatable, e.g. k)",
+    )
+    return parser.parse_args()
+
 def main():
     """Main setup function"""
+    args = parse_args()
     print("Dev Lab Platform-Agnostic Setup")
     print("=" * 40)
     
@@ -238,10 +262,10 @@ def main():
         wrapper_file = create_wrapper_scripts(venv_info)
 
         # Install Bash completion where bash-completion discovers user scripts
-        completion_file = install_bash_completion(wrapper_file)
+        completion_files = install_bash_completion(wrapper_file, args.kubectl_alias)
         
         # Show usage instructions
-        show_usage_instructions(wrapper_file, completion_file)
+        show_usage_instructions(wrapper_file, completion_files, args.kubectl_alias)
         
     except Exception as e:
         print(f"Setup failed: {e}")

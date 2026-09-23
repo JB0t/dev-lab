@@ -6,14 +6,15 @@ This directory contains externalized configuration files that were previously em
 
 ```text
 config/
-├── apps/
-│   └── sample-web-app.yaml          # Sample application manifests
 ├── gitops/
-│   └── git-repository.yaml         # Flux GitRepository configuration
+│   ├── git-repository.yaml         # Flux GitRepository configuration
+│   └── service-mesh-layer-gitrepository.yaml
+├── ingress/
+│   └── traefik-values.yaml         # Traefik ingress controller Helm values
 ├── monitoring/
 │   └── prometheus-values.yaml      # Prometheus stack Helm values
 └── registry/
-    ├── registry-daemonset.yaml     # Container registry DaemonSet
+    ├── registry.yaml               # Container registry Deployment
     └── registry-ui.yaml            # Container registry UI deployment
 ```
 
@@ -25,9 +26,9 @@ The following files from `notes/dev-lab/` were determined to be better and were 
 
 1. **cluster/kind-config.yaml** - More comprehensive cluster configuration with:
    - Better networking setup
-   - Proper port mappings for services
+   - Host port mappings for the registry (5000) and the Traefik ingress (80/443)
    - ContainerD configuration for local registry
-   - Multi-node setup with proper labels
+   - Multi-node setup (1 control-plane + 2 workers)
 
 ### Files Externalized from Scripts
 
@@ -38,24 +39,14 @@ The following configurations were extracted from inline script definitions:
    - **Improvements**: Can now be version controlled and modified independently
    - **Comparison**: The notes version at `monitoring/prometheus-values-lightweight.yaml` was simpler but missing some Linkerd integrations, so we kept the script version which has better Linkerd metrics collection
 
-1. **registry/registry-daemonset.yaml** & **registry-ui.yaml**
+1. **registry/registry.yaml** & **registry-ui.yaml**
    - **Source**: Inline YAML in `bootstrap.sh`
    - **Improvements**: Separated registry and UI into different files for better modularity
-   - **Comparison**: The notes version at `registry/registry-k8s-daemonset.yaml` was more comprehensive with:
-     - Better health checks
-     - More robust configuration
-     - Proper tolerations and node selectors
-     - However, it used `hostNetwork: true` which might conflict with the scripts' approach
+   - **Current state**: The registry is a single Deployment pinned to the control-plane node. Its storage persists in `/tmp/dev-lab-registry` on the Docker host. The UI is served at <http://registry.localhost> through the Traefik ingress.
 
-1. **apps/sample-web-app.yaml**
-   - **Source**: Inline YAML in `deploy-traditional.sh`
-   - **Improvements**: Can be easily replaced with more complex applications
-   - **Comparison**: The notes version at `apps/mesh-test-app/k8s/base.yaml` is much more sophisticated with:
-     - Custom application instead of nginx
-     - Better resource management
-     - Proper health checks
-     - Integration with Redis
-     - More realistic service mesh testing capabilities
+1. **ingress/traefik-values.yaml**
+   - Helm values for the Traefik ingress controller (chart `traefik/traefik`), installed by `devlab bootstrap`
+   - See [NETWORKING.md](../NETWORKING.md) for how ingress and port mappings work
 
 1. **gitops/git-repository.yaml**
    - **Source**: Inline YAML in `deploy-gitops.sh`
@@ -66,11 +57,6 @@ The following configurations were extracted from inline script definitions:
 ### Consider Using Notes Directory Files
 
 The files in `notes/dev-lab/` appear to be more mature and feature-complete:
-
-1. **Registry Configuration**:
-   - Consider using `notes/dev-lab/registry/registry-k8s-daemonset.yaml`
-   - It has better health checks and more robust configuration
-   - May need to adjust the networking approach to match script expectations
 
 1. **Sample Application**:
    - The `notes/dev-lab/apps/mesh-test-app/` contains a full Node.js application
@@ -99,7 +85,6 @@ The following scripts were updated to use external files:
 
 1. **deploy-traditional.sh**:
    - Monitoring values loaded from `config/monitoring/prometheus-values.yaml`
-   - Sample app loaded from `config/apps/sample-web-app.yaml`
 
 1. **deploy-gitops.sh**:
    - GitRepository config loaded from `config/gitops/git-repository.yaml`
