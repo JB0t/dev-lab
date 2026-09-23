@@ -221,6 +221,8 @@ your `PATH` (see the root README).
 | `./devlab build -t <name[:tag]> [--push] [docker build args]` | Build `localhost:5000/<name>` for the local registry |
 | `./devlab push <name[:tag]>...` | Tag (if needed) and push images to `localhost:5000` |
 | `./devlab krew-sync` | Install the default krew plugins |
+| `./devlab addon list` | List optional addons and whether they are installed |
+| `./devlab addon enable\|disable <name>...` | Install or remove addons: `keda`, `node-autoscaler` ([AUTOSCALING.md](../AUTOSCALING.md)) |
 | `./devlab completion bash [--kubectl-alias k]` | Print Bash completion, optionally for a kubectl alias |
 | `./devlab build-tools` | Build the local tool images |
 | `./devlab cleanup` | Delete entire environment |
@@ -237,6 +239,7 @@ dev-lab/
 │   ├── devlab.bat                  # Windows wrapper script (created by setup)
 │   └── venv/                       # Python virtual environment (created by setup)
 ├── config/                          # External configuration files
+│   ├── addons/                     # Optional addons (keda, node-autoscaler)
 │   ├── ingress/                    # Traefik ingress configuration
 │   ├── monitoring/                 # Monitoring configuration
 │   ├── registry/                   # Container registry setup
@@ -305,6 +308,8 @@ All configuration files remain in the `config/` directory:
 - `config/ingress/traefik-values.yaml` - Traefik ingress Helm values
 - `config/registry/registry.yaml` - Container registry
 - `config/registry/registry-ui.yaml` - Container registry UI
+- `config/addons/keda/values.yaml` - KEDA Helm values
+- `config/addons/node-autoscaler/` - cluster-autoscaler Helm values and KWOK node pool templates
 - `cluster/kind-config.yaml` - KinD cluster configuration
 
 ### Environment Variables
@@ -366,5 +371,4 @@ docker info
 - **Template Engine**: Jinja2 templates for configuration
 - **Testing Framework**: Automated testing of deployments
 - **Monitoring Dashboard**: Web UI for cluster status
-- **Plugin System**: Extensible plugin architecture
 - **CI/CD Integration**: GitHub Actions/GitLab CI templates

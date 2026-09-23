@@ -15,7 +15,8 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Monitoring Stack**: Lightweight Prometheus, Grafana, and AlertManager
 - **Local Container Registry**: Docker registry accessible at localhost:5000
 - **Ingress Controller**: Traefik ingress on host ports 80/443, with services reached by `*.localhost` hostnames
-- **Metrics Server**: For cluster autoscaling and resource monitoring
+- **Metrics Server**: For HPA and resource monitoring
+- **Autoscaling Addons**: KEDA event-driven pod autoscaling and cluster-autoscaler node autoscaling with simulated KWOK nodes (`devlab addon enable keda node-autoscaler`, see [AUTOSCALING.md](./AUTOSCALING.md))
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
 
 ## Pre-requisites
@@ -475,11 +476,29 @@ devlab kubectl top pods
 devlab kubectl delete deployment cpu-load
 ```
 
+## Autoscaling (KEDA and Node Autoscaling)
+
+Pod and node autoscaling are optional addons:
+
+```bash
+devlab addon enable keda node-autoscaler
+devlab addon list
+
+# Run the scenario tests: KEDA scale-from-zero, node scale-up/down, pool limits
+apps/autoscaling-demo/scripts/test-autoscaling.sh
+```
+
+`node-autoscaler` runs the real cluster-autoscaler with its `kwok` provider.
+New nodes are simulated by KWOK: they are Ready in seconds and cost almost
+nothing, but run no containers. See [AUTOSCALING.md](./AUTOSCALING.md) for how
+it works, how to add node pools, and more test scenarios.
+
 ## Directory Structure
 
 ```text
 dev-lab/
 ├── apps/
+│   ├── autoscaling-demo/        # KEDA + node autoscaling demo and scenario tests
 │   └── mesh-test-app/           # Service mesh testing application
 │       ├── server.js            # Node.js application with Redis integration
 │       ├── package.json         # Dependencies and scripts
@@ -500,6 +519,9 @@ dev-lab/
 ├── cluster/
 │   └── kind-config.yaml         # KinD cluster configuration
 ├── config/
+│   ├── addons/                  # Optional addons (devlab addon enable ...)
+│   │   ├── keda/                # KEDA Helm values
+│   │   └── node-autoscaler/     # cluster-autoscaler values and KWOK node pools
 │   ├── gitops/                  # Flux GitRepository configuration
 │   ├── ingress/
 │   │   └── traefik-values.yaml  # Traefik Helm values
@@ -589,7 +611,9 @@ Edit `config/registry/registry.yaml` to:
 
 ### Cluster Scaling
 
-Edit `cluster/kind-config.yaml` to:
+For autoscaled capacity, use the `node-autoscaler` addon and its node pools
+(see [AUTOSCALING.md](./AUTOSCALING.md)). For more real nodes, edit
+`cluster/kind-config.yaml` to:
 
 - Add more worker nodes
 - Adjust resource limits
