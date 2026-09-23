@@ -3,6 +3,7 @@ node_modules/
 __pycache__/
 .kube/
 .helm/
+.krew/
 devlab
 *.backup
 *.log

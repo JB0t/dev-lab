@@ -26,7 +26,8 @@ The KinD container image is built automatically when:
 
 1. Builds `devlab-kind:latest` from `Dockerfile.kind`
 2. Builds `devlab-helm:latest` from `Dockerfile.helm` with the local CA bundle
-3. Uses these images for KinD and Helm operations
+3. Builds `devlab-kubectl:latest` from `Dockerfile.kubectl` with krew and the local CA bundle
+4. Uses these images for KinD, Helm, and kubectl operations
 
 ### Kubernetes Version Selection
 
@@ -108,10 +109,10 @@ All Kubernetes tools run with:
 
 | Tool | Image | Notes |
 |------|--------|-------|
-| kubectl | `alpine/kubectl:latest` | Official Alpine-based |
-| helm | `alpine/helm:latest` | Official Alpine-based |
+| kubectl | `devlab-kubectl:latest` | Built locally from `alpine/kubectl` with krew and the local CA bundle |
+| helm | `devlab-helm:latest` | Built locally from `alpine/helm` with the local CA bundle |
 | linkerd | `cr.l5d.io/linkerd/cli-bin:stable-2.14.5` | Official Linkerd registry |
-| flux | `fluxcd/flux-cli:latest` | Official Flux registry |
+| flux | `fluxcd/flux-cli:v2.3.0` | Official Flux registry |
 | kind | `devlab-kind:latest` | Built locally |
 
 - **Virtual Environment**: Isolated Python dependencies
@@ -129,7 +130,7 @@ That's it! No kubectl, helm, kind, or other Kubernetes tools needed.
 
 ```bash
 cd dev-lab/python
-python setup.py
+python3 setup.py
 ```
 
 This will:
@@ -147,26 +148,39 @@ This will:
 
 This will:
 
-- Create a KinD cluster with 3 nodes
-- Install the metrics server
+- Create a KinD cluster with 3 nodes (1 control-plane + 2 workers)
+- Install custom CA certificates from `certs/` into the nodes
 - Set up the local container registry
-- Deploy the Prometheus and Grafana monitoring stack
+- Install the metrics server
+- Install the Traefik ingress controller
+- Deploy the kube-prometheus-stack monitoring stack (Prometheus, Grafana, Alertmanager)
+- Install the default krew plugins
+- Show the access points
 
-It does not install Gateway API CRDs or Linkerd. NGINX Ingress and sample
-applications are installed by `./devlab deploy-traditional` (or managed
-through Flux by `./devlab deploy-gitops`).
+It does not install Gateway API CRDs or Linkerd. `./devlab deploy-gitops` can
+optionally manage further components through Flux.
 
-### 3. Deploy Applications
+### 3. Access Services
+
+Services are reached through Traefik on host ports 80/443 by hostname.
+Browsers and `curl` resolve `*.localhost` to the loopback address, so no
+`/etc/hosts` entries are needed:
+
+- Grafana: <http://grafana.localhost> (admin / admin123)
+- Prometheus: <http://prometheus.localhost>
+- Alertmanager: <http://alertmanager.localhost>
+- Registry UI: <http://registry.localhost>
+- Traefik dashboard: <http://traefik.localhost/dashboard/>
+- Registry API: <http://localhost:5000>
+
+`./devlab kubectl port-forward` publishes the forwarded ports on the host:
 
 ```bash
-./devlab deploy
+./devlab kubectl -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093:9093
+# Access: http://localhost:9093
 ```
 
-This will:
-
-- Install NGINX Ingress Controller
-- Deploy sample applications
-- Show access information
+See [NETWORKING.md](../NETWORKING.md) for details.
 
 ### 4. Check Status
 
@@ -178,10 +192,13 @@ This will:
 
 ```bash
 # All tools run in containers automatically
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
+./devlab kubectl get pods -A
+./devlab helm list -A
+./devlab linkerd check
 ```
+
+After setup the wrapper is also available as `devlab` if you add `python/` to
+your `PATH` (see the root README).
 
 ### 6. Clean Up
 
@@ -194,11 +211,18 @@ This will:
 | Command | Description |
 |---------|-------------|
 | `./devlab bootstrap` | Create cluster and setup core services |
-| `./devlab deploy` | Deploy applications (traditional method) |
+| `./devlab deploy-gitops` | Optional: deploy using the GitOps method (Flux) |
 | `./devlab status` | Show cluster and service status |
-| `./devlab kubectl -- <args>` | Run kubectl commands |
-| `./devlab helm -- <args>` | Run helm commands |
-| `./devlab linkerd -- <args>` | Run linkerd commands |
+| `./devlab kubectl <args>` | Run kubectl commands |
+| `./devlab helm <args>` | Run helm commands |
+| `./devlab linkerd <args>` | Run linkerd commands |
+| `./devlab flux <args>` | Run flux commands |
+| `./devlab kind <args>` | Run kind commands |
+| `./devlab build -t <name[:tag]> [--push] [docker build args]` | Build `localhost:5000/<name>` for the local registry |
+| `./devlab push <name[:tag]>...` | Tag (if needed) and push images to `localhost:5000` |
+| `./devlab krew-sync` | Install the default krew plugins |
+| `./devlab completion bash [--kubectl-alias k]` | Print Bash completion, optionally for a kubectl alias |
+| `./devlab build-tools` | Build the local tool images |
 | `./devlab cleanup` | Delete entire environment |
 
 ## Project Structure
@@ -213,7 +237,7 @@ dev-lab/
 │   ├── devlab.bat                  # Windows wrapper script (created by setup)
 │   └── venv/                       # Python virtual environment (created by setup)
 ├── config/                          # External configuration files
-│   ├── apps/                       # Application manifests
+│   ├── ingress/                    # Traefik ingress configuration
 │   ├── monitoring/                 # Monitoring configuration
 │   ├── registry/                   # Container registry setup
 │   └── gitops/                     # GitOps configuration
@@ -228,15 +252,15 @@ Instead of requiring local tool installation, all Kubernetes tools run in contai
 
 ### Tool Containers Used
 
-- **kubectl**: `alpine/kubectl:latest`
-- **helm**: `alpine/helm:v3.13.1`
-- **linkerd**: `linkerd/cli-bin:stable-2.14.5`
-- **kind**: `kindest/node:v1.35.8` by default (selected at bootstrap with KinD's `--image` option)
-- **flux**: `fluxcd/flux-cli:v2.1.2`
+- **kubectl**: `devlab-kubectl:latest` (built from `Dockerfile.kubectl`)
+- **helm**: `devlab-helm:latest` (built from `Dockerfile.helm`)
+- **linkerd**: `cr.l5d.io/linkerd/cli-bin:stable-2.14.5`
+- **kind**: host `kind` binary if installed, otherwise `devlab-kind:latest`; nodes default to `kindest/node:v1.35.8` (selected at bootstrap with KinD's `--image` option)
+- **flux**: `fluxcd/flux-cli:v2.3.0`
 
 ### Volume Mounts
 
-- Kubeconfig: `~/.kube/config`
+- Kubeconfig: shared `.kube/` directory at the repository root
 - Docker socket: `/var/run/docker.sock` (for kind)
 - Project files: `/workspace`
 
@@ -278,8 +302,9 @@ All configuration files remain in the `config/` directory:
 ### External Configuration Files
 
 - `config/monitoring/prometheus-values.yaml` - Prometheus Helm values
-- `config/registry/registry-daemonset.yaml` - Container registry
-- `config/apps/sample-web-app.yaml` - Sample applications
+- `config/ingress/traefik-values.yaml` - Traefik ingress Helm values
+- `config/registry/registry.yaml` - Container registry
+- `config/registry/registry-ui.yaml` - Container registry UI
 - `cluster/kind-config.yaml` - KinD cluster configuration
 
 ### Environment Variables
@@ -315,7 +340,7 @@ All configuration files remain in the `config/` directory:
 1. **Port conflicts**
 
    ```
-   Error: Port 5000 already in use
+   Error: Port 5000, 80, or 443 already in use
    Solution: Stop conflicting services or change ports in kind-config.yaml
    ```
 
@@ -326,18 +351,17 @@ All configuration files remain in the `config/` directory:
 docker info
 
 # Check cluster status
-./devlab kubectl -- cluster-info
+./devlab kubectl cluster-info
 
 # Check all pods
-./devlab kubectl -- get pods -A
+./devlab kubectl get pods -A
 
 # Check Linkerd
-./devlab linkerd -- check
+./devlab linkerd check
 ```
 
 ## Future Enhancements
 
-- **GitOps Support**: Add Flux CD deployment method
 - **Multiple Clusters**: Support for multiple cluster profiles
 - **Template Engine**: Jinja2 templates for configuration
 - **Testing Framework**: Automated testing of deployments

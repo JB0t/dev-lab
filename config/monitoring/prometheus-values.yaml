@@ -41,11 +41,15 @@ alertmanager:
       repeat_interval: 1h
       receiver: 'web.hook'
     receivers:
+    # The chart's default route sends the Watchdog alert to 'null', so it must exist
+    - name: 'null'
     - name: 'web.hook'
       webhook_configs:
       - url: 'http://127.0.0.1:5001/'
   ingress:
-    enabled: false
+    enabled: true
+    hosts:
+    - alertmanager.localhost
   serviceMonitor:
     selfMonitor: false
   alertmanagerSpec:
@@ -68,7 +72,9 @@ grafana:
   enabled: true
   adminPassword: admin123
   ingress:
-    enabled: false
+    enabled: true
+    hosts:
+    - grafana.localhost
   persistence:
     enabled: false
   resources:
@@ -157,6 +163,10 @@ prometheusOperator:
 
 prometheus:
   enabled: true
+  ingress:
+    enabled: true
+    hosts:
+    - prometheus.localhost
   prometheusSpec:
     retention: 1d
     retentionSize: 2GB

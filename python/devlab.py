@@ -25,6 +25,7 @@ import re
 import shutil
 import threading
 import hashlib
+import socket
 
 # Third-party imports (will be in requirements.txt)
 import click
@@ -57,8 +58,52 @@ TOOL_VERSIONS = {
     "helm": "v3.13.1",
     "linkerd": "stable-2.14.5",
     "kind": "v0.33.0",
-    "flux": "v2.1.2"
+    "flux": "v2.1.2",
+    "krew": "v0.4.5",
 }
+
+# Krew plugins installed into the containerized kubectl on first use
+DEFAULT_KREW_PLUGINS = ["ctx", "gpugo", "neat", "ns", "tree", "who-can"]
+
+REGISTRY_HOST = f"localhost:{REGISTRY_PORT}"
+TRAEFIK_CHART_VERSION = "41.6.0"
+
+# Services published through the Traefik ingress. *.localhost resolves to
+# loopback in browsers and curl without any /etc/hosts entries.
+ACCESS_POINTS = [
+    ("Grafana", "http://grafana.localhost", "admin/admin123"),
+    ("Prometheus", "http://prometheus.localhost", "-"),
+    ("Alertmanager", "http://alertmanager.localhost", "-"),
+    ("Registry UI", "http://registry.localhost", "-"),
+    ("Traefik dashboard", "http://traefik.localhost/dashboard/", "-"),
+    ("Registry API", f"http://{REGISTRY_HOST}/v2/_catalog", "-"),
+]
+DOCKER_ARCHITECTURES = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+    "ppc64le": "ppc64le",
+    "s390x": "s390x",
+}
+
+
+def docker_architecture() -> str:
+    """Return the Docker daemon architecture using Go/Docker naming."""
+    result = subprocess.run(
+        ["docker", "info", "--format", "{{.Architecture}}"],
+        capture_output=True,
+        text=True,
+    )
+    architecture = DOCKER_ARCHITECTURES.get(result.stdout.strip())
+    if result.returncode != 0 or not architecture:
+        raise RuntimeError(f"Could not determine Docker architecture: {result.stderr.strip()}")
+    return architecture
+
+
+def interactive_terminal() -> bool:
+    """True when both stdin and stdout are attached to a terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 class DevLabError(Exception):
     """Custom exception for dev-lab operations"""
@@ -91,7 +136,7 @@ class ContainerToolRunner:
         
         return volumes
     
-    def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
+    def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False, tty: bool = False, publish: List[str] = ()) -> subprocess.CompletedProcess:
         """Run kubectl in container"""
         
         if args and args[0] == "apply":
@@ -100,13 +145,23 @@ class ContainerToolRunner:
                 target = "generated manifest from stdin"
             console.print(f"[cyan]Applying Kubernetes resources: {target}[/cyan]")
 
+        kubectl_image = self._ensure_kubectl_image()
+        if kubectl_image is None:
+            return subprocess.CompletedProcess([], 1, "", "Failed to build kubectl image")
+
+        krew_dir = PROJECT_ROOT / ".krew"
+        krew_dir.mkdir(exist_ok=True)
+
         cmd = [
             "docker", "run", "--rm", "-i",
+            *(["-t"] if tty else []),
+            *publish,
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
+            "-v", f"{krew_dir}:/root/.krew:rw",  # Persist krew index and plugins
             "-v", f"{os.getcwd()}:/workspace:rw",
             "-w", "/workspace",
-            "alpine/kubectl:latest",
+            kubectl_image,
         ]
         
         # Add context if specified
@@ -116,6 +171,25 @@ class ContainerToolRunner:
         cmd.extend(args)
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
+
+    def ensure_krew_plugins(self, quiet: bool = False) -> bool:
+        """Install DEFAULT_KREW_PLUGINS into the persistent krew root once."""
+        receipts_dir = PROJECT_ROOT / ".krew" / "receipts"
+        missing = [
+            plugin for plugin in DEFAULT_KREW_PLUGINS
+            if not (receipts_dir / f"{plugin}.yaml").exists()
+        ]
+        if not missing:
+            return True
+
+        if not quiet:
+            console.print(f"[blue]Installing krew plugins: {', '.join(missing)}[/blue]")
+        for krew_args in (["krew", "update"], ["krew", "install", *missing]):
+            result = self.kubectl(krew_args, capture_output=quiet, text=True)
+            if result.returncode != 0:
+                console.print(f"[red]kubectl {' '.join(krew_args)} failed[/red]")
+                return False
+        return True
     
     def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run helm in container"""
@@ -208,16 +282,12 @@ class ContainerToolRunner:
     def kind(self, args: List[str], capture_output: bool = False, quiet: bool = False) -> subprocess.CompletedProcess:
         """Run kind CLI - try host first, then local container image as fallback"""
         # First try to use host kind binary for better performance
-        try:
-            result = subprocess.run(["which", "kind"], capture_output=True, text=True)
-            if result.returncode == 0:
-                # Host kind is available, but we need to ensure it uses our shared kubeconfig
-                env = os.environ.copy()
-                env["KUBECONFIG"] = str(self.shared_kubeconfig_path)
-                cmd = ["kind"] + args
-                return subprocess.run(cmd, capture_output=capture_output, text=True, env=env)
-        except FileNotFoundError:
-            pass
+        if shutil.which("kind"):
+            # Host kind is available, but we need to ensure it uses our shared kubeconfig
+            env = os.environ.copy()
+            env["KUBECONFIG"] = str(self.shared_kubeconfig_path)
+            cmd = ["kind"] + [str(arg) for arg in args]
+            return subprocess.run(cmd, capture_output=capture_output, text=True, env=env)
         
         # Fallback: use local kind container image
         image_name = "devlab-kind:latest"
@@ -277,23 +347,7 @@ class ContainerToolRunner:
         if not dockerfile_path.exists():
             raise FileNotFoundError(f"Dockerfile.kind not found at {dockerfile_path}")
         
-        architecture_result = subprocess.run(
-            ["docker", "info", "--format", "{{.Architecture}}"],
-            capture_output=True,
-            text=True,
-        )
-        target_arch = {
-            "x86_64": "amd64",
-            "amd64": "amd64",
-            "aarch64": "arm64",
-            "arm64": "arm64",
-            "ppc64le": "ppc64le",
-            "s390x": "s390x",
-        }.get(architecture_result.stdout.strip())
-        if architecture_result.returncode != 0 or not target_arch:
-            raise RuntimeError(
-                f"Could not determine Docker architecture: {architecture_result.stderr.strip()}"
-            )
+        target_arch = docker_architecture()
 
         build_cmd = [
             "docker", "build", 
@@ -372,12 +426,15 @@ class ContainerToolRunner:
         
         return subprocess.run(cmd, capture_output=capture_output, text=text, input=input)
 
-    def _ensure_helm_image(self) -> Optional[str]:
-        """Build a cached Helm image containing the current local CA bundle."""
-        image_name = "devlab-helm:latest"
+    def _ensure_tool_image(self, image_name: str, dockerfile_name: str, build_args: Dict[str, str] = None) -> Optional[str]:
+        """Build a cached tool image containing the current local CA bundle."""
+        build_args = dict(build_args or {})
+        dockerfile_path = Path(__file__).parent / dockerfile_name
         certificate_files = sorted((PROJECT_ROOT / "python" / "certs").rglob("*.crt"))
         digest = hashlib.sha256()
-        digest.update((PROJECT_ROOT / "python" / "Dockerfile.helm").read_bytes())
+        digest.update(dockerfile_path.read_bytes())
+        for key, value in sorted(build_args.items()):
+            digest.update(f"{key}={value}".encode())
         for certificate in certificate_files:
             digest.update(certificate.relative_to(PROJECT_ROOT).as_posix().encode())
             digest.update(certificate.read_bytes())
@@ -390,18 +447,32 @@ class ContainerToolRunner:
         if inspect_result.returncode == 0 and inspect_result.stdout.strip() == ca_bundle_version:
             return image_name
 
-        dockerfile_path = Path(__file__).parent / "Dockerfile.helm"
-        console.print("[blue]Building local Helm image with custom CA certificates...[/blue]")
+        build_args["CA_BUNDLE_VERSION"] = ca_bundle_version
+        console.print(f"[blue]Building local {image_name} image with custom CA certificates...[/blue]")
         build_result = subprocess.run([
             "docker", "build", "-f", str(dockerfile_path),
             "-t", image_name,
-            "--build-arg", f"CA_BUNDLE_VERSION={ca_bundle_version}",
+            *[arg for key, value in build_args.items() for arg in ("--build-arg", f"{key}={value}")],
             str(dockerfile_path.parent),
         ], capture_output=True, text=True)
         if build_result.returncode != 0:
-            console.print(f"[red]Failed to build Helm image:\n{build_result.stderr}[/red]")
+            console.print(f"[red]Failed to build {image_name}:\n{build_result.stderr}[/red]")
             return None
         return image_name
+
+    def _ensure_helm_image(self) -> Optional[str]:
+        return self._ensure_tool_image("devlab-helm:latest", "Dockerfile.helm")
+
+    def _ensure_kubectl_image(self) -> Optional[str]:
+        try:
+            target_arch = docker_architecture()
+        except RuntimeError as error:
+            console.print(f"[red]{error}[/red]")
+            return None
+        return self._ensure_tool_image("devlab-kubectl:latest", "Dockerfile.kubectl", {
+            "KREW_VERSION": TOOL_VERSIONS["krew"],
+            "TARGETARCH": target_arch,
+        })
     
     def linkerd(self, args, capture_output=False, text=False, input=None, context=None):
         """Run linkerd CLI in container"""
@@ -494,27 +565,34 @@ class DevLabManager:
         if not self._setup_metrics_server():
             return False
 
+        if not self._setup_ingress():
+            return False
+
         if not self._deploy_monitoring():
             return False
+
+        if not self.tools.ensure_krew_plugins():
+            console.print("[yellow]Krew plugins were not installed; retry with ./devlab krew-sync[/yellow]")
         
         console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
-        self._show_bootstrap_info()
+        show_access_points()
+        console.print("\n[bold blue]Useful Commands:[/bold blue]")
+        console.print("  • [cyan]devlab status[/cyan] - Show environment status")
+        console.print("  • [cyan]devlab build -t my-app:1 --push .[/cyan] - Build into the local registry")
+        console.print("  • [cyan]devlab kubectl port-forward svc/<name> 8080:80[/cyan] - Ad hoc access on localhost:8080")
+        console.print("  • [cyan]devlab deploy-gitops[/cyan] - Optional: let Flux manage workloads")
         return True
-    
-    def _show_bootstrap_info(self) -> None:
-        """Display helpful information after bootstrap"""
-        console.print("\n[bold cyan]What's Next?[/bold cyan]")
-        console.print("\n[green]Available Commands:[/green]")
-        console.print("  • [cyan]./devlab kubectl get nodes[/cyan] - Check cluster status")
-        console.print("  • [cyan]./devlab linkerd check[/cyan] - Verify Linkerd installation")
-        console.print("  • [cyan]./devlab helm list[/cyan] - List installed Helm charts")
-        console.print("  • [cyan]./devlab status[/cyan] - Show environment status")
-        console.print("\n[green]Access Points:[/green]")
-        console.print(f"  • [cyan]Linkerd Viz:[/cyan] http://localhost:50750 (after: ./devlab linkerd viz dashboard)")
-        console.print("\n[yellow]Next Steps:[/yellow]")
-        console.print("  1. Deploy applications with [cyan]./devlab deploy-traditional[/cyan] (includes ingress and sample apps)")
-        console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages application infrastructure)")
-        console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
+
+    def _kind_nodes(self) -> List[str]:
+        """Return the container names of the dev-lab KinD nodes."""
+        result = subprocess.run([
+            "docker", "ps", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER_NAME}",
+            "--format", "{{.Names}}"
+        ], capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]Could not list KinD nodes: {result.stderr.strip()}[/red]")
+            return []
+        return result.stdout.split()
 
     def _configure_kind_node_certificates(self) -> bool:
         """Install local CA certificates into all KinD nodes for containerd pulls."""
@@ -524,15 +602,11 @@ class DevLabManager:
             console.print("[yellow]No local CA certificates found; using node defaults[/yellow]")
             return True
 
-        node_result = subprocess.run([
-            "docker", "ps", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER_NAME}",
-            "--format", "{{.Names}}"
-        ], capture_output=True, text=True)
-        if node_result.returncode != 0 or not node_result.stdout.strip():
+        nodes = self._kind_nodes()
+        if not nodes:
             console.print("[red]Could not find KinD nodes for CA installation[/red]")
             return False
 
-        nodes = node_result.stdout.splitlines()
         console.print(f"[blue]Installing {len(certificates)} custom CA certificate(s) into KinD nodes...[/blue]")
         for node in nodes:
             mkdir_result = subprocess.run([
@@ -780,49 +854,23 @@ class DevLabManager:
             if not self._load_kind_image(image):
                 return False
         
-        # Create or reconcile the namespace without failing if it already exists.
-        console.print("[blue]Ensuring registry namespace...[/blue]")
-        namespace_result = self.tools.kubectl([
-            "create", "namespace", "dev-lab-registry",
-            "--dry-run=client", "-o", "yaml"
-        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
-        if namespace_result.returncode != 0:
-            console.print("[red]Failed to generate registry namespace[/red]")
+        if not self._ensure_namespace("dev-lab-registry"):
             return False
 
-        result = self.tools.kubectl(
-            ["apply", "-f", "-"],
-            input=namespace_result.stdout,
-            text=True,
-            context=f"kind-{CLUSTER_NAME}"
-        )
-        if result.returncode != 0:
-            console.print("[red]Failed to ensure registry namespace[/red]")
-            return False
-        
-        # Apply registry configuration
-        registry_config = CONFIG_DIR / "registry" / "registry-daemonset.yaml"
-        if not registry_config.exists():
-            console.print(f"[red]Registry config not found at {registry_config}[/red]")
-            return False
-        workdir=os.getcwd() 
-        os.chdir(CONFIG_DIR / "registry")
-        result = self.tools.kubectl(["apply", "-f", "registry-daemonset.yaml"], context=f"kind-{CLUSTER_NAME}")
-        if result.returncode != 0:
-            console.print("[red]Failed to apply registry configuration[/red]")
-            return False
-        # Apply registry UI
-        registry_ui_config = CONFIG_DIR / "registry" / "registry-ui.yaml"
-        if registry_ui_config.exists():
-            result = self.tools.kubectl(["apply", "-f", "registry-ui.yaml"], context=f"kind-{CLUSTER_NAME}")
-            if result.returncode != 0:
-                console.print("[red]Failed to apply registry UI configuration[/red]")
+        # Clusters created before the registry became a single Deployment ran
+        # it as a DaemonSet, which would hold hostPort 5000.
+        self.tools.kubectl([
+            "delete", "daemonset", "docker-registry", "-n", "dev-lab-registry",
+            "--ignore-not-found"
+        ], context=f"kind-{CLUSTER_NAME}")
+
+        for manifest in ["registry.yaml", "registry-ui.yaml"]:
+            if not self._apply_manifest(CONFIG_DIR / "registry" / manifest):
                 return False
-        os.chdir(workdir)
-        # Wait for registry to be ready
+
         result = self.tools.kubectl([
-            "wait", "--for=condition=ready", "pod", 
-            "-l", "app=docker-registry", "-n", "dev-lab-registry", "--timeout=300s"
+            "rollout", "status", "deployment/docker-registry",
+            "-n", "dev-lab-registry", "--timeout=300s"
         ], context=f"kind-{CLUSTER_NAME}")
         if result.returncode != 0:
             console.print("[red]Registry did not become ready[/red]")
@@ -837,81 +885,126 @@ class DevLabManager:
         console.print("[green]Registry setup completed[/green]")
         return True
 
-    def _load_kind_image(self, image: str) -> bool:
-        """Ensure an image is available in every KinD node without node-side pulls."""
-        inspect_result = subprocess.run(
-            ["docker", "image", "inspect", image],
-            capture_output=True,
-            text=True,
+    def _ensure_namespace(self, namespace: str) -> bool:
+        """Create a namespace, or leave an existing one in place."""
+        namespace_result = self.tools.kubectl([
+            "create", "namespace", namespace, "--dry-run=client", "-o", "yaml"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        if namespace_result.returncode != 0:
+            console.print(f"[red]Failed to generate namespace {namespace}[/red]")
+            return False
+        result = self.tools.kubectl(
+            ["apply", "-f", "-"], input=namespace_result.stdout, text=True,
+            context=f"kind-{CLUSTER_NAME}"
         )
-        if inspect_result.returncode != 0:
-            console.print(f"[blue]Pulling {image} through the host Docker daemon...[/blue]")
-            pull_result = subprocess.run(["docker", "pull", image])
-            if pull_result.returncode != 0:
-                console.print(f"[red]Failed to pull {image}[/red]")
-                return False
-        else:
-            console.print(f"[blue]Using cached host image {image}[/blue]")
-
-        console.print(f"[blue]Loading the host image into KinD nodes...[/blue]")
-        if not self._import_kind_image_directly(image):
-            console.print(f"[red]Failed to load {image} into KinD[/red]")
+        if result.returncode != 0:
+            console.print(f"[red]Failed to ensure namespace {namespace}[/red]")
             return False
         return True
 
-    def _import_kind_image_directly(self, image: str) -> bool:
-        """Import only the node platform image when KinD's multi-platform import fails."""
-        nodes_result = subprocess.run([
-            "docker", "ps", "--filter", f"label=io.k8s.kind.cluster={CLUSTER_NAME}",
-            "--format", "{{.Names}}"
-        ], capture_output=True, text=True)
-        if not nodes_result.stdout.strip():
-            nodes_result = subprocess.run([
-                "docker", "ps", "--filter", f"name={CLUSTER_NAME}-",
-                "--format", "{{.Names}}"
-            ], capture_output=True, text=True)
-        if nodes_result.returncode != 0 or not nodes_result.stdout.strip():
-            console.print(
-                f"[red]Could not find KinD nodes for direct image import. "
-                f"Docker error: {nodes_result.stderr.strip() or 'none'}[/red]"
-            )
+    def _apply_manifest(self, manifest: Path) -> bool:
+        """Apply a manifest from the project through kubectl's stdin."""
+        if not manifest.exists():
+            console.print(f"[red]Manifest not found at {manifest}[/red]")
             return False
-
-        first_node = nodes_result.stdout.splitlines()[0]
-        architecture_result = subprocess.run(
-            ["docker", "exec", first_node, "uname", "-m"],
-            capture_output=True,
-            text=True,
+        console.print(f"[cyan]Applying {manifest.relative_to(PROJECT_ROOT)}[/cyan]")
+        result = self.tools.kubectl(
+            ["apply", "-f", "-"], input=manifest.read_text(), text=True,
+            context=f"kind-{CLUSTER_NAME}"
         )
-        architecture = {
-            "x86_64": "amd64",
-            "aarch64": "arm64",
-            "arm64": "arm64",
-            "ppc64le": "ppc64le",
-            "s390x": "s390x",
-        }.get(architecture_result.stdout.strip())
-        if architecture_result.returncode != 0 or not architecture:
-            console.print(f"[red]Could not determine KinD node architecture: {architecture_result.stderr.strip()}[/red]")
+        if result.returncode != 0:
+            console.print(f"[red]Failed to apply {manifest.name}[/red]")
+            return False
+        return True
+
+    def _kind_node_platform(self, node: str) -> Optional[str]:
+        """Return the OCI platform (linux/amd64, linux/arm64, ...) of a KinD node."""
+        result = subprocess.run(["docker", "exec", node, "uname", "-m"], capture_output=True, text=True)
+        architecture = DOCKER_ARCHITECTURES.get(result.stdout.strip())
+        if result.returncode != 0 or not architecture:
+            console.print(f"[red]Could not determine KinD node architecture: {result.stderr.strip()}[/red]")
+            return None
+        return f"linux/{architecture}"
+
+    def _load_kind_image(self, image: str) -> bool:
+        """Ensure an image is available in every KinD node without node-side pulls.
+
+        With Docker's containerd image store, `docker save` (and `kind load`)
+        exports the whole multi-platform index, including platforms that were
+        never pulled, and the node-side import fails on the missing blobs.
+        Pulling and saving only the node platform avoids that on amd64 and
+        arm64 hosts alike.
+        """
+        nodes = self._kind_nodes()
+        if not nodes:
+            console.print("[red]Could not find KinD nodes for image import[/red]")
+            return False
+        platform = self._kind_node_platform(nodes[0])
+        if platform is None:
             return False
 
-        platform = f"linux/{architecture}"
-        console.print(f"[blue]Exporting the {platform} variant of {image} from host Docker...[/blue]")
-        save_result = subprocess.run([
-            "docker", "save", "--platform", platform, image
-        ], capture_output=True)
+        console.print(f"[blue]Pulling {image} ({platform}) through the host Docker daemon...[/blue]")
+        pull_result = subprocess.run(["docker", "pull", "--quiet", "--platform", platform, image])
+        if pull_result.returncode != 0:
+            inspect_result = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+            if inspect_result.returncode != 0:
+                console.print(f"[red]Failed to pull {image}[/red]")
+                return False
+            console.print(f"[yellow]Pull failed; using cached host image {image}[/yellow]")
+
+        save_result = subprocess.run(["docker", "save", "--platform", platform, image], capture_output=True)
+        if save_result.returncode != 0 and b"unknown flag" in save_result.stderr:
+            # Docker < 28 has no `save --platform`; its classic image store
+            # holds only the pulled platform, so a plain save is equivalent.
+            save_result = subprocess.run(["docker", "save", image], capture_output=True)
         if save_result.returncode != 0:
             console.print(f"[red]Failed to save {image} from the host Docker daemon: {save_result.stderr.decode(errors='replace')}[/red]")
             return False
 
-        for node in nodes_result.stdout.splitlines():
+        console.print(f"[blue]Importing {image} into KinD nodes...[/blue]")
+        for node in nodes:
             import_result = subprocess.run([
                 "docker", "exec", "--privileged", "-i", node,
                 "ctr", "--namespace=k8s.io", "images", "import",
                 "--platform", platform, "--digests", "--snapshotter=overlayfs", "-"
             ], input=save_result.stdout, capture_output=True)
             if import_result.returncode != 0:
-                console.print(f"[red]Direct image import failed on {node}: {import_result.stderr.decode(errors='replace')}[/red]")
+                console.print(f"[red]Image import failed on {node}: {import_result.stderr.decode(errors='replace')}[/red]")
                 return False
+        return True
+
+    def _setup_ingress(self) -> bool:
+        """Install the Traefik ingress controller on the control-plane node."""
+        console.print("[blue]Setting up Traefik ingress controller...[/blue]")
+
+        for command in [
+            ["repo", "add", "--force-update", "traefik", "https://traefik.github.io/charts"],
+            ["repo", "update", "traefik"],
+        ]:
+            result = self.tools.helm(command, capture_output=True, text=True)
+            if result.returncode != 0:
+                console.print(f"[red]Helm command failed: {' '.join(command)}\n{result.stderr}[/red]")
+                return False
+
+        values_file = CONFIG_DIR / "ingress" / "traefik-values.yaml"
+        result = self.tools.helm([
+            "upgrade", "--install", "traefik", "traefik/traefik",
+            "--version", TRAEFIK_CHART_VERSION,
+            "--namespace", "traefik", "--create-namespace",
+            "--values", "-",
+        ], input=values_file.read_text(), text=True)
+        if result.returncode != 0:
+            console.print("[red]Failed to install Traefik[/red]")
+            return False
+
+        result = self.tools.kubectl([
+            "rollout", "status", "deployment/traefik", "-n", "traefik", "--timeout=300s"
+        ], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Traefik did not become ready[/red]")
+            return False
+
+        console.print("[green]Traefik ingress controller ready on http://*.localhost[/green]")
         return True
     
     def _setup_metrics_server(self) -> bool:
@@ -958,32 +1051,6 @@ class DevLabManager:
         console.print("[green]Metrics server setup completed[/green]")
         return True
     
-    def deploy_traditional(self) -> bool:
-        """Deploy using traditional script-based method"""
-        console.print("[bold blue]Traditional Deployment[/bold blue]")
-        
-        if not self._check_bootstrap():
-            return False
-        
-        # Ensure the container registry is present
-        if not self._setup_registry():
-            return False
-        
-        # Ensure the metrics server is present
-        if not self._setup_metrics_server():
-            return False
-        
-        # Install NGINX Ingress
-        if not self._install_nginx_ingress():
-            return False
-        
-        # Deploy sample apps
-        if not self._deploy_sample_apps():
-            return False
-        
-        self._show_access_info()
-        return True
-    
     def _check_bootstrap(self) -> bool:
         """Check if bootstrap was completed"""
         console.print("[blue]Checking bootstrap prerequisites...[/blue]")
@@ -1004,33 +1071,6 @@ class DevLabManager:
             return False
         
         console.print("[green]Bootstrap prerequisites verified[/green]")
-        return True
-    
-    def _install_nginx_ingress(self) -> bool:
-        """Install NGINX Ingress Controller"""
-        console.print("[blue]Installing NGINX Ingress Controller...[/blue]")
-        
-        # Check if already installed
-        result = self.tools.kubectl(["get", "ns", "ingress-nginx"], capture_output=True)
-        if result.returncode == 0:
-            console.print("[yellow]NGINX Ingress already installed[/yellow]")
-            return True
-        
-        # Install NGINX Ingress for KinD
-        self.tools.kubectl([
-            "apply", "-f",
-            "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/kind/deploy.yaml"
-        ])
-        
-        # Wait for ingress controller
-        self.tools.kubectl([
-            "wait", "--namespace", "ingress-nginx",
-            "--for=condition=ready", "pod",
-            "--selector=app.kubernetes.io/component=controller",
-            "--timeout=300s"
-        ])
-        
-        console.print("[green]NGINX Ingress Controller installed[/green]")
         return True
     
     def _deploy_monitoring(self) -> bool:
@@ -1082,11 +1122,20 @@ class DevLabManager:
         
         # Wait for all pods belonging to the Helm release. Component-specific
         # names vary across chart versions, while the release label is stable.
-        result = self.tools.kubectl([
-            "wait", "--for=condition=ready", "pod",
-            "-l", "release=kube-prometheus-stack",
-            "-n", "monitoring", "--timeout=300s"
-        ])
+        # Grafana has no release label, and Prometheus/Alertmanager pods are
+        # created later by the operator, so wait for those explicitly too.
+        waits = [
+            ["wait", "--for=condition=ready", "pod", "-l", "release=kube-prometheus-stack"],
+            ["rollout", "status", "deployment/kube-prometheus-stack-grafana"],
+            ["wait", "--for=condition=Available",
+             "prometheus/kube-prometheus-stack-prometheus",
+             "alertmanager/kube-prometheus-stack-alertmanager"],
+        ]
+        result = subprocess.CompletedProcess([], 0)
+        for wait in waits:
+            result = self.tools.kubectl([*wait, "-n", "monitoring", "--timeout=300s"])
+            if result.returncode != 0:
+                break
         if result.returncode != 0:
             console.print("[red]Monitoring stack did not become ready[/red]")
             console.print("[yellow]Monitoring pod diagnostics:[/yellow]")
@@ -1100,62 +1149,6 @@ class DevLabManager:
         
         console.print("[green]Monitoring stack deployed[/green]")
         return True
-    
-    def _deploy_sample_apps(self) -> bool:
-        """Deploy sample applications"""
-        console.print("[blue]Deploying sample applications...[/blue]")
-        
-        # Create namespace
-        self.tools.kubectl([
-            "create", "namespace", "mesh-test",
-            "--dry-run=client", "-o", "yaml"
-        ])
-        self.tools.kubectl(["apply", "-f", "-"])
-        
-        # Annotate for Linkerd injection
-        self.tools.kubectl([
-            "annotate", "namespace", "mesh-test",
-            "linkerd.io/inject=enabled", "--overwrite"
-        ])
-        
-        # Apply sample app
-        app_config = CONFIG_DIR / "apps" / "sample-web-app.yaml"
-        if not app_config.exists():
-            console.print(f"[red]Sample app config not found at {app_config}[/red]")
-            return False
-        
-        self.tools.kubectl(["apply", "-f", "/workspace/config/apps/sample-web-app.yaml"])
-        
-        # Wait for deployment
-        self.tools.kubectl([
-            "wait", "--for=condition=available", "deployment/sample-web-app",
-            "-n", "mesh-test", "--timeout=300s"
-        ])
-        
-        console.print("[green]Sample applications deployed[/green]")
-        return True
-    
-    def _show_access_info(self):
-        """Show access information"""
-        console.print("\n[bold green]Dev Lab deployment completed![/bold green]\n")
-        
-        table = Table(title="Access Information")
-        table.add_column("Service", style="cyan")
-        table.add_column("URL", style="green")
-        table.add_column("Credentials", style="yellow")
-        
-        table.add_row("Prometheus", "http://localhost:30090", "-")
-        table.add_row("Grafana", "http://localhost:30030", "admin/admin123")
-        table.add_row("AlertManager", "http://localhost:9093", "-")
-        table.add_row("Registry", "http://localhost:5000", "-")
-        table.add_row("Sample App", "http://sample-app.local", "Add to /etc/hosts")
-        
-        console.print(table)
-        
-        console.print("\n[bold blue]Useful Commands:[/bold blue]")
-        console.print("• python devlab.py status           # Check status")
-        console.print("• python devlab.py kubectl -- get pods -A")
-        console.print("• python devlab.py linkerd -- check")
     
     def deploy_gitops(self) -> bool:
         """Deploy using GitOps method with Flux CD"""
@@ -1456,6 +1449,17 @@ class DevLabManager:
         console.print("• Changes to dev-lab/ directory will be reconciled automatically")
         console.print("• Use Git commits to manage deployments")
 
+def show_access_points():
+    """Print the ingress URLs of the bootstrap services."""
+    table = Table(title="Access Points")
+    table.add_column("Service", style="cyan")
+    table.add_column("URL", style="green")
+    table.add_column("Credentials", style="yellow")
+    for row in ACCESS_POINTS:
+        table.add_row(*row)
+    console.print(table)
+
+
 def parse_cobra_completions(output: str) -> List[CompletionItem]:
     """Convert Cobra's __complete output into Click completion items."""
     lines = output.splitlines()
@@ -1498,13 +1502,6 @@ def bootstrap():
     success = manager.bootstrap()
     sys.exit(0 if success else 1)
 
-@cli.command(name='deploy-traditional')
-def deploy_traditional():
-    """Deploy using traditional method"""
-    manager = DevLabManager()
-    success = manager.deploy_traditional()
-    sys.exit(0 if success else 1)
-
 @cli.command(name='deploy-gitops')
 def deploy_gitops():
     """Deploy using GitOps method with Flux CD"""
@@ -1512,22 +1509,103 @@ def deploy_gitops():
     success = manager.deploy_gitops()
     sys.exit(0 if success else 1)
 
-@cli.command()
-def deploy():
-    """Deploy using traditional method (default)"""
-    manager = DevLabManager()
-    success = manager.deploy_traditional()
-    sys.exit(0 if success else 1)
+PORT_SPEC = re.compile(r"^(\d*):(\d+)$|^(\d+)$")
+# kubectl flags whose value is a separate argument, so it is not mistaken for
+# the port-forward resource or a port
+KUBECTL_VALUE_FLAGS = {
+    "-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user",
+    "-s", "--server", "--token", "--as", "--as-group", "--as-uid",
+    "--request-timeout", "--pod-running-timeout", "-v", "--v",
+}
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+def free_host_port() -> int:
+    """Ask the OS for an unused TCP port on the host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+def docker_publish_address(address: str) -> str:
+    address = "127.0.0.1" if address == "localhost" else address
+    return f"[{address}]" if ":" in address else address
+
+def prepare_port_forward(args: List[str]):
+    """Make `kubectl port-forward` in the tool container reachable from the host.
+
+    kubectl binds inside the container, so it listens on 0.0.0.0 there and
+    each local port is published on the host with `docker run -p`. The host
+    bind address comes from --address (default localhost, like kubectl). A
+    port given as ":REMOTE" gets a free host port picked here, because a port
+    kubectl picks inside the container cannot be published in advance.
+    Returns (kubectl args, docker publish flags, [(local, remote)]).
+    """
+    if "port-forward" not in args:
+        return list(args), [], []
+
+    index = args.index("port-forward")
+    head, tail = list(args[:index + 1]), list(args[index + 1:])
+    addresses = ["127.0.0.1"]
+    rewritten, publish, forwards = [], [], []
+    resource_seen = False
+    position = 0
+    while position < len(tail):
+        arg = tail[position]
+        position += 1
+        if arg == "--address" and position < len(tail):
+            addresses = tail[position].split(",")
+            position += 1
+        elif arg.startswith("--address="):
+            addresses = arg.split("=", 1)[1].split(",")
+        elif arg.startswith("-"):
+            rewritten.append(arg)
+            if arg in KUBECTL_VALUE_FLAGS and position < len(tail):
+                rewritten.append(tail[position])
+                position += 1
+        elif not resource_seen:
+            resource_seen = True
+            rewritten.append(arg)
+        elif PORT_SPEC.match(arg):
+            local, remote, single = PORT_SPEC.match(arg).groups()
+            remote = remote or single
+            local = local or (str(free_host_port()) if arg.startswith(":") else remote)
+            rewritten.append(f"{local}:{remote}")
+            forwards.append((local, remote))
+            for address in addresses:
+                publish.extend(["-p", f"{docker_publish_address(address)}:{local}:{local}"])
+        else:
+            rewritten.append(arg)
+
+    return head + ["--address", "0.0.0.0"] + rewritten, publish, forwards
+
+# Stop option parsing at the first positional argument so a literal "--" after
+# it (e.g. "kubectl exec pod -- sh") reaches the wrapped tool. A leading "--"
+# (e.g. "devlab kubectl -- get pods") is still consumed by Click.
+PASSTHROUGH_SETTINGS = {
+    "ignore_unknown_options": True,
+    "allow_extra_args": True,
+    "allow_interspersed_args": False,
+    "help_option_names": [],
+}
+
+@cli.command(context_settings=PASSTHROUGH_SETTINGS)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kubectl"))
 def kubectl(args):
     """Run kubectl commands"""
     manager = DevLabManager()
-    result = manager.tools.kubectl(list(args))
+    if not (PROJECT_ROOT / ".krew" / "receipts").exists():
+        manager.tools.ensure_krew_plugins()
+    kubectl_args, publish, forwards = prepare_port_forward(list(args))
+    for local, remote in forwards:
+        console.print(f"[cyan]Host localhost:{local} -> {remote} (container listens on 0.0.0.0)[/cyan]")
+    result = manager.tools.kubectl(kubectl_args, tty=interactive_terminal(), publish=publish)
     sys.exit(result.returncode)
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@cli.command(name='krew-sync')
+def krew_sync():
+    """Install the default krew plugins into the containerized kubectl"""
+    manager = DevLabManager()
+    sys.exit(0 if manager.tools.ensure_krew_plugins() else 1)
+
+@cli.command(context_settings=PASSTHROUGH_SETTINGS)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("helm"))
 def helm(args):
     """Run helm commands"""
@@ -1535,7 +1613,7 @@ def helm(args):
     result = manager.tools.helm(list(args))
     sys.exit(result.returncode)
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@cli.command(context_settings=PASSTHROUGH_SETTINGS)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("linkerd"))
 def linkerd(args):
     """Run linkerd commands"""
@@ -1543,7 +1621,7 @@ def linkerd(args):
     result = manager.tools.linkerd(list(args), context=f"kind-{CLUSTER_NAME}")
     sys.exit(result.returncode)
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@cli.command(context_settings=PASSTHROUGH_SETTINGS)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("flux"))
 def flux(args):
     """Run flux commands"""
@@ -1551,7 +1629,7 @@ def flux(args):
     result = manager.tools.flux(list(args))
     sys.exit(result.returncode)
 
-@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@cli.command(context_settings=PASSTHROUGH_SETTINGS)
 @click.argument('args', nargs=-1, type=click.UNPROCESSED, shell_complete=complete_tool("kind"))
 def kind(args):
     """Run kind commands"""
@@ -1559,13 +1637,76 @@ def kind(args):
     result = manager.tools.kind(list(args))
     sys.exit(result.returncode)
 
+def registry_image(image: str) -> str:
+    """Qualify an image reference with the local registry host."""
+    if image.startswith(f"{REGISTRY_HOST}/"):
+        return image
+    return f"{REGISTRY_HOST}/{image}"
+
+def push_image(image: str) -> int:
+    """Tag a local image for the dev-lab registry, if needed, and push it."""
+    target = registry_image(image)
+    source_exists = subprocess.run(
+        ["docker", "image", "inspect", image], capture_output=True
+    ).returncode == 0
+    # "devlab push app:1" works for both a plain local "app:1" and one already
+    # built as "localhost:5000/app:1" by "devlab build".
+    if target != image and source_exists:
+        result = subprocess.run(["docker", "tag", image, target])
+        if result.returncode != 0:
+            return result.returncode
+    console.print(f"[blue]Pushing {target}[/blue]")
+    result = subprocess.run(["docker", "push", target])
+    if result.returncode == 0:
+        console.print(f"[green]Pushed. Reference it in manifests as image: {target}[/green]")
+    return result.returncode
+
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.option("-t", "--tag", "image", required=True, help="Image name[:tag]; localhost:5000/ is prepended if missing")
+@click.option("--push", "push_after", is_flag=True, help="Push to the local registry after building")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def build(image, push_after, args):
+    """Build an image for the local registry (extra args go to docker build)"""
+    target = registry_image(image)
+    build_args = list(args) or ["."]
+    console.print(f"[blue]Building {target}[/blue]")
+    result = subprocess.run(["docker", "build", "-t", target, *build_args])
+    if result.returncode != 0 or not push_after:
+        sys.exit(result.returncode)
+    sys.exit(push_image(target))
+
+@cli.command()
+@click.argument("images", nargs=-1, required=True)
+def push(images):
+    """Push local images to the dev-lab registry at localhost:5000"""
+    for image in images:
+        returncode = push_image(image)
+        if returncode != 0:
+            sys.exit(returncode)
+
+def kubectl_alias_completion(alias: str) -> str:
+    """Bash completion for an alias of `devlab kubectl` (e.g. alias k='devlab kubectl')."""
+    function = "_devlab_alias_" + re.sub(r"\W", "_", alias)
+    return f"""
+{function}() {{
+    local COMP_WORDS=(devlab kubectl "${{COMP_WORDS[@]:1}}")
+    local COMP_CWORD=$((COMP_CWORD + 1))
+    _devlab_completion devlab
+}}
+complete -o nosort -F {function} {alias}
+"""
+
 @cli.command()
 @click.argument("shell", type=click.Choice(["bash"]))
-def completion(shell):
+@click.option("--kubectl-alias", "kubectl_aliases", multiple=True, metavar="NAME",
+              help="Also complete NAME as an alias for 'devlab kubectl' (repeatable)")
+def completion(shell, kubectl_aliases):
     """Print a shell completion script"""
     completion_class = get_completion_class(shell)
     complete = completion_class(cli, {}, "devlab", "_DEVLAB_COMPLETE")
     click.echo(complete.source())
+    for alias in kubectl_aliases:
+        click.echo(kubectl_alias_completion(alias))
 
 @cli.command()
 def status():
@@ -1607,6 +1748,7 @@ def status():
             table.add_row(name, status, role)
         
         console.print(table)
+        show_access_points()
 
 @cli.command(name='build-tools')
 def build_tools():
@@ -1630,6 +1772,12 @@ def build_tools():
         console.print("[red]Failed to build Helm image[/red]")
         sys.exit(1)
     console.print(f"[green]Helm image ready: {helm_image}[/green]")
+
+    kubectl_image = manager.tools._ensure_kubectl_image()
+    if kubectl_image is None:
+        console.print("[red]Failed to build kubectl image[/red]")
+        sys.exit(1)
+    console.print(f"[green]kubectl image ready: {kubectl_image}[/green]")
     
     console.print("[green]All tool images built successfully![/green]")
 

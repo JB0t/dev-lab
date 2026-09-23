@@ -126,7 +126,7 @@ setup_registry() {
     kubectl create namespace dev-lab-registry --dry-run=client -o yaml | kubectl apply -f -
     
     log "Deploying registry DaemonSet from external config..."
-    kubectl apply -f "$PROJECT_ROOT/config/registry/registry-daemonset.yaml"
+    kubectl apply -f "$PROJECT_ROOT/config/registry/registry.yaml"
 
     # Deploy registry UI
     log "Deploying registry UI from external config..."
