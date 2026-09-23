@@ -1,0 +1,54 @@
+# Scenario "queue": a real consumer on the KinD workers, scaled by KEDA on the
+# length of the Redis list "jobs" (one replica per 5 queued jobs, 0 when empty).
+# Each replica takes a job every ~2 seconds.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-consumer
+  namespace: autoscaling-demo
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: queue-consumer}
+  template:
+    metadata:
+      labels: {app: queue-consumer}
+    spec:
+      containers:
+      - name: consumer
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          while true; do
+            job=$(redis-cli -h redis --raw BRPOP jobs 5 | tail -n 1)
+            [ -n "$job" ] && echo "processed $job" && sleep 2
+          done
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 64Mi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: queue-consumer
+  namespace: autoscaling-demo
+spec:
+  scaleTargetRef:
+    name: queue-consumer
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 5
+  cooldownPeriod: 30
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 15
+  triggers:
+  - type: redis
+    metadata:
+      address: redis.autoscaling-demo.svc.cluster.local:6379
+      listName: jobs
+      listLength: "5"

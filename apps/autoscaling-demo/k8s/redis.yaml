@@ -1,0 +1,37 @@
+# Namespace and Redis instance whose lists act as work queues for the demo.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoscaling-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: autoscaling-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests: {cpu: 20m, memory: 32Mi}
+          limits: {cpu: 200m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: autoscaling-demo
+spec:
+  selector: {app: redis}
+  ports:
+  - port: 6379

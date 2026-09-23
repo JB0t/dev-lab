@@ -68,6 +68,18 @@ DEFAULT_KREW_PLUGINS = ["ctx", "gpugo", "neat", "ns", "tree", "who-can"]
 REGISTRY_HOST = f"localhost:{REGISTRY_PORT}"
 TRAEFIK_CHART_VERSION = "41.6.0"
 
+# Addon versions (devlab addon enable ...)
+KEDA_CHART_VERSION = "2.20.2"
+KWOK_VERSION = "v0.8.0"
+CLUSTER_AUTOSCALER_CHART_VERSION = "9.59.0"
+# cluster-autoscaler must match the cluster's Kubernetes minor version
+CLUSTER_AUTOSCALER_IMAGE_TAGS = {
+    (1, 33): "v1.33.6",
+    (1, 34): "v1.34.5",
+    (1, 35): "v1.35.2",
+    (1, 36): "v1.36.1",
+}
+
 # Services published through the Traefik ingress. *.localhost resolves to
 # loopback in browsers and curl without any /etc/hosts entries.
 ACCESS_POINTS = [
@@ -973,38 +985,177 @@ class DevLabManager:
                 return False
         return True
 
-    def _setup_ingress(self) -> bool:
-        """Install the Traefik ingress controller on the control-plane node."""
-        console.print("[blue]Setting up Traefik ingress controller...[/blue]")
-
+    def _helm_release(self, release: str, chart: str, version: str, namespace: str,
+                      values_file: Path, repo: tuple, values_text: str = None,
+                      extra_args: List[str] = ()) -> bool:
+        """Install or upgrade a Helm release from a (name, url) chart repository."""
+        repo_name, repo_url = repo
         for command in [
-            ["repo", "add", "--force-update", "traefik", "https://traefik.github.io/charts"],
-            ["repo", "update", "traefik"],
+            ["repo", "add", "--force-update", repo_name, repo_url],
+            ["repo", "update", repo_name],
         ]:
-            result = self.tools.helm(command, capture_output=True, text=True)
+            result = self.tools.helm(command, capture_output=True, text=True, quiet=True)
             if result.returncode != 0:
                 console.print(f"[red]Helm command failed: {' '.join(command)}\n{result.stderr}[/red]")
                 return False
 
-        values_file = CONFIG_DIR / "ingress" / "traefik-values.yaml"
         result = self.tools.helm([
-            "upgrade", "--install", "traefik", "traefik/traefik",
-            "--version", TRAEFIK_CHART_VERSION,
-            "--namespace", "traefik", "--create-namespace",
+            "upgrade", "--install", release, chart,
+            "--version", version,
+            "--namespace", namespace, "--create-namespace",
             "--values", "-",
-        ], input=values_file.read_text(), text=True)
+            *extra_args,
+        ], input=values_text if values_text is not None else values_file.read_text(), text=True)
         if result.returncode != 0:
-            console.print("[red]Failed to install Traefik[/red]")
+            console.print(f"[red]Failed to install Helm release {release}[/red]")
             return False
+        return True
 
-        result = self.tools.kubectl([
-            "rollout", "status", "deployment/traefik", "-n", "traefik", "--timeout=300s"
-        ], context=f"kind-{CLUSTER_NAME}")
-        if result.returncode != 0:
-            console.print("[red]Traefik did not become ready[/red]")
+    def _rollout_status(self, namespace: str, *resources: str) -> bool:
+        for resource in resources:
+            result = self.tools.kubectl([
+                "rollout", "status", resource, "-n", namespace, "--timeout=300s"
+            ], context=f"kind-{CLUSTER_NAME}")
+            if result.returncode != 0:
+                console.print(f"[red]{resource} in {namespace} did not become ready[/red]")
+                return False
+        return True
+
+    def _setup_ingress(self) -> bool:
+        """Install the Traefik ingress controller on the control-plane node."""
+        console.print("[blue]Setting up Traefik ingress controller...[/blue]")
+        if not self._helm_release(
+            "traefik", "traefik/traefik", TRAEFIK_CHART_VERSION, "traefik",
+            CONFIG_DIR / "ingress" / "traefik-values.yaml",
+            ("traefik", "https://traefik.github.io/charts"),
+        ):
             return False
-
+        if not self._rollout_status("traefik", "deployment/traefik"):
+            return False
         console.print("[green]Traefik ingress controller ready on http://*.localhost[/green]")
+        return True
+
+    # Addons: optional components installed with `devlab addon enable <name>`
+
+    def addon_installed(self, name: str) -> bool:
+        release, namespace = ADDONS[name]["release"]
+        result = self.tools.helm(
+            ["status", release, "-n", namespace], capture_output=True, text=True, quiet=True
+        )
+        return result.returncode == 0
+
+    def enable_addon(self, name: str) -> bool:
+        console.print(f"[bold blue]Enabling addon {name}[/bold blue]")
+        if not getattr(self, ADDONS[name]["enable"])():
+            return False
+        console.print(f"[green]Addon {name} enabled[/green]")
+        return True
+
+    def disable_addon(self, name: str) -> bool:
+        console.print(f"[bold blue]Disabling addon {name}[/bold blue]")
+        if not getattr(self, ADDONS[name]["disable"])():
+            return False
+        console.print(f"[green]Addon {name} disabled[/green]")
+        return True
+
+    def _enable_keda(self) -> bool:
+        if not self._helm_release(
+            "keda", "kedacore/keda", KEDA_CHART_VERSION, "keda",
+            CONFIG_DIR / "addons" / "keda" / "values.yaml",
+            ("kedacore", "https://kedacore.github.io/charts"),
+        ):
+            return False
+        return self._rollout_status(
+            "keda", "deployment/keda-operator", "deployment/keda-operator-metrics-apiserver",
+            "deployment/keda-admission-webhooks",
+        )
+
+    def _disable_keda(self) -> bool:
+        # ScaledObjects hold finalizers that need the operator; remove them first
+        self.tools.kubectl(["delete", "scaledobjects,scaledjobs", "-A", "--all", "--wait=true"])
+        result = self.tools.helm(["uninstall", "keda", "-n", "keda", "--wait", "--ignore-not-found"])
+        return result.returncode == 0
+
+    def _kubernetes_minor(self) -> Optional[tuple]:
+        result = self.tools.kubectl(["version", "-o", "json"], capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print("[red]Could not read the Kubernetes server version[/red]")
+            return None
+        server = json.loads(result.stdout)["serverVersion"]
+        return int(server["major"]), int(re.match(r"\d+", server["minor"]).group())
+
+    def _enable_node_autoscaler(self) -> bool:
+        minor = self._kubernetes_minor()
+        if minor is None:
+            return False
+        image_tag = CLUSTER_AUTOSCALER_IMAGE_TAGS.get(minor)
+        if image_tag is None:
+            nearest = max(key for key in CLUSTER_AUTOSCALER_IMAGE_TAGS if key <= minor) \
+                if any(key <= minor for key in CLUSTER_AUTOSCALER_IMAGE_TAGS) \
+                else min(CLUSTER_AUTOSCALER_IMAGE_TAGS)
+            image_tag = CLUSTER_AUTOSCALER_IMAGE_TAGS[nearest]
+            console.print(f"[yellow]No cluster-autoscaler pinned for Kubernetes {minor[0]}.{minor[1]}; using {image_tag}[/yellow]")
+
+        nodes = self._kind_nodes()
+        platform = self._kind_node_platform(nodes[0]) if nodes else None
+        if platform is None:
+            return False
+
+        # KWOK simulates the kubelets of the nodes cluster-autoscaler creates.
+        # Server-side apply: the CRDs are too large for the last-applied annotation.
+        release_url = f"https://github.com/kubernetes-sigs/kwok/releases/download/{KWOK_VERSION}"
+        for manifest in ["kwok.yaml", "stage-fast.yaml"]:
+            result = self.tools.kubectl(
+                ["apply", "--server-side", "--force-conflicts", "-f", f"{release_url}/{manifest}"],
+                context=f"kind-{CLUSTER_NAME}",
+            )
+            if result.returncode != 0:
+                console.print(f"[red]Failed to install KWOK {manifest}[/red]")
+                return False
+        if not self._rollout_status("kube-system", "deployment/kwok-controller"):
+            return False
+
+        # The chart ships sample node templates in this ConfigMap, and devlab
+        # replaces them below. Delete it first so the upgrade recreates it
+        # instead of conflicting with devlab's copy (Helm 4 server-side apply).
+        self.tools.kubectl([
+            "delete", "configmap", "kwok-provider-templates", "-n", "kube-system", "--ignore-not-found"
+        ], capture_output=True)
+        if not self._helm_release(
+            "cluster-autoscaler", "autoscaler/cluster-autoscaler", CLUSTER_AUTOSCALER_CHART_VERSION,
+            "kube-system", CONFIG_DIR / "addons" / "node-autoscaler" / "cluster-autoscaler-values.yaml",
+            ("autoscaler", "https://kubernetes.github.io/autoscaler"),
+            extra_args=["--set", f"image.tag={image_tag}"],
+        ):
+            return False
+
+        # The chart always ships sample node templates; replace them with ours
+        templates = (CONFIG_DIR / "addons" / "node-autoscaler" / "kwok-provider.yaml").read_text()
+        result = self.tools.kubectl(
+            ["apply", "--server-side", "--force-conflicts", "--field-manager=devlab", "-f", "-"],
+            input=templates.replace("${ARCH}", platform.split("/")[1]),
+            text=True, context=f"kind-{CLUSTER_NAME}",
+        )
+        if result.returncode != 0:
+            console.print("[red]Failed to apply the kwok node templates[/red]")
+            return False
+        # The provider reads its ConfigMaps only at startup
+        self.tools.kubectl([
+            "rollout", "restart", "deployment/cluster-autoscaler", "-n", "kube-system"
+        ], capture_output=True)
+        return self._rollout_status("kube-system", "deployment/cluster-autoscaler")
+
+    def _disable_node_autoscaler(self) -> bool:
+        result = self.tools.helm([
+            "uninstall", "cluster-autoscaler", "-n", "kube-system", "--wait", "--ignore-not-found"
+        ])
+        if result.returncode != 0:
+            return False
+        # Fake nodes outlive cluster-autoscaler; their pods go back to Pending
+        self.tools.kubectl(["delete", "nodes", "-l", "devlab.io/node-pool=kwok", "--ignore-not-found"])
+        release_url = f"https://github.com/kubernetes-sigs/kwok/releases/download/{KWOK_VERSION}"
+        for manifest in ["stage-fast.yaml", "kwok.yaml"]:
+            self.tools.kubectl(["delete", "--ignore-not-found", "-f", f"{release_url}/{manifest}"])
         return True
     
     def _setup_metrics_server(self) -> bool:
@@ -1449,6 +1600,22 @@ class DevLabManager:
         console.print("• Changes to dev-lab/ directory will be reconciled automatically")
         console.print("• Use Git commits to manage deployments")
 
+ADDONS = {
+    "keda": {
+        "description": "KEDA event-driven pod autoscaling (ScaledObject/ScaledJob)",
+        "release": ("keda", "keda"),
+        "enable": "_enable_keda",
+        "disable": "_disable_keda",
+    },
+    "node-autoscaler": {
+        "description": "cluster-autoscaler with simulated KWOK nodes (node pool devlab.io/node-pool=kwok)",
+        "release": ("cluster-autoscaler", "kube-system"),
+        "enable": "_enable_node_autoscaler",
+        "disable": "_disable_node_autoscaler",
+    },
+}
+
+
 def show_access_points():
     """Print the ingress URLs of the bootstrap services."""
     table = Table(title="Access Points")
@@ -1707,6 +1874,37 @@ def completion(shell, kubectl_aliases):
     click.echo(complete.source())
     for alias in kubectl_aliases:
         click.echo(kubectl_alias_completion(alias))
+
+@cli.group()
+def addon():
+    """Enable or disable optional components (see AUTOSCALING.md)"""
+
+@addon.command(name="list")
+def addon_list():
+    """List addons and whether they are installed"""
+    manager = DevLabManager()
+    table = Table(title="Addons")
+    table.add_column("Addon", style="cyan")
+    table.add_column("Installed")
+    table.add_column("Description")
+    for name, spec in ADDONS.items():
+        installed = manager.addon_installed(name)
+        table.add_row(name, "[green]yes[/green]" if installed else "no", spec["description"])
+    console.print(table)
+
+@addon.command(name="enable")
+@click.argument("names", nargs=-1, required=True, type=click.Choice(list(ADDONS)))
+def addon_enable(names):
+    """Install addons (safe to re-run; upgrades in place)"""
+    manager = DevLabManager()
+    sys.exit(0 if all(manager.enable_addon(name) for name in names) else 1)
+
+@addon.command(name="disable")
+@click.argument("names", nargs=-1, required=True, type=click.Choice(list(ADDONS)))
+def addon_disable(names):
+    """Uninstall addons"""
+    manager = DevLabManager()
+    sys.exit(0 if all(manager.disable_addon(name) for name in names) else 1)
 
 @cli.command()
 def status():

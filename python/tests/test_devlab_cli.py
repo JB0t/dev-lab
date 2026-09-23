@@ -6,7 +6,7 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from devlab import cli, parse_cobra_completions, prepare_port_forward, registry_image
+from devlab import ADDONS, CONFIG_DIR, cli, parse_cobra_completions, prepare_port_forward, registry_image
 
 
 class CompletionTests(unittest.TestCase):
@@ -101,6 +101,30 @@ class PortForwardTests(unittest.TestCase):
         self.assertTrue(local.isdigit())
         self.assertEqual(args[-1], f"{local}:5432")
         self.assertEqual(publish, ["-p", f"127.0.0.1:{local}:{local}"])
+
+
+class AddonTests(unittest.TestCase):
+    def test_unknown_addon_is_rejected(self):
+        result = CliRunner().invoke(cli, ["addon", "enable", "nope"], prog_name="devlab")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("keda", result.output)
+
+    def test_addon_handlers_exist(self):
+        from devlab import DevLabManager
+        for spec in ADDONS.values():
+            self.assertTrue(callable(getattr(DevLabManager, spec["enable"])))
+            self.assertTrue(callable(getattr(DevLabManager, spec["disable"])))
+
+    def test_kwok_templates_are_valid_yaml_after_substitution(self):
+        import yaml
+        text = (CONFIG_DIR / "addons" / "node-autoscaler" / "kwok-provider.yaml").read_text()
+        configmap = yaml.safe_load(text.replace("${ARCH}", "arm64"))
+        nodes = yaml.safe_load(configmap["data"]["templates"])["items"]
+        for node in nodes:
+            labels = node["metadata"]["labels"]
+            self.assertIn("kwok-nodegroup", labels)
+            self.assertEqual(labels["kubernetes.io/arch"], "arm64")
+            self.assertEqual(labels["devlab.io/node-pool"], "kwok")
 
 
 if __name__ == "__main__":

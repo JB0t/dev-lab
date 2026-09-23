@@ -1,0 +1,56 @@
+# Scenario "burst": KEDA scales pods from the Redis list "burst" (one replica
+# per item). The pods only fit on the simulated KWOK node pool, so each new
+# replica goes Pending until cluster-autoscaler adds a node (2 pods per
+# 4-CPU kwok-small node). Emptying the list scales the pods to 0, and
+# cluster-autoscaler removes the idle nodes about 2 minutes later.
+#
+# KWOK nodes run no containers: the pods report Running but do nothing, so
+# the pause image is never pulled.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: burst-workers
+  namespace: autoscaling-demo
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: burst-workers}
+  template:
+    metadata:
+      labels: {app: burst-workers}
+    spec:
+      nodeSelector:
+        devlab.io/node-pool: kwok
+      tolerations:
+      - key: kwok-provider
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: worker
+        image: registry.k8s.io/pause:3.10
+        resources:
+          requests: {cpu: 1500m, memory: 1Gi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: burst-workers
+  namespace: autoscaling-demo
+spec:
+  scaleTargetRef:
+    name: burst-workers
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  pollingInterval: 5
+  cooldownPeriod: 30
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 15
+  triggers:
+  - type: redis
+    metadata:
+      address: redis.autoscaling-demo.svc.cluster.local:6379
+      listName: burst
+      listLength: "1"

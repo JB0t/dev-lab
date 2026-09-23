@@ -1,0 +1,28 @@
+# KEDA (chart kedacore/keda), installed by `devlab addon enable keda`.
+# Metrics are scraped by the bootstrap kube-prometheus-stack, which selects
+# ServiceMonitors labelled release=kube-prometheus-stack.
+
+prometheus:
+  metricServer:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+  operator:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+
+resources:
+  operator:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  metricServer:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  webhooks:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 256Mi}

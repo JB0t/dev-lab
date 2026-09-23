@@ -6,6 +6,12 @@ This directory contains externalized configuration files that were previously em
 
 ```text
 config/
+├── addons/                         # Optional addons (devlab addon enable <name>)
+│   ├── keda/
+│   │   └── values.yaml             # KEDA Helm values
+│   └── node-autoscaler/
+│       ├── cluster-autoscaler-values.yaml  # cluster-autoscaler (kwok provider) Helm values
+│       └── kwok-provider.yaml      # KWOK node pool templates (see AUTOSCALING.md)
 ├── gitops/
 │   ├── git-repository.yaml         # Flux GitRepository configuration
 │   └── service-mesh-layer-gitrepository.yaml
