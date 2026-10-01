@@ -1,0 +1,15 @@
+# Example pipeline for this repository: bootstrap dev-lab in CI and run the
+# autoscaling scenario tests. Copy it to .gitlab-ci.yml in a GitLab mirror.
+include:
+  - local: ci/devlab.gitlab-ci.yml
+
+stages:
+  - e2e
+
+autoscaling-e2e:
+  extends: .devlab
+  stage: e2e
+  timeout: 45m
+  script:
+    - devlab addon enable keda node-autoscaler
+    - apps/autoscaling-demo/scripts/test-autoscaling.sh all

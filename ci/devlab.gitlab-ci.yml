@@ -1,0 +1,74 @@
+# Reusable GitLab CI template: run a dev-lab cluster inside a job.
+#
+# Needs a runner that allows privileged pods and shares the builds directory
+# with services (see CI.md). Use it with `extends: .devlab`:
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/JB0t/dev-lab/dev/ci/devlab.gitlab-ci.yml
+#   e2e:
+#     extends: .devlab
+#     script:
+#       - devlab build -t my-app:ci --push .
+#       - devlab kubectl apply -f k8s/
+#
+# In this repository devlab runs from $CI_PROJECT_DIR. In any other project it
+# is cloned into $CI_PROJECT_DIR/.devlab, which is inside the shared builds
+# directory, so the Docker-in-Docker daemon sees the same files.
+
+.devlab:
+  image: docker:29-cli
+  services:
+    - name: $DEVLAB_DIND_IMAGE
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DEVLAB_PROFILE: ci
+    # Behind TLS inspection, use a dind image that trusts your root CA
+    # (ci/Dockerfile.dind) so the daemon can pull images
+    DEVLAB_DIND_IMAGE: docker:29-dind
+    DEVLAB_REPO: https://github.com/JB0t/dev-lab.git
+    DEVLAB_REF: dev
+    # Extra `devlab bootstrap` flags, for example --monitoring
+    DEVLAB_BOOTSTRAP_ARGS: ""
+    # Resources for the job pod; the runner must allow these overwrites.
+    # The dind service holds the whole cluster, so it needs the most.
+    KUBERNETES_SERVICE_CPU_REQUEST: "2"
+    KUBERNETES_SERVICE_MEMORY_REQUEST: 4Gi
+    KUBERNETES_SERVICE_MEMORY_LIMIT: 8Gi
+  before_script:
+    - |
+      # Optional file-type variable with TLS-inspection root CAs; trust them
+      # before apk and git need the network. update-ca-certificates wants one
+      # certificate per file, so split the bundle (CRLF and missing newlines
+      # between certificates are tolerated).
+      if [ -n "${DEVLAB_CA_CERT:-}" ]; then
+        tr -d '\r' < "$DEVLAB_CA_CERT" | sed 's/-----END CERTIFICATE-----/&\n/g' | awk -v dir="/usr/local/share/ca-certificates" '/-----BEGIN CERTIFICATE-----/ { n++; file = sprintf("%s/devlab-ci-%02d.crt", dir, n) } n { print > file } /-----END CERTIFICATE-----/ { close(file) }'
+        update-ca-certificates
+      fi
+    - apk add --no-cache bash ca-certificates curl git python3
+    - |
+      if [ -f "$CI_PROJECT_DIR/python/devlab.py" ]; then
+        export DEVLAB_DIR="$CI_PROJECT_DIR"
+      else
+        export DEVLAB_DIR="$CI_PROJECT_DIR/.devlab"
+        git clone --depth 1 --branch "$DEVLAB_REF" "$DEVLAB_REPO" "$DEVLAB_DIR"
+      fi
+    - . "$DEVLAB_DIR/ci/devlab-ci-setup.sh"
+  after_script:
+    - |
+      DEVLAB_DIR="$CI_PROJECT_DIR"
+      [ -f "$DEVLAB_DIR/python/devlab.py" ] || DEVLAB_DIR="$CI_PROJECT_DIR/.devlab"
+      if [ -x "$DEVLAB_DIR/python/devlab" ] && [ "$CI_JOB_STATUS" = failed ]; then
+        cd "$DEVLAB_DIR"
+        python/devlab kubectl get nodes,pods -A -o wide || true
+        python/devlab kubectl get events -A --sort-by=.lastTimestamp || true
+        python/devlab kind export logs devlab-logs --name dev-lab || true
+      fi
+  artifacts:
+    when: on_failure
+    expire_in: 1 week
+    paths:
+      - devlab-logs/
+      - .devlab/devlab-logs/

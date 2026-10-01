@@ -18,6 +18,7 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Metrics Server**: For HPA and resource monitoring
 - **Autoscaling Addons**: KEDA event-driven pod autoscaling and cluster-autoscaler node autoscaling with simulated KWOK nodes (`devlab addon enable keda node-autoscaler`, see [AUTOSCALING.md](./AUTOSCALING.md))
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
+- **CI Profile**: Run the lab inside a pipeline job, including GitLab Kubernetes-executor runners with Docker-in-Docker (`DEVLAB_PROFILE=ci`, see [CI.md](./CI.md))
 
 ## Pre-requisites
 
@@ -493,6 +494,29 @@ New nodes are simulated by KWOK: they are Ready in seconds and cost almost
 nothing, but run no containers. See [AUTOSCALING.md](./AUTOSCALING.md) for how
 it works, how to add node pools, and more test scenarios.
 
+## Running in CI
+
+`DEVLAB_PROFILE=ci` selects a slimmer, non-interactive setup for pipelines:
+a control plane and one worker, no monitoring stack or krew plugins, and no
+prompts. `ci/devlab.gitlab-ci.yml` is a GitLab CI template for runners that
+use the Kubernetes executor, where the job is a pod and KinD runs in a
+`docker:dind` service:
+
+```yaml
+include:
+  - local: ci/devlab.gitlab-ci.yml
+
+autoscaling-e2e:
+  extends: .devlab
+  script:
+    - devlab addon enable keda node-autoscaler
+    - apps/autoscaling-demo/scripts/test-autoscaling.sh all
+```
+
+Try the same job locally without a runner with `ci/run-local.sh`. See
+[CI.md](./CI.md) for runner requirements, use from other projects, and TLS
+inspection.
+
 ## Directory Structure
 
 ```text
@@ -516,8 +540,10 @@ dev-lab/
 │           ├── canary-deploy.sh          # SMI-based canary management
 │           ├── linkerd-canary.sh         # Linkerd native canary management
 │           └── test-suite.sh             # Comprehensive testing framework
+├── ci/                          # GitLab CI template, setup script, local job emulator
 ├── cluster/
-│   └── kind-config.yaml         # KinD cluster configuration
+│   ├── kind-config.yaml         # KinD cluster configuration
+│   └── kind-config.ci.yaml      # Smaller cluster for the ci profile
 ├── config/
 │   ├── addons/                  # Optional addons (devlab addon enable ...)
 │   │   ├── keda/                # KEDA Helm values
