@@ -14,3 +14,4 @@ devlab
 *.key
 *.pub
 TODO.md
+.claude/settings.local.json

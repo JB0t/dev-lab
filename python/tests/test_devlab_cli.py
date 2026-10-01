@@ -127,5 +127,50 @@ class AddonTests(unittest.TestCase):
             self.assertEqual(labels["devlab.io/node-pool"], "kwok")
 
 
+class ProfileTests(unittest.TestCase):
+    def tearDown(self):
+        import devlab
+        devlab.ACTIVE_PROFILE = "local"
+
+    def test_profile_kind_configs_exist(self):
+        from devlab import PROFILES, PROJECT_ROOT
+        for profile in PROFILES.values():
+            self.assertTrue((PROJECT_ROOT / "cluster" / profile["kind_config"]).exists())
+
+    def test_profile_option_and_env_select_profile(self):
+        import devlab
+        CliRunner().invoke(cli, ["--profile", "ci", "addon", "enable", "nope"])
+        self.assertEqual(devlab.ACTIVE_PROFILE, "ci")
+        self.assertFalse(devlab.interactive_session())
+        self.assertFalse(devlab.profile_setting("monitoring"))
+        CliRunner().invoke(cli, ["addon", "enable", "nope"], env={"DEVLAB_PROFILE": "local"})
+        self.assertEqual(devlab.ACTIVE_PROFILE, "local")
+
+    def test_filesystem_check_skipped_for_local_daemon(self):
+        import os
+        from unittest import mock
+        from devlab import ContainerToolRunner
+        runner = ContainerToolRunner.__new__(ContainerToolRunner)
+        for docker_host in ("", "unix:///var/run/docker.sock"):
+            with mock.patch.dict(os.environ, {"DOCKER_HOST": docker_host}), \
+                    mock.patch("subprocess.run") as run:
+                runner._check_docker_filesystem()
+                run.assert_not_called()
+
+    def test_filesystem_check_rejects_unshared_directory(self):
+        import os
+        import subprocess
+        from unittest import mock
+        from devlab import ContainerToolRunner, DevLabError
+        runner = ContainerToolRunner.__new__(ContainerToolRunner)
+        ContainerToolRunner._filesystem_checked = False
+        missing = subprocess.CompletedProcess([], 1, "", "")
+        with mock.patch.dict(os.environ, {"DOCKER_HOST": "tcp://docker:2375"}), \
+                mock.patch("subprocess.run", return_value=missing):
+            with self.assertRaises(DevLabError):
+                runner._check_docker_filesystem()
+        self.assertFalse(ContainerToolRunner._filesystem_checked)
+
+
 if __name__ == "__main__":
     unittest.main()

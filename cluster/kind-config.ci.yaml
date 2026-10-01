@@ -1,0 +1,39 @@
+# KinD cluster configuration for the "ci" profile (DEVLAB_PROFILE=ci).
+# Same layout as kind-config.yaml with one worker instead of two, to fit a CI
+# job's Docker-in-Docker daemon. Port mappings bind inside the daemon's
+# network namespace, which the job container shares in a GitLab Kubernetes
+# executor pod, so http://*.localhost and localhost:5000 work from the job.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: dev-lab
+
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"
+  apiServerPort: 6443
+
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 5000
+        hostPort: 5000
+        protocol: TCP
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+    extraMounts:
+      - hostPath: /tmp/dev-lab-registry
+        containerPath: /var/lib/registry
+  - role: worker
+
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
+      endpoint = ["http://dev-lab-control-plane:5000"]
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."dev-lab-control-plane:5000".tls]
+      insecure_skip_verify = true
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."localhost:5000".tls]
+      insecure_skip_verify = true

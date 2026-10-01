@@ -210,7 +210,8 @@ your `PATH` (see the root README).
 
 | Command | Description |
 |---------|-------------|
-| `./devlab bootstrap` | Create cluster and setup core services |
+| `./devlab bootstrap [--no-monitoring] [--no-krew]` | Create cluster and setup core services |
+| `./devlab --profile ci <command>` | Use the CI profile (also `DEVLAB_PROFILE=ci`); see [CI.md](../CI.md) |
 | `./devlab deploy-gitops` | Optional: deploy using the GitOps method (Flux) |
 | `./devlab status` | Show cluster and service status |
 | `./devlab kubectl <args>` | Run kubectl commands |
@@ -314,7 +315,9 @@ All configuration files remain in the `config/` directory:
 
 ### Environment Variables
 
-- `DOCKER_HOST` - Docker daemon connection (if needed)
+- `DOCKER_HOST` - Docker daemon connection (if needed). With a remote daemon, such as `docker:dind` in CI, the project directory must be shared with the daemon at the same path; devlab checks this ([CI.md](../CI.md))
+- `DEVLAB_PROFILE` - `local` (default) or `ci`
+- `DEVLAB_KIND_NODE_IMAGE` - KinD node image to use, skipping the version prompt
 - `KUBECONFIG` - Kubernetes configuration file path
 
 ## Troubleshooting

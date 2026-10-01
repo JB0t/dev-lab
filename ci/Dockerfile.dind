@@ -1,0 +1,15 @@
+# Docker-in-Docker image that trusts extra root CAs, for CI jobs behind TLS
+# inspection. The daemon reads the system trust store only at startup, so the
+# CAs must be in the image. Put the .crt files in ci/certs/ (nested folders are fine; they are
+# ignored by Git) and build:
+#
+#   docker build -f ci/Dockerfile.dind -t registry.example.com/devlab-dind:29 ci/
+#
+# Then set DEVLAB_DIND_IMAGE to that image in your pipeline.
+FROM docker:29-dind
+COPY certs/ /tmp/local-ca/
+RUN find /tmp/local-ca -type f -name '*.crt' -exec sh -c \
+      'for certificate; do cp "$certificate" "/usr/local/share/ca-certificates/$(sha256sum "$certificate" | cut -d" " -f1).crt"; done' \
+      sh {} + && \
+    rm -rf /tmp/local-ca && \
+    update-ca-certificates

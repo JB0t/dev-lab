@@ -66,6 +66,24 @@ TOOL_VERSIONS = {
 DEFAULT_KREW_PLUGINS = ["ctx", "gpugo", "neat", "ns", "tree", "who-can"]
 
 REGISTRY_HOST = f"localhost:{REGISTRY_PORT}"
+
+# Profiles select defaults for where devlab runs. "ci" is for pipelines,
+# typically with a Docker-in-Docker daemon (see CI.md): no prompts, a smaller
+# cluster, and no monitoring stack or krew plugins unless asked for.
+PROFILES = {
+    "local": {"kind_config": "kind-config.yaml", "monitoring": True, "krew": True},
+    "ci": {"kind_config": "kind-config.ci.yaml", "monitoring": False, "krew": False},
+}
+ACTIVE_PROFILE = "local"
+
+
+def profile_setting(key: str):
+    return PROFILES[ACTIVE_PROFILE][key]
+
+
+def interactive_session() -> bool:
+    """Prompts are allowed only for local use from a terminal."""
+    return ACTIVE_PROFILE == "local" and sys.stdin.isatty()
 TRAEFIK_CHART_VERSION = "41.6.0"
 
 # Addon versions (devlab addon enable ...)
@@ -82,13 +100,14 @@ CLUSTER_AUTOSCALER_IMAGE_TAGS = {
 
 # Services published through the Traefik ingress. *.localhost resolves to
 # loopback in browsers and curl without any /etc/hosts entries.
+# (service, URL, credentials, part of the monitoring stack)
 ACCESS_POINTS = [
-    ("Grafana", "http://grafana.localhost", "admin/admin123"),
-    ("Prometheus", "http://prometheus.localhost", "-"),
-    ("Alertmanager", "http://alertmanager.localhost", "-"),
-    ("Registry UI", "http://registry.localhost", "-"),
-    ("Traefik dashboard", "http://traefik.localhost/dashboard/", "-"),
-    ("Registry API", f"http://{REGISTRY_HOST}/v2/_catalog", "-"),
+    ("Grafana", "http://grafana.localhost", "admin/admin123", True),
+    ("Prometheus", "http://prometheus.localhost", "-", True),
+    ("Alertmanager", "http://alertmanager.localhost", "-", True),
+    ("Registry UI", "http://registry.localhost", "-", False),
+    ("Traefik dashboard", "http://traefik.localhost/dashboard/", "-", False),
+    ("Registry API", f"http://{REGISTRY_HOST}/v2/_catalog", "-", False),
 ]
 DOCKER_ARCHITECTURES = {
     "x86_64": "amd64",
@@ -123,6 +142,36 @@ class DevLabError(Exception):
 
 class ContainerToolRunner:
     """Runs Kubernetes tools in containers for platform independence"""
+
+    _filesystem_checked = False
+
+    def _check_docker_filesystem(self):
+        """Fail early when the Docker daemon cannot see this machine's files.
+
+        The tool containers bind-mount the project and the current directory.
+        With a remote daemon, such as a docker:dind service in CI, bind mount
+        paths resolve on the daemon's filesystem, so they must be shared with
+        it at the same path (see CI.md).
+        """
+        docker_host = os.environ.get("DOCKER_HOST", "")
+        if ContainerToolRunner._filesystem_checked or not docker_host or \
+                docker_host.startswith(("unix://", "npipe://")):
+            return
+        cwd = os.getcwd()
+        result = subprocess.run([
+            "docker", "run", "--rm",
+            "-v", f"{PROJECT_ROOT}:/devlab-project:ro",
+            "-v", f"{cwd}:/devlab-cwd:ro",
+            "alpine:3.20", "sh", "-c",
+            "test -f /devlab-project/python/devlab.py && ls -A /devlab-cwd",
+        ], capture_output=True, text=True)
+        if result.returncode != 0 or sorted(result.stdout.split()) != sorted(os.listdir(cwd)):
+            raise DevLabError(
+                f"The Docker daemon at {docker_host} cannot see {PROJECT_ROOT} or {cwd} at the same "
+                "path. Share the directory with the daemon (for example a volume mounted into both "
+                "the job and the docker:dind service); see CI.md."
+            )
+        ContainerToolRunner._filesystem_checked = True
     
     def __init__(self):
         # Create shared kubeconfig directory
@@ -157,6 +206,7 @@ class ContainerToolRunner:
                 target = "generated manifest from stdin"
             console.print(f"[cyan]Applying Kubernetes resources: {target}[/cyan]")
 
+        self._check_docker_filesystem()
         kubectl_image = self._ensure_kubectl_image()
         if kubectl_image is None:
             return subprocess.CompletedProcess([], 1, "", "Failed to build kubectl image")
@@ -208,6 +258,7 @@ class ContainerToolRunner:
         if args and not quiet:
             console.print(f"[cyan]Running Helm: {' '.join(str(arg) for arg in args)}[/cyan]")
 
+        self._check_docker_filesystem()
         helm_image = self._ensure_helm_image()
         if helm_image is None:
             return subprocess.CompletedProcess([], 1, "", "Failed to build Helm image")
@@ -302,6 +353,7 @@ class ContainerToolRunner:
             return subprocess.run(cmd, capture_output=capture_output, text=True, env=env)
         
         # Fallback: use local kind container image
+        self._check_docker_filesystem()
         image_name = "devlab-kind:latest"
         
         # Check if our local kind image exists and matches the configured CLI version.
@@ -394,6 +446,7 @@ class ContainerToolRunner:
     
     def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None, use_kubeconfig: bool = True) -> subprocess.CompletedProcess:
         """Run a tool in a container with shared kubeconfig and kind network"""
+        self._check_docker_filesystem()
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -553,9 +606,11 @@ class DevLabManager:
             console.print(f"[red]Docker is not available: {e}[/red]")
             return False
     
-    def bootstrap(self) -> bool:
+    def bootstrap(self, monitoring: bool = None, krew: bool = None) -> bool:
         """Bootstrap the complete dev-lab environment"""
-        console.print("[bold blue]Bootstrapping Dev Lab Environment[/bold blue]")
+        monitoring = profile_setting("monitoring") if monitoring is None else monitoring
+        krew = profile_setting("krew") if krew is None else krew
+        console.print(f"[bold blue]Bootstrapping Dev Lab Environment (profile: {ACTIVE_PROFILE})[/bold blue]")
         
         if not self.check_docker():
             return False
@@ -580,14 +635,14 @@ class DevLabManager:
         if not self._setup_ingress():
             return False
 
-        if not self._deploy_monitoring():
+        if monitoring and not self._deploy_monitoring():
             return False
 
-        if not self.tools.ensure_krew_plugins():
+        if krew and not self.tools.ensure_krew_plugins():
             console.print("[yellow]Krew plugins were not installed; retry with ./devlab krew-sync[/yellow]")
         
         console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
-        show_access_points()
+        show_access_points(monitoring)
         console.print("\n[bold blue]Useful Commands:[/bold blue]")
         console.print("  • [cyan]devlab status[/cyan] - Show environment status")
         console.print("  • [cyan]devlab build -t my-app:1 --push .[/cyan] - Build into the local registry")
@@ -716,6 +771,9 @@ class DevLabManager:
         result = self.tools.kind(["get", "clusters"], capture_output=True)
         if CLUSTER_NAME in result.stdout:
             console.print(f"[yellow]Cluster '{CLUSTER_NAME}' already exists[/yellow]")
+            if not interactive_session():
+                console.print("[yellow]Non-interactive session: reusing the existing cluster[/yellow]")
+                return True
             if not click.confirm("Delete and recreate?"):
                 return True
             
@@ -723,14 +781,17 @@ class DevLabManager:
             self.tools.kind(["delete", "cluster", "--name", CLUSTER_NAME])
         
         # Create cluster with config
-        config_file = PROJECT_ROOT / "cluster" / "kind-config.yaml"
+        config_file = PROJECT_ROOT / "cluster" / profile_setting("kind_config")
         if not config_file.exists():
             console.print(f"[red]Kind config not found at {config_file}[/red]")
             return False
 
         config = yaml.safe_load(config_file.read_text()) or {}
-        current_image = config.get("image", DEFAULT_KIND_NODE_IMAGE)
-        selected_image = self._select_kind_node_image(current_image)
+        current_image = os.environ.get("DEVLAB_KIND_NODE_IMAGE") or config.get("image", DEFAULT_KIND_NODE_IMAGE)
+        if interactive_session() and not os.environ.get("DEVLAB_KIND_NODE_IMAGE"):
+            selected_image = self._select_kind_node_image(current_image)
+        else:
+            selected_image = current_image
         console.print(f"[blue]Using Kubernetes node image: {selected_image}[/blue]")
         
         result = self.tools.kind([
@@ -1058,11 +1119,22 @@ class DevLabManager:
         console.print(f"[green]Addon {name} disabled[/green]")
         return True
 
+    def _has_service_monitor_crd(self) -> bool:
+        """True when the Prometheus operator (monitoring stack) is installed."""
+        return self.tools.kubectl(
+            ["get", "crd", "servicemonitors.monitoring.coreos.com"], capture_output=True
+        ).returncode == 0
+
     def _enable_keda(self) -> bool:
+        no_monitoring = [] if self._has_service_monitor_crd() else [
+            "--set", "prometheus.metricServer.serviceMonitor.enabled=false",
+            "--set", "prometheus.operator.serviceMonitor.enabled=false",
+        ]
         if not self._helm_release(
             "keda", "kedacore/keda", KEDA_CHART_VERSION, "keda",
             CONFIG_DIR / "addons" / "keda" / "values.yaml",
             ("kedacore", "https://kedacore.github.io/charts"),
+            extra_args=no_monitoring,
         ):
             return False
         return self._rollout_status(
@@ -1125,7 +1197,8 @@ class DevLabManager:
             "cluster-autoscaler", "autoscaler/cluster-autoscaler", CLUSTER_AUTOSCALER_CHART_VERSION,
             "kube-system", CONFIG_DIR / "addons" / "node-autoscaler" / "cluster-autoscaler-values.yaml",
             ("autoscaler", "https://kubernetes.github.io/autoscaler"),
-            extra_args=["--set", f"image.tag={image_tag}"],
+            extra_args=["--set", f"image.tag={image_tag}",
+                        *([] if self._has_service_monitor_crd() else ["--set", "serviceMonitor.enabled=false"])],
         ):
             return False
 
@@ -1616,14 +1689,15 @@ ADDONS = {
 }
 
 
-def show_access_points():
+def show_access_points(monitoring: bool = True):
     """Print the ingress URLs of the bootstrap services."""
     table = Table(title="Access Points")
     table.add_column("Service", style="cyan")
     table.add_column("URL", style="green")
     table.add_column("Credentials", style="yellow")
-    for row in ACCESS_POINTS:
-        table.add_row(*row)
+    for service, url, credentials, needs_monitoring in ACCESS_POINTS:
+        if monitoring or not needs_monitoring:
+            table.add_row(service, url, credentials)
     console.print(table)
 
 
@@ -1658,15 +1732,22 @@ def complete_tool(tool: str):
 
 
 @click.group()
-def cli():
+@click.option("--profile", type=click.Choice(list(PROFILES)), default="local", show_default=True,
+              envvar="DEVLAB_PROFILE", help="Defaults for local use or CI pipelines (env DEVLAB_PROFILE)")
+def cli(profile):
     """Dev Lab - Platform-Agnostic Kubernetes Development Environment"""
-    pass
+    global ACTIVE_PROFILE
+    ACTIVE_PROFILE = profile
 
 @cli.command()
-def bootstrap():
+@click.option("--monitoring/--no-monitoring", default=None,
+              help="Install the Prometheus/Grafana stack (default: yes locally, no in CI)")
+@click.option("--krew/--no-krew", default=None,
+              help="Install the default krew plugins (default: yes locally, no in CI)")
+def bootstrap(monitoring, krew):
     """Bootstrap the dev-lab environment"""
     manager = DevLabManager()
-    success = manager.bootstrap()
+    success = manager.bootstrap(monitoring=monitoring, krew=krew)
     sys.exit(0 if success else 1)
 
 @cli.command(name='deploy-gitops')
@@ -1758,7 +1839,7 @@ PASSTHROUGH_SETTINGS = {
 def kubectl(args):
     """Run kubectl commands"""
     manager = DevLabManager()
-    if not (PROJECT_ROOT / ".krew" / "receipts").exists():
+    if profile_setting("krew") and not (PROJECT_ROOT / ".krew" / "receipts").exists():
         manager.tools.ensure_krew_plugins()
     kubectl_args, publish, forwards = prepare_port_forward(list(args))
     for local, remote in forwards:
@@ -1946,7 +2027,7 @@ def status():
             table.add_row(name, status, role)
         
         console.print(table)
-        show_access_points()
+        show_access_points(manager._has_service_monitor_crd())
 
 @cli.command(name='build-tools')
 def build_tools():
@@ -2001,3 +2082,6 @@ if __name__ == "__main__":
     except click.ClickException as exc:
         exc.show()
         sys.exit(exc.exit_code)
+    except DevLabError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
