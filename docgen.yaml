@@ -1,0 +1,6 @@
+clis:
+  - name: devlab
+    run: [./devlab]
+    dir: python
+    doc: USAGE.md                    # where draft --cli writes; keeps your README untouched
+    env: {}
