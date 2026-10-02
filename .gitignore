@@ -3,3 +3,9 @@ node_modules/
 .kube/
 flux-deploy-key*
 devlab
+.helm/
+.krew/
+Session.vim
+ci/certs/
+python/__pycache__/
+python/certs/
