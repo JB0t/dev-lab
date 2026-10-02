@@ -1,5 +1,13 @@
 # Dev Lab - Platform-Agnostic Kubernetes Development Environment
 
+<!-- docgen:begin id=python:overview scope=python hash=a192c1202f52 -->
+The `python` module provides a platform-agnostic development environment for Kubernetes using containerized tools. It includes a setup script that creates a Python virtual environment and installs dependencies, ensuring all required tools run in containers without local installations. The core functionality is implemented in `devlab.py`, which manages Kubernetes operations through containerized CLI tools like `kubectl`, `helm`, `kind`, `linkerd`, and `flux`.
+
+The module's main components work together to provide a consistent development experience across different operating systems. The `DevLabManager` class orchestrates the overall environment setup, including checking Docker availability, bootstrapping the cluster, and managing optional addons. Containerized tool execution is handled by the `ContainerToolRunner` class, which wraps commands in containers and provides fallback mechanisms to local installations when available.
+
+Key features include automatic tool container building, local registry integration for image management, and shell completion support. The system uses environment variables for configuration and provides utility functions for port management, image qualification, and command execution. The setup process generates wrapper scripts and completion files to make the tools accessible from the command line while maintaining a clean separation between host and container environments.
+<!-- docgen:end id=python:overview -->
+
 A Python-based, platform-agnostic replacement for bash scripts that provides a complete Kubernetes development environment using only Docker as a dependency.
 
 ## Key Features
@@ -375,3 +383,73 @@ docker info
 - **Testing Framework**: Automated testing of deployments
 - **Monitoring Dashboard**: Web UI for cluster status
 - **CI/CD Integration**: GitHub Actions/GitLab CI templates
+
+<!-- docgen:begin id=python:reference scope=python hash=a192c1202f52 -->
+## Reference
+
+### `devlab.py`
+
+- **`profile_setting`** (function)
+- **`interactive_session`** (function): Prompts are allowed only for local use from a terminal.
+- **`docker_architecture`** (function): Return the Docker daemon architecture using Go/Docker naming.
+- **`interactive_terminal`** (function): True when both stdin and stdout are attached to a terminal.
+- **`DevLabError`** (class): Custom exception for dev-lab operations
+- **`ContainerToolRunner`** (class): Runs Kubernetes tools in containers for platform independence
+- **`ContainerToolRunner.__init__`** (method)
+- **`ContainerToolRunner.kubectl`** (method): Run kubectl in container
+- **`ContainerToolRunner.ensure_krew_plugins`** (method): Install DEFAULT_KREW_PLUGINS into the persistent krew root once.
+- **`ContainerToolRunner.helm`** (method): Run helm in container
+- **`ContainerToolRunner.kind`** (method): Run kind CLI - try host first, then local container image as fallback
+- **`ContainerToolRunner.linkerd`** (method): Run linkerd CLI in container
+- **`ContainerToolRunner.flux`** (method): Run flux CLI in container
+- **`ContainerToolRunner.complete`** (method): Request shell completion candidates from a wrapped Cobra CLI.
+- **`DevLabManager`** (class): Main class for managing dev-lab operations
+- **`DevLabManager.__init__`** (method)
+- **`DevLabManager.setup_logging`** (method): Configure logging
+- **`DevLabManager.check_docker`** (method): Check if Docker is available and running
+- **`DevLabManager.bootstrap`** (method): Bootstrap the complete dev-lab environment
+- **`DevLabManager.addon_installed`** (method)
+- **`DevLabManager.enable_addon`** (method)
+- **`DevLabManager.disable_addon`** (method)
+- **`DevLabManager.deploy_gitops`** (method): Deploy using GitOps method with Flux CD
+- **`show_access_points`** (function): Print the ingress URLs of the bootstrap services.
+- **`parse_cobra_completions`** (function): Convert Cobra's __complete output into Click completion items.
+- **`complete_tool`** (function): Create a Click completion callback for a wrapped CLI.
+- **`cli`** (function): Dev Lab - Platform-Agnostic Kubernetes Development Environment
+- **`bootstrap`** (function): Bootstrap the dev-lab environment
+- **`deploy_gitops`** (function): Deploy using GitOps method with Flux CD
+- **`free_host_port`** (function): Ask the OS for an unused TCP port on the host.
+- **`docker_publish_address`** (function)
+- **`prepare_port_forward`** (function): Make `kubectl port-forward` in the tool container reachable from the host.
+- **`kubectl`** (function): Run kubectl commands
+- **`krew_sync`** (function): Install the default krew plugins into the containerized kubectl
+- **`helm`** (function): Run helm commands
+- **`linkerd`** (function): Run linkerd commands
+- **`flux`** (function): Run flux commands
+- **`kind`** (function): Run kind commands
+- **`registry_image`** (function): Qualify an image reference with the local registry host.
+- **`push_image`** (function): Tag a local image for the dev-lab registry, if needed, and push it.
+- **`build`** (function): Build an image for the local registry (extra args go to docker build)
+- **`push`** (function): Push local images to the dev-lab registry at localhost:5000
+- **`kubectl_alias_completion`** (function): Bash completion for an alias of `devlab kubectl` (e.g. alias k='devlab kubectl').
+- **`completion`** (function): Print a shell completion script
+- **`addon`** (function): Enable or disable optional components (see AUTOSCALING.md)
+- **`addon_list`** (function): List addons and whether they are installed
+- **`addon_enable`** (function): Install addons (safe to re-run; upgrades in place)
+- **`addon_disable`** (function): Uninstall addons
+- **`status`** (function): Show cluster and service status
+- **`build_tools`** (function): Build/rebuild local tool container images
+- **`cleanup`** (function): Clean up the dev-lab environment
+
+### `setup.py`
+
+- **`run_command`** (function): Run a command with error handling
+- **`check_python`** (function): Check Python version
+- **`check_docker`** (function): Check if Docker is available
+- **`setup_venv`** (function): Set up Python virtual environment
+- **`create_wrapper_scripts`** (function): Create platform-specific wrapper scripts
+- **`install_bash_completion`** (function): Install the generated Bash completion scripts for the current user.
+- **`show_usage_instructions`** (function): Show usage instructions
+- **`parse_args`** (function)
+- **`main`** (function): Main setup function
+<!-- docgen:end id=python:reference -->

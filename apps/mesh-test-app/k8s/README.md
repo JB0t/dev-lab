@@ -1,5 +1,13 @@
 # Linkerd + Flagger Canary Deployment Configuration
 
+<!-- docgen:begin id=apps/mesh-test-app/k8s:overview scope=apps/mesh-test-app/k8s hash=2d2b6b4f4e7d -->
+This module defines the Kubernetes manifests and configurations for the `mesh-test-app`, a service mesh testing application designed for progressive delivery and load balancing validation. It includes core application components such as a `Deployment`, `Service`, and `Ingress`, along with supporting infrastructure like a Redis instance for testing and a `PodDisruptionBudget` to ensure availability during updates. The module also integrates with Linkerd for service mesh observability and Flagger for canary deployments.
+
+The module leverages Kustomize to compose and manage multiple Kubernetes resources, including Flagger's `Canary` custom resource for progressive delivery, `MetricTemplate` definitions for Linkerd-based metrics, and `PodMonitor` configurations for detailed proxy metrics. It also includes a `loadtester` deployment that provides webhooks for functional and load testing during canary releases.
+
+Scripts such as `test-load-balancing.sh` and `monitor-load-balancing.sh` are included to facilitate real-time monitoring and demonstration of load distribution across pods, providing visibility into how traffic is balanced within the service mesh. These scripts interact with Prometheus endpoints to gather metrics on request rates, pod distribution, and load balancing evenness, supporting both automated canary analysis and manual validation of service mesh behavior.
+<!-- docgen:end id=apps/mesh-test-app/k8s:overview -->
+
 This directory contains the minimal, essential configuration for a working Linkerd service mesh canary deployment using Flagger and Prometheus metrics.
 
 ## Essential Files
@@ -93,3 +101,48 @@ kubectl logs -n linkerd deployment/flagger
 2. **Flagger** deployed in linkerd namespace with proxy bypass configured
 3. **Prometheus** operator with kube-prometheus-stack
 4. **Linkerd namespace** has injection enabled: `linkerd.io/inject: enabled`
+
+<!-- docgen:begin id=apps/mesh-test-app/k8s:reference scope=apps/mesh-test-app/k8s hash=2d2b6b4f4e7d -->
+## Reference
+
+### `base.yaml`
+
+- **`Namespace/mesh-test`** (manifest)
+- **`Deployment/mesh-test-app`** (manifest)
+- **`Service/mesh-test-app-service`** (manifest)
+- **`Ingress/mesh-test-app-ingress`** (manifest)
+
+### `canary.yaml`
+
+- **`Canary/mesh-test-app`** (manifest)
+
+### `kustomization.yaml`
+
+- **`Kustomization/mesh-test-app`** (manifest)
+
+### `linkerd-metric-templates.yaml`
+
+- **`MetricTemplate/linkerd-success-rate`** (manifest)
+- **`MetricTemplate/linkerd-request-duration`** (manifest)
+- **`MetricTemplate/linkerd-traffic-success-rate`** (manifest)
+
+### `linkerd-podmonitor-debug.yaml`
+
+- **`PodMonitor/linkerd-proxy-proper`** (manifest)
+
+### `loadtester.yaml`
+
+- **`Deployment/flagger-loadtester`** (manifest)
+- **`Service/flagger-loadtester`** (manifest)
+
+### `pod-disruption-budget.yaml`
+
+- **`PodDisruptionBudget/mesh-test-app-pdb`** (manifest)
+- **`PodDisruptionBudget/mesh-test-app-canary-pdb`** (manifest)
+
+### `redis.yaml`
+
+- **`ConfigMap/redis-config`** (manifest)
+- **`Deployment/redis`** (manifest)
+- **`Service/redis-service`** (manifest)
+<!-- docgen:end id=apps/mesh-test-app/k8s:reference -->

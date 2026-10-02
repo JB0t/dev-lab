@@ -1,5 +1,13 @@
 # Monitoring Infrastructure
 
+<!-- docgen:begin id=infrastructure/monitoring:overview scope=infrastructure/monitoring hash=df242c2aa01d -->
+This module manages monitoring infrastructure for a Kubernetes cluster using Prometheus and Grafana, deployed via Helm charts and Flux CD. It defines the core monitoring stack including Prometheus, Grafana, Alertmanager, and associated components, along with configuration for scraping metrics from various services. The module also includes custom dashboards and service monitors for specific applications like Flagger and Linkerd.
+
+The monitoring setup is organized into multiple manifests that work together to provide comprehensive observability. The `prometheus-stack.yaml` file defines the main monitoring namespace and deploys the `kube-prometheus-stack` Helm release, configuring resources, retention policies, and service exposure for development environments. Service monitors are used to define which metrics to scrape, with specific configurations for applications like Flagger and Linkerd.
+
+Additional monitoring capabilities are added through Kustomization, which includes Linkerd service monitors and custom dashboards generated from JSON files. The module uses `kustomize.config.k8s.io/v1beta1` to manage these resources, creating ConfigMaps for Grafana dashboards and organizing monitoring components into a cohesive structure that integrates with the cluster's existing monitoring infrastructure.
+<!-- docgen:end id=infrastructure/monitoring:overview -->
+
 This directory contains monitoring configurations for the dev-lab environment, including Linkerd service mesh monitoring, Flagger progressive delivery monitoring, and Grafana dashboards.
 
 ## Structure
@@ -91,3 +99,22 @@ kubectl apply -f clusters/dev-lab/dev-lab-kustomizations.yaml
 # Deploy directly
 kubectl apply -k infrastructure/monitoring/
 ```
+
+<!-- docgen:begin id=infrastructure/monitoring:reference scope=infrastructure/monitoring hash=df242c2aa01d -->
+## Reference
+
+### `flagger-servicemonitor.yaml`
+
+- **`ServiceMonitor/flagger`** (manifest)
+
+### `kustomization.yaml`
+
+- **`Kustomization/dev-lab-monitoring-extras`** (manifest)
+
+### `prometheus-stack.yaml`
+
+- **`Namespace/monitoring`** (manifest)
+- **`HelmRepository/prometheus-community`** (manifest)
+- **`HelmRepository/grafana`** (manifest)
+- **`HelmRelease/kube-prometheus-stack`** (manifest)
+<!-- docgen:end id=infrastructure/monitoring:reference -->
