@@ -84,6 +84,7 @@ class ContainerToolRunner:
     
     def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run kubectl in container"""
+        self._ensure_shared_kubeconfig()
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -103,6 +104,7 @@ class ContainerToolRunner:
     
     def helm(self, args: List[str], capture_output: bool = False, input: str = None, text: bool = False) -> subprocess.CompletedProcess:
         """Run helm in container"""
+        self._ensure_shared_kubeconfig()
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -191,9 +193,25 @@ class ContainerToolRunner:
             else:
                 # Create an empty kubeconfig file
                 self.shared_kubeconfig_path.write_text("apiVersion: v1\nclusters: []\ncontexts: []\ncurrent-context: \"\"\nkind: Config\npreferences: {}\nusers: []\n")
+
+        with self.shared_kubeconfig_path.open() as config_file:
+            config = yaml.safe_load(config_file) or {}
+
+        server = f"https://{CLUSTER_NAME}-control-plane:6443"
+        changed = False
+        for cluster in config.get("clusters") or []:
+            if cluster["name"] == f"kind-{CLUSTER_NAME}":
+                if cluster["cluster"].get("server") != server:
+                    cluster["cluster"]["server"] = server
+                    changed = True
+
+        if changed:
+            with self.shared_kubeconfig_path.open("w") as config_file:
+                yaml.safe_dump(config, config_file, default_flow_style=False)
     
     def _run_container(self, image: str, args: List[str], capture_output: bool = False, text: bool = False, input: str = None, context: str = None) -> subprocess.CompletedProcess:
         """Run a tool in a container with shared kubeconfig and kind network"""
+        self._ensure_shared_kubeconfig()
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", "kind",  # Use kind network to communicate with KinD cluster
@@ -333,7 +351,6 @@ class DevLabManager:
             console.print("[red]Failed to create cluster[/red]")
             return False
         
-        # Fix kubeconfig to use the container network IP
         if not self._fix_kubeconfig_for_containers():
             return False
         
@@ -345,41 +362,12 @@ class DevLabManager:
         return True
     
     def _fix_kubeconfig_for_containers(self) -> bool:
-        """Fix kubeconfig to use container network IP instead of localhost"""
+        """Use the stable control-plane DNS name for container networking"""
         console.print("[blue]Fixing kubeconfig for container networking...[/blue]")
         
         try:
-            # Get the control plane container IP on the kind network
-            client = docker.from_env()
-            control_plane_container = client.containers.get(f"{CLUSTER_NAME}-control-plane")
-            
-            # Get the IP address on the kind network
-            networks = control_plane_container.attrs['NetworkSettings']['Networks']
-            if 'kind' not in networks:
-                console.print("[red]Control plane container not on kind network[/red]")
-                return False
-            
-            kind_ip = networks['kind']['IPAddress']
-            console.print(f"[blue]Found control plane at {kind_ip} on kind network[/blue]")
-            
-            # Update the kubeconfig
-            kubeconfig_path = self.tools.shared_kubeconfig_path
-            with open(kubeconfig_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Find and update the kind-dev-lab cluster
-            for cluster in config['clusters']:
-                if cluster['name'] == f'kind-{CLUSTER_NAME}':
-                    old_server = cluster['cluster']['server']
-                    cluster['cluster']['server'] = f'https://{kind_ip}:6443'
-                    console.print(f"[blue]Updated server from {old_server} to https://{kind_ip}:6443[/blue]")
-                    break
-            
-            # Write back the updated config
-            with open(kubeconfig_path, 'w') as f:
-                yaml.safe_dump(config, f, default_flow_style=False)
-            
-            console.print("[green]✅ Kubeconfig updated for container networking[/green]")
+            self.tools._ensure_shared_kubeconfig()
+            console.print(f"[green]Kubeconfig uses https://{CLUSTER_NAME}-control-plane:6443[/green]")
             return True
             
         except Exception as e:
