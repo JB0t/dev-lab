@@ -1,5 +1,13 @@
 # Dev Lab - Platform-Agnostic Kubernetes Development Environment
 
+<!-- docgen:begin id=python:overview scope=python hash=38cac368cdc4 -->
+This module provides a platform-agnostic development environment for Kubernetes using containerized tools. It runs kubectl, helm, kind, linkerd, and flux commands inside containers to avoid local tool installation. The system uses Docker as the only requirement and creates wrapper scripts to manage the Python virtual environment.
+
+The core components include `DevLabManager` for high-level operations like bootstrapping and deployment, and `ContainerToolRunner` for executing commands in containers. The `DevLabError` exception handles operational failures. Setup script `setup.py` manages virtual environment creation and dependency installation.
+
+The `devlab.py` module exposes CLI functions for bootstrap, deploy, status, cleanup, and direct tool execution. It supports both traditional script-based deployment and GitOps with Flux CD. The system works across platforms by running tools in containers and provides wrapper scripts for easy command access.
+<!-- docgen:end id=python:overview -->
+
 A Python-based, platform-agnostic replacement for bash scripts that provides a complete Kubernetes development environment using only Docker as a dependency.
 
 ## Key Features
@@ -70,12 +78,19 @@ ENTRYPOINT ["kind"]
 
 **Problem**: KinD creates kubeconfig with `127.0.0.1:6443`, but containers can't reach each other's localhost.
 
-**Solution**: Automatic IP address translation
+**Solution**: Stable Docker DNS endpoint with automatic kubeconfig migration
 
 1. **KinD creates cluster**: Writes kubeconfig to shared `.kube/` directory
-2. **Detect container IP**: Find KinD control plane IP on `kind` network (e.g., `172.18.0.3`)
-3. **Update kubeconfig**: Replace `127.0.0.1:6443` with `172.18.0.3:6443`
-4. **Enable containers**: All tools can now communicate with the cluster
+2. **Update kubeconfig**: Set the `kind-dev-lab` server to `https://dev-lab-control-plane:6443`
+3. **Resolve dynamically**: Docker DNS on the `kind` network resolves the control-plane name to its current IP, including after Docker or WSL restarts
+4. **Migrate automatically**: Before kubectl, Helm, Linkerd, or Flux runs, devlab repairs older numeric-IP or localhost endpoints in the shared kubeconfig
+
+Only the `kind-dev-lab` cluster's server entry is changed. Credentials, contexts,
+other clusters, and the original user kubeconfig remain untouched. An already
+correct shared kubeconfig is not rewritten, and TLS verification remains enabled.
+No cluster recreation or bootstrap is needed: run `devlab kubectl get nodes` to
+migrate an existing shared config. This fixes endpoint changes, not an API server
+that is still starting or unhealthy.
 
 ### Tool Container Configuration
 
@@ -323,3 +338,47 @@ docker info
 - **Monitoring Dashboard**: Web UI for cluster status
 - **Plugin System**: Extensible plugin architecture
 - **CI/CD Integration**: GitHub Actions/GitLab CI templates
+
+<!-- docgen:begin id=python:reference scope=python hash=38cac368cdc4 -->
+## Reference
+
+### `devlab.py`
+
+- **`DevLabError`** (class): Custom exception for dev-lab operations
+- **`ContainerToolRunner`** (class): Runs Kubernetes tools in containers for platform independence
+- **`ContainerToolRunner.__init__`** (method)
+- **`ContainerToolRunner.kubectl`** (method): Run kubectl in container
+- **`ContainerToolRunner.helm`** (method): Run helm in container
+- **`ContainerToolRunner.kind`** (method): Run kind CLI - try host first, then local container image as fallback
+- **`ContainerToolRunner.linkerd`** (method): Run linkerd CLI in container
+- **`ContainerToolRunner.flux`** (method): Run flux CLI in container
+- **`DevLabManager`** (class): Main class for managing dev-lab operations
+- **`DevLabManager.__init__`** (method)
+- **`DevLabManager.setup_logging`** (method): Configure logging
+- **`DevLabManager.check_docker`** (method): Check if Docker is available and running
+- **`DevLabManager.bootstrap`** (method): Bootstrap the complete dev-lab environment
+- **`DevLabManager.deploy_traditional`** (method): Deploy using traditional script-based method
+- **`DevLabManager.deploy_gitops`** (method): Deploy using GitOps method with Flux CD
+- **`cli`** (function): Dev Lab - Platform-Agnostic Kubernetes Development Environment
+- **`bootstrap`** (function): Bootstrap the dev-lab environment
+- **`deploy_traditional`** (function): Deploy using traditional method
+- **`deploy_gitops`** (function): Deploy using GitOps method with Flux CD
+- **`deploy`** (function): Deploy using traditional method (default)
+- **`kubectl`** (function): Run kubectl commands
+- **`helm`** (function): Run helm commands
+- **`linkerd`** (function): Run linkerd commands
+- **`flux`** (function): Run flux commands
+- **`status`** (function): Show cluster and service status
+- **`build_tools`** (function): Build/rebuild local tool container images
+- **`cleanup`** (function): Clean up the dev-lab environment
+
+### `setup.py`
+
+- **`run_command`** (function): Run a command with error handling
+- **`check_python`** (function): Check Python version
+- **`check_docker`** (function): Check if Docker is available
+- **`setup_venv`** (function): Set up Python virtual environment
+- **`create_wrapper_scripts`** (function): Create platform-specific wrapper scripts
+- **`show_usage_instructions`** (function): Show usage instructions
+- **`main`** (function): Main setup function
+<!-- docgen:end id=python:reference -->
