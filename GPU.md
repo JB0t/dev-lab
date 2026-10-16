@@ -14,7 +14,7 @@ Written for Ubuntu (22.04 or newer) on a machine or VM with an NVIDIA GPU, with 
 
 Skip this step if `nvidia-smi` already lists your GPU with a new enough driver.
 
-**Driver version**: use R580 or newer (`nvidia-smi` header: CUDA Version 13.0 or higher). The GPU Operator's validator and current CUDA images (including the RAPIDS image in the Dask runbook) are built for CUDA 12.9 or newer. With an older driver they need CUDA forward compatibility, which works only on datacenter GPUs (A10, A100, L4, ...). On GeForce and other consumer cards they fail with `forward compatibility was attempted on non supported HW`.
+**Driver version**: any driver whose `nvidia-smi` header shows CUDA Version 12.x (R525 or newer) runs CUDA 12 images, such as the RAPIDS image in the Dask runbook, through CUDA minor-version compatibility. CUDA 13 images need R580 or newer (CUDA Version 13.0). devlab turns off CUDA forward compatibility in the kind nodes, which would otherwise let some images try to run on an older driver, because it works only on datacenter GPUs and breaks images on GeForce cards and possibly vGPUs.
 
 **Bare-metal GPU** (or a GPU passed through to a VM):
 
@@ -24,7 +24,7 @@ sudo ubuntu-drivers install --gpgpu   # the recommended server driver
 sudo reboot
 ```
 
-**NVIDIA vGPU VM** (e.g. an A10-24Q profile): install the vGPU guest driver that matches your hypervisor's vGPU software release, from the NVIDIA Licensing Portal; the public driver does not work in a vGPU guest. Prefer vGPU 19 (R580) or newer, so CUDA 12.9+ images run without forward compatibility. Then license the VM with the client configuration token from the portal (or your DLS) ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
+**NVIDIA vGPU VM** (e.g. an A10-24Q profile): install the vGPU guest driver that matches your hypervisor's vGPU software release, from the NVIDIA Licensing Portal; the public driver does not work in a vGPU guest. A vGPU 18 (R570, CUDA 12.8) guest driver runs CUDA 12 images; CUDA 13 images need vGPU 19 (R580) or newer. Then license the VM with the client configuration token from the portal (or your DLS) ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
 
 ```bash
 sudo cp client_configuration_token_*.tok /etc/nvidia/ClientConfigToken/
@@ -132,7 +132,7 @@ By default the first worker gets every GPU and the second worker is CPU-only; se
 devlab status                                            # GPUs column: 4 on dev-lab-worker per physical GPU
 devlab kubectl get pods -n gpu-operator                  # all Running or Completed
 devlab kubectl apply -f config/gpu/gpu-test-pod.yaml
-devlab kubectl logs gpu-test                             # GPU 0: NVIDIA ... (UUID: GPU-...)
+devlab kubectl logs gpu-test                             # ... Test PASSED (a CUDA vector addition on the GPU)
 devlab kubectl delete pod gpu-test
 ```
 
@@ -154,9 +154,9 @@ To undo the host setup, revert step 3 with `sudo nvidia-ctk runtime configure --
 
 1. Builds the kind config from the profile's config (`cluster/kind-config.yaml`, or `kind-config.ci.yaml`) with its workers replaced by the ones in `cluster/gpu-workers.yaml`, and writes it to `.kube/kind-config.gpu.yaml`. Each GPU worker gets a `/dev/null` mount at `/var/run/nvidia-container-devices/<device>` (the host's nvidia-container-runtime turns it into that GPU) and the label `nvidia.com/gpu.present=true`. The control plane and CPU-only workers get `nvidia.com/gpu.deploy.operands=false`.
 2. Creates the cluster and installs the custom CA certificates, as without `--gpu`.
-3. In each GPU worker, installs the NVIDIA Container Toolkit and adds an `nvidia` containerd runtime (nvkind's node setup). This runs after the CA certificates so `apt` works behind TLS inspection.
+3. In each GPU worker, installs the NVIDIA Container Toolkit and adds an `nvidia` containerd runtime (nvkind's node setup), with CUDA forward compatibility turned off (see [step 1](#1-nvidia-driver)). This runs after the CA certificates so `apt` works behind TLS inspection.
 4. Installs the registry, metrics-server, Traefik and the monitoring stack.
-5. Applies the `nvidia` RuntimeClass and installs the GPU Operator (`config/gpu/gpu-operator-values.yaml`) in the `gpu-operator` namespace. It runs the device plugin (with the time-slicing config), GPU feature discovery, node feature discovery, the DCGM exporter and the operator validator. The driver and toolkit operands are off: the nodes already have both.
+5. Applies the `nvidia` RuntimeClass and installs the GPU Operator (`config/gpu/gpu-operator-values.yaml`) in the `gpu-operator` namespace. It runs the device plugin (with the time-slicing config), GPU feature discovery, node feature discovery, the DCGM exporter and the operator validator. The driver and toolkit operands are off: the nodes already have both. The validator skips its CUDA sample workloads, which need CUDA forward compatibility on drivers older than CUDA 12.9; the smoke test in step 6 runs a CUDA workload instead.
 6. Waits until a node advertises allocatable `nvidia.com/gpu` (4 per physical GPU by default).
 
 Masking `/proc/driver/nvidia/params` and removing unassigned `/dev/nvidia*` nodes can fail harmlessly on some toolkit versions. Bootstrap logs these as warnings and continues; the GPU capacity check catches a real failure.
@@ -224,7 +224,7 @@ Smoke test:
 
 ```bash
 devlab kubectl apply -f config/gpu/gpu-test-pod.yaml
-devlab kubectl logs gpu-test     # GPU 0: NVIDIA ... (UUID: GPU-...)
+devlab kubectl logs gpu-test     # ... Test PASSED
 devlab kubectl delete pod gpu-test
 
 # Allocatable GPU shares per node (GPUs column: 4 per physical GPU)
@@ -243,7 +243,7 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 
 - **Guest driver**: install the NVIDIA vGPU guest driver from the NVIDIA Licensing Portal. It must match the vGPU software release of the hypervisor's vGPU manager. The public data center driver does not work in a vGPU guest. The NVIDIA Container Toolkit and devlab work the same on top of it.
 - **Licensing**: see [step 1](#1-nvidia-driver). An unlicensed vGPU runs at full capability for 20 minutes; after that NVIDIA degrades its performance, and degrades it further after 24 hours. The exact effect on CUDA depends on the vGPU release; see the [licensing guide](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/intro-to-grid-licensing.html). `devlab bootstrap --gpu` warns, but continues, when the vGPU is unlicensed.
-- **CUDA version**: container images must support the guest driver. CUDA 12 images run on any vGPU 16 (R535) or newer guest driver. CUDA 13 images need an R580+ driver. Check the driver's CUDA version in the `nvidia-smi` header.
+- **CUDA version**: CUDA 12 images run on any vGPU 16 (R535) or newer guest driver through minor-version compatibility, e.g. CUDA 12.9 images on a CUDA 12.8 (R570) guest. CUDA 13 images need an R580+ driver. Check the driver's CUDA version in the `nvidia-smi` header.
 - **No MIG on A10**: an A10 cannot be partitioned with MIG, so time slicing is the only way to share it between pods.
 - **Unified memory**: CUDA unified (managed) memory is off by default on vGPUs. Your hypervisor admin must turn it on per vGPU, and NVIDIA documents it only for some profiles. Don't rely on managed memory (e.g. RMM managed memory) unless you have checked it is enabled.
 - **Full-GPU profile**: A10-24Q uses the whole 24 GB A10, so no other VM shares the physical GPU. `nvidia-smi` in the guest reports slightly less than 24 GB total because of vGPU-reserved memory.
@@ -260,6 +260,7 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 - **`requirement error: unsatisfied condition: cuda>=...`**: the image needs a newer driver than the host or vGPU guest has. Use an image built for an older CUDA version.
 - **GPU slows down after ~20 minutes in a VM**: the vGPU is not licensed (see [vGPU Guests](#vgpu-guests-eg-a10-24q)).
 - **Device plugin in CrashLoopBackOff with `couldn't initialize inotify: too many open files`**: raise the host's inotify limits ([step 3](#3-nvidia-container-toolkit)), then `devlab kubectl -n gpu-operator delete pod -l app=nvidia-device-plugin-daemonset`.
-- **`nvidia-cuda-validator` in Init:Error, or CUDA apps fail with `forward compatibility was attempted on non supported HW`**: the driver is older than the CUDA in the image, on a GPU without forward compatibility (GeForce/consumer cards). Upgrade the driver to R580 or newer ([step 1](#1-nvidia-driver)).
+- **`forward compatibility was attempted on non supported HW`**: CUDA forward-compatibility libraries from the image were loaded on a GPU that does not support them. devlab turns this off in the GPU nodes; if you see it, the node setup did not finish: re-run `devlab bootstrap --gpu`.
+- **`CUDA driver version is insufficient for CUDA runtime version`**: the image is built for a newer CUDA major version than the driver (e.g. a CUDA 13 image on a 12.x driver). Use a CUDA 12 image, or upgrade the driver ([step 1](#1-nvidia-driver)).
 - **`nvidia-smi: not found` in the pod**: the pod is missing `runtimeClassName: nvidia`.
 - **GPUs a node sees**: `docker exec dev-lab-worker nvidia-smi -L`.
