@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import devlab
 from devlab import (
     CONFIG_DIR, DevLabError, DevLabManager, GPU_OPERATOR_CHART_VERSION, PROJECT_ROOT,
-    allocatable_gpus, cli, gpu_kind_config,
+    allocatable_gpus, cli, gpu_kind_config, pods_state,
 )
 
 CLUSTER_DIR = PROJECT_ROOT / "cluster"
@@ -106,6 +106,15 @@ class GpuPrerequisiteTests(unittest.TestCase):
                 self.assertEqual(manager()._check_inotify_limits(), ok)
             printed = " ".join(str(call.args[0]) for call in console_print.call_args_list)
             self.assertEqual("99-devlab-kind.conf" in printed, not ok)
+
+    def test_compute_mode_must_be_default(self):
+        for output, ok in (("0, Default\n", True), ("0, Exclusive_Process\n", False)):
+            with self.subTest(output=output), \
+                    patch.object(devlab.subprocess, "run", return_value=completed(stdout=output)), \
+                    patch.object(devlab.console, "print") as console_print:
+                self.assertEqual(manager()._check_compute_mode(), ok)
+            printed = " ".join(str(call.args[0]) for call in console_print.call_args_list)
+            self.assertEqual("nvidia-smi -c DEFAULT" in printed, not ok)
 
     def test_vgpu_license_warning(self):
         cases = (
@@ -218,7 +227,59 @@ class GpuOperatorTests(unittest.TestCase):
             self.assertFalse(self.m._setup_gpu_operator())
 
 
+def pod(name, ready=True, waiting=None, phase="Running"):
+    status = {"phase": phase, "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+              "containerStatuses": [{"name": "c", "state": {"waiting": {"reason": waiting}} if waiting else {"running": {}}}]}
+    return {"metadata": {"name": name}, "status": status}
+
+
+class PodStateTests(unittest.TestCase):
+    def test_counts_and_broken_pods(self):
+        state, broken = pods_state(json.dumps({"items": [
+            pod("grafana-1"), pod("job-1", ready=False, phase="Succeeded"), pod("prometheus-0", ready=False)]}))
+        self.assertEqual((state["pods"], state["ready"], broken), (3, 2, None))
+        self.assertIn("prometheus-0", state["names"])
+
+        _, broken = pods_state(json.dumps({"items": [pod("grafana-1", ready=False, waiting="CrashLoopBackOff")]}))
+        self.assertIn("grafana-1: container c is CrashLoopBackOff", broken)
+        _, broken = pods_state(json.dumps({"items": [pod("grafana-1", ready=False, waiting="ContainerCreating")]}))
+        self.assertIsNone(broken)
+
+    def test_wait_for_pods_fails_fast_and_needs_required_pods(self):
+        m = manager()
+        responses = iter([
+            json.dumps({"items": [pod("kube-prometheus-stack-grafana-x")]}),            # prometheus not created yet
+            json.dumps({"items": [pod("kube-prometheus-stack-grafana-x"), pod("prometheus-0")]}),
+        ])
+        m.tools.kubectl.side_effect = lambda *a, **k: completed(stdout=next(responses))
+        with patch.object(devlab.time, "sleep"), patch.object(devlab.console, "print"):
+            self.assertTrue(m._wait_for_pods("monitoring", required=["kube-prometheus-stack-grafana", "prometheus-"]))
+        self.assertEqual(m.tools.kubectl.call_count, 2)
+
+        m.tools.kubectl.side_effect = lambda *a, **k: completed(
+            stdout=json.dumps({"items": [pod("grafana-1", ready=False, waiting="ImagePullBackOff")]}))
+        m.tools.kubectl.call_count = 0
+        with patch.object(devlab.time, "sleep"), patch.object(devlab.console, "print"):
+            self.assertFalse(m._wait_for_pods("monitoring"))
+        self.assertEqual(m.tools.kubectl.call_count, 1)
+
+
 class GpuBootstrapTests(unittest.TestCase):
+    def test_monitoring_failure_is_reported_at_the_end(self):
+        m = manager()
+        for name in ("check_docker", "_check_gpu_prerequisites", "_create_cluster",
+                     "_configure_kind_node_certificates", "_setup_gpu_nodes", "_setup_registry",
+                     "_setup_metrics_server", "_setup_ingress", "_setup_gpu_operator"):
+            setattr(m, name, MagicMock(return_value=True))
+        m._deploy_monitoring = MagicMock(return_value=False)
+        m._has_service_monitor_crd = MagicMock(return_value=False)
+        with patch.object(devlab, "show_access_points"), patch.object(devlab.console, "print") as console_print:
+            self.assertFalse(m.bootstrap(monitoring=True, krew=False, gpu=True))
+        m._setup_gpu_operator.assert_called_once_with()
+        printed = " ".join(str(call.args[0]) for call in console_print.call_args_list)
+        self.assertIn("these components failed", printed)
+        self.assertIn("monitoring stack", printed)
+
     def test_gpu_steps_run_in_order(self):
         m = manager()
         calls = []

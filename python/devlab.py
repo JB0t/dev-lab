@@ -223,6 +223,36 @@ def gpu_kind_config(config: dict, workers: list) -> Tuple[dict, Dict[str, List[s
     return config, gpu_nodes
 
 
+# Container states that will not recover by waiting
+BROKEN_POD_REASONS = {
+    "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "InvalidImageName",
+    "CreateContainerConfigError", "CreateContainerError", "RunContainerError",
+}
+
+
+def pods_state(pods_json: str) -> Tuple[dict, Optional[str]]:
+    """Pod names and ready/total counts from `kubectl get pods -o json`, and the first broken container."""
+    pods = json.loads(pods_json).get("items", [])
+    names = [pod["metadata"]["name"] for pod in pods]
+    ready = 0
+    for pod in pods:
+        name = pod["metadata"]["name"]
+        status = pod.get("status", {})
+        if status.get("phase") == "Succeeded":
+            ready += 1
+            continue
+        for container in status.get("initContainerStatuses", []) + status.get("containerStatuses", []):
+            reason = (container.get("state", {}).get("waiting") or {}).get("reason", "")
+            if reason in BROKEN_POD_REASONS:
+                message = (container["state"]["waiting"].get("message") or "").splitlines()[:1]
+                return {"pods": len(pods), "ready": ready, "names": names}, \
+                    f"{name}: container {container['name']} is {reason} {' '.join(message)}".strip()
+        conditions = {c["type"]: c["status"] for c in status.get("conditions", [])}
+        if conditions.get("Ready") == "True":
+            ready += 1
+    return {"pods": len(pods), "ready": ready, "names": names}, None
+
+
 def allocatable_gpus(nodes_json: str) -> Dict[str, str]:
     """Nodes with non-zero allocatable nvidia.com/gpu, from `kubectl get nodes -o json`."""
     result = {}
@@ -780,18 +810,26 @@ class DevLabManager:
         if not self._setup_ingress():
             return False
 
+        # Optional components: a failure is reported at the end instead of
+        # stopping bootstrap, so everything else still gets installed
+        failed = []
         if monitoring and not self._deploy_monitoring():
-            return False
+            failed.append("monitoring stack (retry: ./devlab bootstrap, keeping the existing cluster)")
 
         # After monitoring, so the DCGM exporter gets a ServiceMonitor
         if gpu and not self._setup_gpu_operator():
             return False
 
         if krew and not self.tools.ensure_krew_plugins():
-            console.print("[yellow]Krew plugins were not installed; retry with ./devlab krew-sync[/yellow]")
+            failed.append("krew plugins (retry with ./devlab krew-sync)")
         
-        console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
-        show_access_points(monitoring)
+        if failed:
+            console.print("\n[bold yellow]Bootstrap completed, but these components failed:[/bold yellow]")
+            for component in failed:
+                console.print(f"  • [red]{component}[/red]")
+        else:
+            console.print("\n[bold green]Bootstrap completed successfully![/bold green]")
+        show_access_points(monitoring and self._has_service_monitor_crd())
         console.print("\n[bold blue]Useful Commands:[/bold blue]")
         console.print("  • [cyan]devlab status[/cyan] - Show environment status")
         console.print("  • [cyan]devlab build -t my-app:1 --push .[/cyan] - Build into the local registry")
@@ -803,7 +841,7 @@ class DevLabManager:
             console.print("  • [cyan]devlab kubectl apply -f config/gpu/gpu-test-pod.yaml[/cyan] - GPU smoke test")
             console.print("  • Each GPU is time-sliced into shares: config/gpu/gpu-operator-values.yaml, then [cyan]devlab gpu-operator[/cyan]")
             console.print("  • Dask GPU workers: DASK-GPU-RUNBOOK.md")
-        return True
+        return not failed
 
     def _kind_nodes(self) -> List[str]:
         """Return the container names of the dev-lab KinD nodes."""
@@ -1005,11 +1043,29 @@ class DevLabManager:
             console.print("  sudo systemctl restart docker")
             return False
         console.print(f"[green]GPUs visible to containers:[/green]\n{result.stdout.strip()}")
+        if not self._check_compute_mode():
+            return False
         if not self._check_inotify_limits():
             return False
         self._check_vgpu_license()
         console.print("[green]GPU prerequisites met[/green]")
         return True
+
+    def _check_compute_mode(self) -> bool:
+        """Time slicing needs the Default compute mode (no exclusive mode, no host MPS)."""
+        result = self._gpu_probe("--query-gpu=index,compute_mode", "--format=csv,noheader")
+        if result.returncode != 0:
+            return True
+        not_default = [line.strip() for line in result.stdout.splitlines()
+                       if line.strip() and not line.strip().endswith("Default")]
+        if not not_default:
+            return True
+        console.print(f"[red]GPU compute mode is not Default: {'; '.join(not_default)}[/red]")
+        console.print("[yellow]Time-sliced pods then fail with 'CUDA-capable device(s) is/are busy or unavailable'. "
+                      "If nothing else on this host needs it, stop MPS and set the Default mode (see GPU.md, step 3):[/yellow]")
+        console.print("  echo quit | sudo nvidia-cuda-mps-control   # only if an MPS daemon runs")
+        console.print("  sudo nvidia-smi -c DEFAULT")
+        return False
 
     def _check_inotify_limits(self) -> bool:
         """Fail when the Docker host's inotify limits are too low for the GPU Operator."""
@@ -1132,11 +1188,16 @@ class DevLabManager:
         return True
 
     def _report_cluster_policy(self) -> None:
-        """Warn when the GPU Operator's validation has not passed (yet)."""
-        result = self.tools.kubectl([
-            "get", "clusterpolicy", "cluster-policy", "-o", "jsonpath={.status.state}"
-        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
-        state = result.stdout.strip() if result.returncode == 0 else ""
+        """Wait for the GPU Operator's validation, warning if it has not passed in 3 minutes."""
+        state = ""
+        for _ in range(90):
+            result = self.tools.kubectl([
+                "get", "clusterpolicy", "cluster-policy", "-o", "jsonpath={.status.state}"
+            ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+            state = result.stdout.strip() if result.returncode == 0 else ""
+            if state == "ready":
+                break
+            time.sleep(2)
         if state == "ready":
             console.print("[green]GPU Operator ClusterPolicy: ready[/green]")
             return
@@ -1449,6 +1510,30 @@ class DevLabManager:
             return False
         return True
 
+    def _wait_for_pods(self, namespace: str, required: List[str] = (), timeout: int = 600) -> bool:
+        """Wait until all pods in a namespace are ready; fail fast on a broken one.
+
+        `required` are pod name prefixes that must exist, for pods created later
+        by an operator.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            result = self.tools.kubectl(["get", "pods", "-n", namespace, "-o", "json"],
+                                        capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+            if result.returncode == 0:
+                state, broken = pods_state(result.stdout)
+                if broken:
+                    console.print(f"[red]{broken}[/red]")
+                    return False
+                missing = [prefix for prefix in required
+                           if not any(name.startswith(prefix) for name in state["names"])]
+                if state["pods"] and not missing and state["ready"] == state["pods"]:
+                    return True
+                console.print(f"[blue]{namespace}: {state['ready']}/{state['pods']} pods ready...[/blue]")
+            time.sleep(10)
+        console.print(f"[red]Pods in {namespace} not ready after {timeout}s[/red]")
+        return False
+
     def _rollout_status(self, namespace: str, *resources: str) -> bool:
         for resource in resources:
             result = self.tools.kubectl([
@@ -1721,23 +1806,13 @@ class DevLabManager:
             console.print("[red]Failed to install monitoring Helm chart[/red]")
             return False
         
-        # Wait for all pods belonging to the Helm release. Component-specific
-        # names vary across chart versions, while the release label is stable.
-        # Grafana has no release label, and Prometheus/Alertmanager pods are
-        # created later by the operator, so wait for those explicitly too.
-        waits = [
-            ["wait", "--for=condition=ready", "pod", "-l", "release=kube-prometheus-stack"],
-            ["rollout", "status", "deployment/kube-prometheus-stack-grafana"],
-            ["wait", "--for=condition=Available",
-             "prometheus/kube-prometheus-stack-prometheus",
-             "alertmanager/kube-prometheus-stack-alertmanager"],
-        ]
-        result = subprocess.CompletedProcess([], 0)
-        for wait in waits:
-            result = self.tools.kubectl([*wait, "-n", "monitoring", "--timeout=300s"])
-            if result.returncode != 0:
-                break
-        if result.returncode != 0:
+        # Wait for every pod in the namespace, including the Prometheus and
+        # Alertmanager pods the operator creates later, and stop as soon as one
+        # is clearly broken instead of waiting out a timeout.
+        if not self._wait_for_pods("monitoring", required=[
+            "kube-prometheus-stack-grafana", "prometheus-kube-prometheus-stack-prometheus",
+            "alertmanager-kube-prometheus-stack-alertmanager",
+        ]):
             console.print("[red]Monitoring stack did not become ready[/red]")
             console.print("[yellow]Monitoring pod diagnostics:[/yellow]")
             self.tools.kubectl([
