@@ -1,0 +1,21 @@
+# Dask GPU image: scheduler, GPU workers and clients all run this image, so
+# every side has the same versions. The pinned set below is the one that must
+# work in this setup (see dask_requirements.md); keep them in sync.
+dask==2026.1.1
+distributed==2026.1.1
+dask-cuda==26.2.0
+numpy==2.4.5
+pandas==2.3.3
+pyarrow==23.0.1
+lightgbm==4.7.0
+xgboost==3.2.0
+numba==0.67.0
+numba-cuda[cu12]==0.22.2
+falcata==1.0.5
+
+# Added for the cluster setup (not in dask_requirements.md):
+# - RMM from the same RAPIDS release as dask-cuda 26.2: the fixed per-worker
+#   GPU memory pool (--rmm-pool-size) that keeps time-sliced workers apart
+rmm-cu12==26.2.0
+# - Dask Kubernetes Operator client (KubeCluster), used by clients only
+dask-kubernetes==2026.3.0

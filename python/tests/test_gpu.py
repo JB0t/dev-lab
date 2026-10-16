@@ -53,18 +53,28 @@ class GpuKindConfigTests(unittest.TestCase):
                 self.assertEqual(gpu_nodes, {"dev-lab-worker": ["all"]})
                 control_plane, gpu_worker, cpu_worker = config["nodes"]
                 # Only the GPU Operator label is added to the control plane
-                expected_control_plane = dict(base["nodes"][0], labels={"nvidia.com/gpu.deploy.operands": "false"})
+                expected_control_plane = dict(base["nodes"][0], labels={
+                    "nvidia.com/gpu.deploy.operands": "false", "devlab.io/gpu": "false"})
                 self.assertEqual(control_plane, expected_control_plane)
-                self.assertEqual(gpu_worker["labels"], {"nvidia.com/gpu.present": "true"})
+                self.assertEqual(gpu_worker["labels"], {"nvidia.com/gpu.present": "true", "devlab.io/gpu": "true"})
                 self.assertEqual(gpu_worker["extraMounts"], [
                     {"hostPath": "/dev/null", "containerPath": "/var/run/nvidia-container-devices/all"}
                 ])
-                self.assertEqual(cpu_worker, {"role": "worker", "labels": {"nvidia.com/gpu.deploy.operands": "false"}})
+                # Only GPU workloads (and GPU Operator operands) run on GPU nodes
+                patch = yaml.safe_load(gpu_worker["kubeadmConfigPatches"][0])
+                self.assertEqual(patch, {"kind": "JoinConfiguration", "nodeRegistration": {"taints": [
+                    {"key": "nvidia.com/gpu", "value": "present", "effect": "NoSchedule"}]}})
+                self.assertEqual(cpu_worker, {"role": "worker", "labels": {
+                    "nvidia.com/gpu.deploy.operands": "false", "devlab.io/gpu": "false"}})
                 for key in base:
                     if key != "nodes":
                         self.assertEqual(config[key], base[key])
                 # The profile config itself is not modified
                 self.assertEqual(base, load(profile))
+
+    def test_taint_can_be_turned_off(self):
+        config, _ = gpu_kind_config(load("kind-config.yaml"), [{"devices": "all", "taint": False}])
+        self.assertNotIn("kubeadmConfigPatches", config["nodes"][1])
 
     def test_explicit_devices_and_node_names(self):
         workers = [{"devices": 0}, {}, {"devices": [1, 2]}]
@@ -189,6 +199,7 @@ class GpuOperatorTests(unittest.TestCase):
         self.m._apply_manifest = MagicMock(return_value=True)
         self.m._ensure_namespace = MagicMock(return_value=True)
         self.m._helm_release = MagicMock(return_value=True)
+        self.m._gpu_memory_gib = MagicMock(return_value=22)
         self.sleep = patch.object(devlab.time, "sleep")
         self.sleep.start()
         self.addCleanup(self.sleep.stop)
@@ -213,6 +224,10 @@ class GpuOperatorTests(unittest.TestCase):
         # Helm 4's --wait would block on the ClusterPolicy; capacity is checked instead
         self.assertNotIn("--wait", kwargs["extra_args"])
         self.m._apply_manifest.assert_called_once_with(CONFIG_DIR / "gpu" / "nvidia-runtimeclass.yaml")
+        # One time-slicing share per GiB of GPU memory
+        values = yaml.safe_load(kwargs["values_text"])
+        time_sliced = yaml.safe_load(values["devicePlugin"]["config"]["data"]["time-sliced"])
+        self.assertEqual(time_sliced["sharing"]["timeSlicing"]["resources"][0]["replicas"], 22)
 
     def test_service_monitor_off_without_monitoring_stack(self):
         self.kubectl(nodes_json(**{"dev-lab-worker": "4"}))

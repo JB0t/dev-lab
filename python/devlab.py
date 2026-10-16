@@ -107,6 +107,18 @@ GPU_PROBE_IMAGE = "ubuntu:22.04"
 GPU_NODE_LABEL = "nvidia.com/gpu.present"
 # The GPU Operator runs no operands on nodes with this label set to "false"
 GPU_OPERANDS_LABEL = "nvidia.com/gpu.deploy.operands"
+# devlab's own GPU node label: "true" on GPU workers, "false" on every other
+# node (NFD sets nvidia.com/gpu.present on all kind nodes, as they share the
+# host's PCI devices), e.g. for keeping CPU-only pods like the Dask scheduler
+# off GPU nodes
+DEVLAB_GPU_LABEL = "devlab.io/gpu"
+# GPU workers are tainted, so only pods that tolerate it (GPU workloads, GPU
+# Operator operands) run there
+GPU_TAINT = {"key": "nvidia.com/gpu", "value": "present", "effect": "NoSchedule"}
+# Placeholder in config/gpu/gpu-operator-values.yaml for the time-slicing
+# replicas: one nvidia.com/gpu share per GiB of GPU memory
+GPU_MEMORY_PLACEHOLDER = "${GPU_MEMORY_GIB}"
+DASK_OPERATOR_CHART_VERSION = "2026.3.0"
 # Host inotify limits for kind with the GPU Operator (as kind and nvkind
 # recommend); with the default 128 instances the device plugin cannot start
 INOTIFY_LIMITS = {"max_user_instances": 8192, "max_user_watches": 524288}
@@ -196,7 +208,7 @@ def gpu_kind_config(config: dict, workers: list) -> Tuple[dict, Dict[str, List[s
     # NFD sees the host's GPUs from every kind node; keep GPU Operator
     # operands off the nodes that have none
     for node in control_planes:
-        node["labels"] = {**(node.get("labels") or {}), GPU_OPERANDS_LABEL: "false"}
+        node["labels"] = {**(node.get("labels") or {}), GPU_OPERANDS_LABEL: "false", DEVLAB_GPU_LABEL: "false"}
 
     gpu_nodes = {}
     new_workers = []
@@ -207,13 +219,22 @@ def gpu_kind_config(config: dict, workers: list) -> Tuple[dict, Dict[str, List[s
         labels = dict(node.get("labels") or {})
         if devices:
             labels[GPU_NODE_LABEL] = "true"
+            labels[DEVLAB_GPU_LABEL] = "true"
             node["extraMounts"] = list(node.get("extraMounts") or []) + [
                 {"hostPath": "/dev/null", "containerPath": f"{NVIDIA_DEVICES_DIR}/{device}"}
                 for device in devices
             ]
+            if worker.get("taint", True):
+                node["kubeadmConfigPatches"] = list(node.get("kubeadmConfigPatches") or []) + [
+                    yaml.safe_dump({
+                        "kind": "JoinConfiguration",
+                        "nodeRegistration": {"taints": [dict(GPU_TAINT)]},
+                    }, sort_keys=False)
+                ]
             gpu_nodes[worker_node_name(index)] = devices
         else:
             labels[GPU_OPERANDS_LABEL] = "false"
+            labels[DEVLAB_GPU_LABEL] = "false"
         node["labels"] = labels
         new_workers.append(node)
 
@@ -1103,6 +1124,26 @@ class DevLabManager:
                               "See the vGPU section of README.md to license this VM.[/yellow]")
                 return
 
+    def _gpu_memory_gib(self) -> Optional[int]:
+        """Memory of the smallest host GPU, in whole GiB: its number of time-slicing shares."""
+        result = self._gpu_probe("--query-gpu=memory.total", "--format=csv,noheader,nounits")
+        sizes = [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
+        if result.returncode != 0 or not sizes:
+            return None
+        return min(sizes) // 1024
+
+    def _gpu_operator_values(self) -> Optional[str]:
+        """gpu-operator-values.yaml with the time-slicing replicas set to the GPU memory in GiB."""
+        values = (CONFIG_DIR / "gpu" / "gpu-operator-values.yaml").read_text()
+        if GPU_MEMORY_PLACEHOLDER not in values:
+            return values
+        gib = self._gpu_memory_gib()
+        if not gib:
+            console.print("[red]Could not read the GPU memory size for the time-slicing shares[/red]")
+            return None
+        console.print(f"[blue]Time slicing: {gib} nvidia.com/gpu shares per GPU (1 per GiB)[/blue]")
+        return values.replace(GPU_MEMORY_PLACEHOLDER, str(gib))
+
     def _host_gpu_count(self) -> int:
         result = self._gpu_probe("-L")
         return sum(1 for line in result.stdout.splitlines() if line.startswith("GPU "))
@@ -1225,10 +1266,14 @@ class DevLabManager:
         extra_args = []
         if not self._has_service_monitor_crd():
             extra_args += ["--set", "dcgmExporter.serviceMonitor.enabled=false"]
+        values = self._gpu_operator_values()
+        if values is None:
+            return False
         if not self._helm_release(
             "gpu-operator", "nvidia/gpu-operator", GPU_OPERATOR_CHART_VERSION, "gpu-operator",
             CONFIG_DIR / "gpu" / "gpu-operator-values.yaml",
             ("nvidia", "https://helm.ngc.nvidia.com/nvidia"),
+            values_text=values,
             extra_args=extra_args,
         ):
             return False
@@ -1586,6 +1631,22 @@ class DevLabManager:
         return self.tools.kubectl(
             ["get", "crd", "servicemonitors.monitoring.coreos.com"], capture_output=True
         ).returncode == 0
+
+    def _enable_dask_operator(self) -> bool:
+        if not self._helm_release(
+            "dask-kubernetes-operator", "dask/dask-kubernetes-operator", DASK_OPERATOR_CHART_VERSION,
+            "dask-operator", CONFIG_DIR / "addons" / "dask-operator" / "values.yaml",
+            ("dask", "https://helm.dask.org"),
+        ):
+            return False
+        return self._rollout_status("dask-operator", "deployment/dask-kubernetes-operator")
+
+    def _disable_dask_operator(self) -> bool:
+        # Dask clusters hold finalizers that need the operator; remove them first
+        self.tools.kubectl(["delete", "daskautoscalers,daskclusters,daskjobs", "-A", "--all", "--wait=true"])
+        result = self.tools.helm(["uninstall", "dask-kubernetes-operator", "-n", "dask-operator",
+                                  "--wait", "--ignore-not-found"])
+        return result.returncode == 0
 
     def _enable_keda(self) -> bool:
         no_monitoring = [] if self._has_service_monitor_crd() else [
@@ -2131,6 +2192,12 @@ ADDONS = {
         "release": ("keda", "keda"),
         "enable": "_enable_keda",
         "disable": "_disable_keda",
+    },
+    "dask-operator": {
+        "description": "Dask Kubernetes Operator: DaskCluster/DaskAutoscaler, e.g. GPU workers that scale from 0 (DASK-GPU-RUNBOOK.md)",
+        "release": ("dask-kubernetes-operator", "dask-operator"),
+        "enable": "_enable_dask_operator",
+        "disable": "_disable_dask_operator",
     },
     "node-autoscaler": {
         "description": "cluster-autoscaler with simulated KWOK nodes (node pool devlab.io/node-pool=kwok)",

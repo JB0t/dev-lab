@@ -10,9 +10,14 @@ spec:
   # GPU pods need the nvidia runtime; it is not the default on dev-lab nodes
   runtimeClassName: nvidia
   restartPolicy: OnFailure
+  # GPU nodes are tainted; only GPU workloads tolerate it
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   containers:
     - name: vectoradd
       image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
       resources:
         limits:
-          nvidia.com/gpu: 1
+          nvidia.com/gpu: 1   # one share: 1 GiB of GPU memory

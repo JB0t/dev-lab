@@ -29,13 +29,17 @@ cdi:
 # NFD sees the host's GPUs from every kind node.
 
 devicePlugin:
-  # GPU time slicing: each physical GPU is advertised as `replicas`
-  # schedulable nvidia.com/gpu, so that many pods share it. Time slicing shares
-  # compute only: there is no memory or fault isolation between pods on the
-  # same GPU, so every pod must limit its own GPU memory (see config/dask).
+  # GPU time slicing in GiB: each physical GPU is advertised as one
+  # nvidia.com/gpu share per GiB of its memory (devlab replaces
+  # ${GPU_MEMORY_GIB} with the GPU's memory, e.g. 22 on an A10-24Q). A pod
+  # requests as many shares as the GiB of GPU memory it may use, so
+  # Kubernetes only places it where that much is free, on any GPU node.
+  # Time slicing shares compute only: there is no memory or fault isolation,
+  # so every pod must limit its own GPU memory to its shares (the Dask
+  # helper in config/dask does this).
   #
-  # - Change the share count: edit `replicas` (must be >= 2), then run
-  #   ./devlab gpu-operator
+  # - Fixed share count instead: replace ${GPU_MEMORY_GIB} with a number
+  #   (>= 2), then run ./devlab gpu-operator
   # - Turn off for the whole cluster: set `default: exclusive`, then run
   #   ./devlab gpu-operator
   # - Turn off for one node (no reinstall):
@@ -51,11 +55,11 @@ devicePlugin:
           timeSlicing:
             # Keep the resource name nvidia.com/gpu (not nvidia.com/gpu.shared)
             renameByDefault: false
-            # A pod asking for 2+ shares would not get more GPU time, so reject it
-            failRequestsGreaterThanOne: true
+            # Pods request several shares (GiB) of one GPU
+            failRequestsGreaterThanOne: false
             resources:
               - name: nvidia.com/gpu
-                replicas: 4
+                replicas: ${GPU_MEMORY_GIB}
       # One pod per physical GPU (no sharing)
       exclusive: |-
         version: v1

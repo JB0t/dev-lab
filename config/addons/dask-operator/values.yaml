@@ -1,0 +1,7 @@
+# Dask Kubernetes Operator (devlab addon enable dask-operator)
+# Chart: dask/dask-kubernetes-operator (version pinned in python/devlab.py)
+# It reconciles DaskCluster, DaskWorkerGroup, DaskAutoscaler and DaskJob
+# resources. The DaskAutoscaler asks each scheduler for its adaptive target and
+# scales the cluster's default worker group, including from and to 0. See
+# DASK-GPU-RUNBOOK.md.
+{}
