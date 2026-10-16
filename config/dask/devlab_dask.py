@@ -53,6 +53,9 @@ SCHEDULER_HTTP_ROUTES = [
 
 GPU_TOLERATION = {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}
 
+# Namespace of the pod a client runs in
+SERVICE_ACCOUNT_NAMESPACE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
 
 def gib(value: float) -> str:
     """Format a GiB amount for Dask, e.g. 4.5 -> '4.5GiB'."""
@@ -170,17 +173,38 @@ def gpu_cluster_spec(
     }
 
 
+def default_namespace(service_account_namespace: str = SERVICE_ACCOUNT_NAMESPACE) -> Optional[str]:
+    """Namespace for clusters when the caller gives none.
+
+    In a pod: the pod's namespace. kr8s (used by dask-kubernetes) does not read
+    it and falls back to "default". Elsewhere: None, so the kubeconfig's
+    current namespace is used.
+    """
+    import dask
+
+    configured = dask.config.get("kubernetes.namespace", default=None)
+    if configured:
+        return configured
+    try:
+        with open(service_account_namespace) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
 def gpu_cluster(name: str, n_workers: int, gpu_memory_gib: int, namespace: Optional[str] = None, **spec_options):
     """Create a Dask cluster whose GPU workers scale between 0 and ``n_workers``.
 
     Returns a ``dask_kubernetes.operator.KubeCluster``; the cluster is deleted
-    when it is closed. See ``gpu_cluster_spec`` for ``spec_options``.
+    when it is closed. ``namespace`` defaults to the client pod's namespace in
+    the cluster, or the kubeconfig's current namespace outside it. See
+    ``gpu_cluster_spec`` for ``spec_options``.
     """
     from dask_kubernetes.operator import KubeCluster
 
     cluster = KubeCluster(
         custom_cluster_spec=gpu_cluster_spec(name, gpu_memory_gib, **spec_options),
-        namespace=namespace,
+        namespace=namespace or default_namespace(),
         shutdown_on_close=True,
     )
     cluster.adapt(minimum=0, maximum=n_workers)

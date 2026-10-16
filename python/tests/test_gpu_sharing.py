@@ -147,6 +147,19 @@ class DaskClusterSpecTests(unittest.TestCase):
         self.assertEqual(job["nodeSelector"], {"devlab.io/gpu": "false"})
         self.assertEqual(job["serviceAccountName"], "dask-client")
 
+    @unittest.skipUnless(importlib.util.find_spec("dask"), "dask not installed")
+    def test_clusters_default_to_the_client_pods_namespace(self):
+        import tempfile
+        import dask
+        with tempfile.NamedTemporaryFile("w", suffix="namespace") as f:
+            f.write("dask")
+            f.flush()
+            self.assertEqual(self.helper.default_namespace(f.name), "dask")
+            with dask.config.set({"kubernetes.namespace": "other"}):
+                self.assertEqual(self.helper.default_namespace(f.name), "other")
+        # Outside a pod: None, so the kubeconfig's namespace is used
+        self.assertIsNone(self.helper.default_namespace("/nonexistent/namespace"))
+
     def test_image_pins_the_required_versions(self):
         requirements = (DASK_DIR / "image" / "requirements.txt").read_text()
         pinned = dict(line.split("==") for line in requirements.splitlines()
