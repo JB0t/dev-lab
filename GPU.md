@@ -141,7 +141,7 @@ By default the first worker gets every GPU and the second worker is CPU-only; se
 ### 6. Verify
 
 ```bash
-devlab status                                            # GPUs column: 4 on dev-lab-worker per physical GPU
+devlab status                                            # GPUs column: GiB of GPU memory on dev-lab-worker
 devlab kubectl get pods -n gpu-operator                  # all Running or Completed
 devlab kubectl apply -f config/gpu/gpu-test-pod.yaml
 devlab kubectl logs gpu-test                             # ... Test PASSED (a CUDA vector addition on the GPU)
@@ -150,9 +150,9 @@ devlab kubectl delete pod gpu-test
 
 GPU metrics are in Prometheus and Grafana: query `DCGM_FI_DEV_GPU_UTIL` in Grafana's Explore view.
 
-### 7. Run 4 Workloads on One GPU
+### 7. Dask GPU Workers That Scale From 0
 
-[DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) deploys a Dask scheduler and 4 GPU workers, one per time-sliced share, and a sample job that shows all 4 using the GPU at the same time. Read its memory section first: the pool sizes are set for a 24 GB GPU.
+[DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) builds the Dask image from the pinned versions, installs the Dask Kubernetes Operator, and runs a sample client that creates a Dask cluster with 0 GPU workers, submits 4 GPU tasks, and shows the scheduler scaling to 4 workers that use the GPU at the same time.
 
 ### 8. Clean Up
 
@@ -164,18 +164,18 @@ To undo the host setup, revert step 3 with `sudo nvidia-ctk runtime configure --
 
 ## What Bootstrap Does
 
-1. Builds the kind config from the profile's config (`cluster/kind-config.yaml`, or `kind-config.ci.yaml`) with its workers replaced by the ones in `cluster/gpu-workers.yaml`, and writes it to `.kube/kind-config.gpu.yaml`. Each GPU worker gets a `/dev/null` mount at `/var/run/nvidia-container-devices/<device>` (the host's nvidia-container-runtime turns it into that GPU) and the label `nvidia.com/gpu.present=true`. The control plane and CPU-only workers get `nvidia.com/gpu.deploy.operands=false`.
+1. Builds the kind config from the profile's config (`cluster/kind-config.yaml`, or `kind-config.ci.yaml`) with its workers replaced by the ones in `cluster/gpu-workers.yaml`, and writes it to `.kube/kind-config.gpu.yaml`. Each GPU worker gets a `/dev/null` mount at `/var/run/nvidia-container-devices/<device>` (the host's nvidia-container-runtime turns it into that GPU) the labels `nvidia.com/gpu.present=true` and `devlab.io/gpu=true`, and the taint `nvidia.com/gpu=present:NoSchedule`. The control plane and CPU-only workers get `nvidia.com/gpu.deploy.operands=false` and `devlab.io/gpu=false`.
 2. Creates the cluster and installs the custom CA certificates, as without `--gpu`.
 3. In each GPU worker, installs the NVIDIA Container Toolkit and adds an `nvidia` containerd runtime (nvkind's node setup), with CUDA forward compatibility turned off (see [step 1](#1-nvidia-driver)). This runs after the CA certificates so `apt` works behind TLS inspection.
 4. Installs the registry, metrics-server, Traefik and the monitoring stack.
-5. Applies the `nvidia` RuntimeClass and installs the GPU Operator (`config/gpu/gpu-operator-values.yaml`) in the `gpu-operator` namespace. It runs the device plugin (with the time-slicing config), GPU feature discovery, node feature discovery, the DCGM exporter and the operator validator. The driver and toolkit operands are off: the nodes already have both. The validator skips its CUDA sample workloads, which need CUDA forward compatibility on drivers older than CUDA 12.9; the smoke test in step 6 runs a CUDA workload instead.
-6. Waits until a node advertises allocatable `nvidia.com/gpu` (4 per physical GPU by default).
+5. Applies the `nvidia` RuntimeClass and installs the GPU Operator (`config/gpu/gpu-operator-values.yaml`) in the `gpu-operator` namespace, with one time-slicing share per GiB of GPU memory. It runs the device plugin (with the time-slicing config), GPU feature discovery, node feature discovery, the DCGM exporter and the operator validator. The driver and toolkit operands are off: the nodes already have both. The validator skips its CUDA sample workloads, which need CUDA forward compatibility on drivers older than CUDA 12.9; the smoke test in step 6 runs a CUDA workload instead.
+6. Waits until a node advertises allocatable `nvidia.com/gpu` (the GPU memory in GiB).
 
 Masking `/proc/driver/nvidia/params` and removing unassigned `/dev/nvidia*` nodes can fail harmlessly on some toolkit versions. Bootstrap logs these as warnings and continues; the GPU capacity check catches a real failure.
 
 ## GPU Placement
 
-By default the first worker gets every host GPU and the second worker is CPU-only. Edit `cluster/gpu-workers.yaml` to change this. Each `workers` entry is one worker node, and `devices` takes a GPU index, a list of indexes, or `all`:
+By default the first worker gets every host GPU and the second worker is CPU-only. Edit `cluster/gpu-workers.yaml` to change this. Each `workers` entry is one worker node, and `devices` takes a GPU index, a list of indexes, or `all`. GPU workers are tainted for GPU workloads only; add `taint: false` to a worker to allow any pod there. Keep at least one CPU-only worker for CPU pods such as the Dask scheduler:
 
 ```yaml
 # One GPU per worker on a 2-GPU host
@@ -188,20 +188,20 @@ Recreate the cluster (`devlab bootstrap --gpu`, answer yes to recreate) to apply
 
 ## Time Slicing
 
-The device plugin [time-slices](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) each physical GPU into 4 shares. A node with one GPU advertises `nvidia.com/gpu: 4`, so 4 pods that each request `nvidia.com/gpu: 1` run on the same GPU at once. The GPU switches between their CUDA contexts.
+The device plugin [time-slices](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) each physical GPU into **one `nvidia.com/gpu` share per GiB of GPU memory**: bootstrap reads the GPU's memory and sets the share count (an A10-24Q advertises 22, an 11 GB card 10). A pod requests as many shares as the GiB of GPU memory it may use, so Kubernetes only places it on a node with that much GPU memory still free, and pods of different sizes pack onto the same GPU. The GPU switches between their CUDA contexts.
 
-**Time slicing gives no memory or fault isolation.** Every pod sees the whole GPU and its full memory. Kubernetes cannot limit how much GPU memory a pod uses. One pod can use all the memory and make the others fail with out-of-memory errors. Each workload must limit its own GPU memory. For example, `config/dask/workers.yaml` gives each Dask worker a fixed 4.5 GiB RMM pool on a 24 GB GPU. A crash or GPU fault in one pod can also affect the others.
+**Time slicing gives no memory or fault isolation.** Every pod sees the whole GPU and its full memory. Shares only make Kubernetes count GPU memory; each workload must still keep to the memory it requested, or it can make the others fail with out-of-memory errors. The Dask helper does this for you: each worker gets a fixed RMM pool the size of its shares. A crash or GPU fault in one pod can also affect the others.
 
 Other effects:
 
-- A share is not a fixed fraction of compute. A pod alone on the GPU gets all of it, and 4 busy pods take turns.
-- A pod that requests more than 1 `nvidia.com/gpu` is rejected with `UnexpectedAdmissionError`. Two shares of one GPU would not give it more GPU time (`failRequestsGreaterThanOne: true`).
-- The resource name stays `nvidia.com/gpu`, so existing manifests work unchanged.
+- A share is not a fixed fraction of compute. A pod alone on the GPU gets all of it, and busy pods take turns.
+- The resource name stays `nvidia.com/gpu`; `nvidia.com/gpu: 1` now means 1 GiB.
+- With several GPUs in one node, a pod's shares can come from different GPUs. Give each GPU its own kind worker node in `cluster/gpu-workers.yaml` (`devices: 0`, `devices: 1`, ...).
 
 The config is `devicePlugin.config` in `config/gpu/gpu-operator-values.yaml`:
 
 ```bash
-# Change the number of shares per GPU: edit `replicas` (must be >= 2), then
+# Fixed share count instead of 1 per GiB: replace ${GPU_MEMORY_GIB} with a number (>= 2), then
 devlab gpu-operator
 
 # Turn time slicing off for the whole cluster: set `default: exclusive`, then
@@ -213,24 +213,34 @@ devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config=exclusi
 devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config-
 ```
 
-`devlab gpu-operator` re-runs the GPU Operator Helm install and waits for the new capacity. Pods already running on a share keep running, so delete them first if you reduce the share count.
+`devlab gpu-operator` re-runs the GPU Operator Helm install and waits for the new capacity. Pods already running on shares keep running, so delete them first if you reduce the share count.
 
-For a worked example with 4 Dask workers sharing one A10, see [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md).
+For Dask clusters whose GPU workers scale from 0, with a GPU memory size chosen by the client, see [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md).
 
 ## Running GPU Workloads
 
-GPU pods must request `nvidia.com/gpu` and set `runtimeClassName: nvidia`. The nvidia runtime is not the containerd default on the nodes:
+GPU nodes are tainted `nvidia.com/gpu=present:NoSchedule`, so only GPU workloads run there and everything else, such as the Dask scheduler, stays on the CPU worker. GPU pods must:
+
+- request `nvidia.com/gpu`: the GiB of GPU memory they may use,
+- set `runtimeClassName: nvidia` (the nvidia runtime is not the containerd default on the nodes),
+- tolerate the GPU taint:
 
 ```yaml
 spec:
   runtimeClassName: nvidia
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   containers:
     - name: app
       image: my-gpu-app:latest
       resources:
         limits:
-          nvidia.com/gpu: 1
+          nvidia.com/gpu: 4   # 4 GiB of GPU memory; keep the app to that
 ```
+
+Nodes are labelled `devlab.io/gpu=true` (GPU workers) or `devlab.io/gpu=false` (all others), for `nodeSelector`s.
 
 Smoke test:
 
@@ -239,7 +249,7 @@ devlab kubectl apply -f config/gpu/gpu-test-pod.yaml
 devlab kubectl logs gpu-test     # ... Test PASSED
 devlab kubectl delete pod gpu-test
 
-# Allocatable GPU shares per node (GPUs column: 4 per physical GPU)
+# Allocatable GPU shares per node (GPUs column: GiB of GPU memory)
 devlab status
 ```
 
@@ -266,8 +276,8 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 - **No node advertised nvidia.com/gpu capacity**: check the operator pods with `devlab kubectl get pods -n gpu-operator`; the validator and device plugin logs usually say why. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `devlab cleanup && devlab bootstrap --gpu`.
 - **`<node> has no GPUs: the existing cluster was not created with --gpu`**: same fix, recreate the cluster.
 - **Failed installing the NVIDIA Container Toolkit**: the GPU node could not reach `nvidia.github.io` or the Ubuntu/Debian mirrors. Behind TLS inspection, put the CA certificate in `python/certs/` (see the README).
-- **Pod stuck in Pending**: all GPU shares are in use (4 per GPU by default). Check with `devlab status`.
-- **Pod fails with `UnexpectedAdmissionError`**: it requests more than 1 `nvidia.com/gpu` while time slicing is on.
+- **Pod stuck in Pending**: not enough free GPU shares (GiB) on any GPU node, or the pod does not tolerate the `nvidia.com/gpu` taint. Check with `devlab status` and `devlab kubectl describe pod <pod>`.
+- **Pod fails with `UnexpectedAdmissionError`**: its shares could not be allocated on the node it was placed on; check the device plugin logs. With `default: exclusive`, pods get whole GPUs and requests above the GPU count fail.
 - **`CUDA_ERROR_OUT_OF_MEMORY` with time slicing**: another pod on the same GPU used the memory. Limit each workload's GPU memory (see [Time Slicing](#time-slicing)).
 - **`requirement error: unsatisfied condition: cuda>=...`**: the image needs a newer driver than the host or vGPU guest has. Use an image built for an older CUDA version.
 - **GPU slows down after ~20 minutes in a VM**: the vGPU is not licensed (see [vGPU Guests](#vgpu-guests-eg-a10-24q)).

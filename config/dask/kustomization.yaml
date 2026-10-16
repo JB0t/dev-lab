@@ -1,10 +1,18 @@
-# Dask scheduler + 4 GPU workers sharing one time-sliced GPU
+# Namespace, client RBAC and the devlab_dask helper for Dask GPU clusters.
 # Apply: ./devlab kubectl -- apply -k config/dask
+# The clusters themselves are created by clients (devlab_dask.gpu_cluster) through
+# the Dask Kubernetes Operator: ./devlab addon enable dask-operator
 # Runbook: DASK-GPU-RUNBOOK.md
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dask
 resources:
   - namespace.yaml
-  - scheduler.yaml
-  - workers.yaml
+  - rbac.yaml
+configMapGenerator:
+  # Mounted by in-cluster clients (see sample/job.yaml); PYTHONPATH=/devlab
+  - name: devlab-dask
+    files:
+      - devlab_dask.py
+generatorOptions:
+  disableNameSuffixHash: true

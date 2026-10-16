@@ -1,0 +1,8 @@
+# CUDA 12.8 user-space libraries, matching the CUDA 12.8 (R570) driver of the
+# target A10-24Q VM. Kernels compiled with newer CUDA (e.g. 12.9 NVRTC/NVVM)
+# produce code a 12.8 driver cannot load. Raise these with the driver.
+nvidia-cuda-runtime-cu12==12.8.*
+nvidia-cuda-nvrtc-cu12==12.8.*
+nvidia-nvjitlink-cu12==12.8.*
+nvidia-cuda-nvcc-cu12==12.8.*
+nvidia-cuda-cccl-cu12==12.8.*

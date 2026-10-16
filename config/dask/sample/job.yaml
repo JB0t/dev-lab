@@ -1,5 +1,6 @@
-# Dask client that runs gpu_concurrency.py against the dask-scheduler Service.
-# It requests no GPU itself; the GPU work runs on the dask-cuda-worker pods.
+# Dask client that runs gpu_concurrency.py: creates a GPU Dask cluster with
+# 0 workers, submits one GPU task per worker, and checks the autoscaler started
+# the workers and they all ran at the same time. The cluster is deleted at the end.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -8,24 +9,35 @@ spec:
   backoffLimit: 0
   template:
     spec:
+      serviceAccountName: dask-client
       restartPolicy: Never
+      # CPU node, like the scheduler; only the workers use GPU nodes
       nodeSelector:
-        nvidia.com/gpu.present: "true"
+        devlab.io/gpu: "false"
       containers:
         - name: client
-          image: rapidsai/base:26.08-cuda12-py3.12
-          args: ["python", "/scripts/gpu_concurrency.py"]
+          image: localhost:5000/devlab-dask-gpu:2026.1.1
+          command: ["python", "/scripts/gpu_concurrency.py"]
           env:
-            - name: DASK_SCHEDULER_ADDRESS
-              value: tcp://dask-scheduler:8786
-            - name: EXPECTED_WORKERS
+            - name: PYTHONPATH
+              value: /devlab
+            - name: N_WORKERS
               value: "4"
+            # GPU memory per worker (= nvidia.com/gpu shares). 4 x 5 GiB fits
+            # an A10-24Q (22 shares); use 2 on an 11 GB card
+            - name: GPU_MEMORY_GIB
+              value: "5"
             - name: TASK_SECONDS
               value: "30"
           volumeMounts:
             - name: script
               mountPath: /scripts
+            - name: devlab-dask
+              mountPath: /devlab
       volumes:
         - name: script
           configMap:
             name: gpu-concurrency-script
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask

@@ -1,4 +1,5 @@
-# Sample workload: one GPU task per Dask worker, run at the same time
+# Sample workload: a GPU Dask cluster that scales from 0 to 4 workers for 4
+# GPU tasks running at the same time, then back to 0
 # Apply: ./devlab kubectl -- apply -k config/dask/sample
 # Re-run: ./devlab kubectl -- delete job -n dask gpu-concurrency, then apply again
 apiVersion: kustomize.config.k8s.io/v1beta1

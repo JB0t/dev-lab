@@ -1,14 +1,18 @@
-"""Run one GPU task on every Dask worker at the same time and check they overlapped.
+"""Scale a GPU Dask cluster from 0 workers for GPU tasks and check they ran concurrently.
 
-Each task runs CuPy matrix multiplies for TASK_SECONDS on its worker's GPU share,
-then reports when it started and finished. With time slicing, all tasks run on
-the same physical GPU, so the timeline shows them sharing it concurrently.
+Creates a cluster with devlab_dask.gpu_cluster (0 workers, adapting up to
+N_WORKERS), submits one GPU task per worker, and lets the scheduler and the
+Dask Kubernetes Operator start the workers. Each task waits until all workers
+have joined, then keeps its GPU share busy with a numba-cuda kernel for
+TASK_SECONDS and reports when it ran. With time slicing, all tasks run on the
+same physical GPU at once. The cluster is deleted at the end; idle workers
+are removed before that by the autoscaler.
 
 Environment:
-    DASK_SCHEDULER_ADDRESS  scheduler to connect to (tcp://dask-scheduler:8786)
-    EXPECTED_WORKERS        workers to wait for and use (4)
-    TASK_SECONDS            how long each task keeps its GPU busy (30)
-    MATRIX_SIZE             square matrix size per task (4096, ~64 MiB float32)
+    N_WORKERS        workers to scale up to and tasks to run (4)
+    GPU_MEMORY_GIB   GPU memory per worker = nvidia.com/gpu shares (5)
+    TASK_SECONDS     how long each task keeps its GPU busy (30)
+    CLUSTER_NAME     name of the DaskCluster to create (gpu-concurrency)
 
 Exit code is 0 when every task ran on a different worker and all of them were
 running at the same moment, 1 otherwise.
@@ -18,33 +22,51 @@ import os
 import sys
 import time
 
+# Name of the task function below: the scheduler is told how long these tasks
+# take (task_durations), so it asks for all workers at once
+TASK_NAME = "gpu_task"
 
-def gpu_task(seconds, size):
-    """Keep this worker's GPU share busy and report what ran where"""
-    import cupy
-    import rmm
-    from distributed import get_worker
 
+def gpu_task(seconds, n_workers):
+    """Wait for all workers, then keep this worker's GPU share busy and report what ran where"""
+    import numpy as np
+    from distributed import get_client, get_worker
+    from numba import cuda
+
+    @cuda.jit
+    def spin(values, iterations):
+        i = cuda.grid(1)
+        if i < values.size:
+            x = values[i]
+            for _ in range(iterations):
+                x = x * 1.0000001 + 0.0000001
+            values[i] = x
+
+    joined = time.time()
+    # All tasks start computing together once every worker is up
+    get_client().wait_for_workers(n_workers, timeout=900)
+    ready = time.time()
+
+    values = cuda.to_device(np.random.random(1 << 20).astype(np.float32))
+    launches = 0
     start = time.time()
-    matrix = cupy.random.random((size, size), dtype=cupy.float32)
-    iterations = 0
     while time.time() - start < seconds:
-        matrix = matrix @ matrix
-        matrix /= cupy.linalg.norm(matrix)
-        cupy.cuda.Device().synchronize()
-        iterations += 1
+        spin[(values.size + 255) // 256, 256](values, 20000)
+        cuda.synchronize()
+        launches += 1
     end = time.time()
 
     return {
         "worker": get_worker().name,
-        "pid": os.getpid(),
-        # The device plugin sets this to the physical GPU behind the share
+        # The device plugin sets this to the physical GPU behind the shares
         "gpu": os.environ.get("NVIDIA_VISIBLE_DEVICES", "?"),
-        "memory_resource": type(rmm.mr.get_current_device_resource()).__name__,
+        "joined": joined,
+        "ready": ready,
         "start": start,
         "end": end,
-        "iterations": iterations,
+        "iterations": launches,
     }
+
 
 
 def check_concurrent(results, expected_workers):
@@ -61,42 +83,47 @@ def check_concurrent(results, expected_workers):
     return True, f"all {len(results)} tasks were running at the same time for {overlap:.1f}s"
 
 
-def run(client, expected_workers, task, *task_args):
-    """Submit one task pinned to each of the first expected_workers workers"""
-    client.wait_for_workers(expected_workers, timeout=600)
-    # client.run returns {worker address: result} for every connected worker
-    addresses = sorted(client.run(os.getpid))[:expected_workers]
+def run(client, n_workers, task, *task_args):
+    """Submit n_workers tasks that each need a whole worker (resource GPU=1)."""
     futures = [
-        client.submit(task, *task_args, workers=[address], allow_other_workers=False, pure=False)
-        for address in addresses
+        client.submit(task, *task_args, resources={"GPU": 1}, pure=False)
+        for _ in range(n_workers)
     ]
     return client.gather(futures)
 
 
-def print_timeline(results):
-    origin = min(result["start"] for result in results)
-    print(f"{'worker':<40} {'gpu':<44} {'start':>6} {'end':>6} {'iters':>6}  memory resource")
-    for result in sorted(results, key=lambda r: r["worker"]):
-        print(f"{result['worker']:<40} {result['gpu']:<44} "
-              f"{result['start'] - origin:>5.1f}s {result['end'] - origin:>5.1f}s "
-              f"{result['iterations']:>6}  {result.get('memory_resource', '-')}")
+def print_timeline(results, submitted):
+    print(f"{'worker':<44} {'joined':>7} {'start':>6} {'end':>6} {'iters':>6}")
+    for result in sorted(results, key=lambda r: r["start"]):
+        print(f"{result['worker']:<44} {result['joined'] - submitted:>6.1f}s "
+              f"{result['start'] - submitted:>5.1f}s {result['end'] - submitted:>5.1f}s "
+              f"{result['iterations']:>6}")
+    print(f"GPU(s): {', '.join(sorted({result['gpu'] for result in results}))}")
+    print(f"Scale-up: {max(result['ready'] for result in results) - submitted:.1f}s "
+          "from submitting the tasks to all workers running them")
 
 
 def main():
     from dask.distributed import Client
+    from devlab_dask import gpu_cluster
 
-    address = os.environ.get("DASK_SCHEDULER_ADDRESS", "tcp://dask-scheduler:8786")
-    expected_workers = int(os.environ.get("EXPECTED_WORKERS", "4"))
+    n_workers = int(os.environ.get("N_WORKERS", "4"))
+    gpu_memory_gib = int(os.environ.get("GPU_MEMORY_GIB", "5"))
     seconds = float(os.environ.get("TASK_SECONDS", "30"))
-    size = int(os.environ.get("MATRIX_SIZE", "4096"))
+    name = os.environ.get("CLUSTER_NAME", "gpu-concurrency")
 
-    print(f"Connecting to {address}, waiting for {expected_workers} workers...", flush=True)
-    with Client(address) as client:
-        print(f"Running a {seconds:.0f}s GPU task on each worker...", flush=True)
-        results = run(client, expected_workers, gpu_task, seconds, size)
+    print(f"Creating Dask cluster {name}: 0 to {n_workers} GPU workers, {gpu_memory_gib} GiB GPU memory each",
+          flush=True)
+    with gpu_cluster(name, n_workers=n_workers, gpu_memory_gib=gpu_memory_gib,
+                     task_durations={TASK_NAME: f"{seconds:g}s"},
+                     worker_resources={"GPU": 1}) as cluster, Client(cluster) as client:
+        print(f"Scheduler up with {len(client.scheduler_info()['workers'])} workers; "
+              f"submitting {n_workers} GPU tasks...", flush=True)
+        submitted = time.time()
+        results = run(client, n_workers, gpu_task, seconds, n_workers)
 
-    print_timeline(results)
-    ok, message = check_concurrent(results, expected_workers)
+    print_timeline(results, submitted)
+    ok, message = check_concurrent(results, n_workers)
     print(("PASS: " if ok else "FAIL: ") + message)
     return 0 if ok else 1
 

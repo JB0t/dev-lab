@@ -1,0 +1,34 @@
+# Lets in-cluster Dask clients (pods running as the dask-client service
+# account) create and scale Dask clusters in this namespace through the Dask
+# Kubernetes Operator. Clients outside the cluster use your kubeconfig instead.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dask-client
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dask-client
+rules:
+  - apiGroups: [kubernetes.dask.org]
+    resources: [daskclusters, daskworkergroups, daskworkergroups/scale, daskjobs, daskautoscalers]
+    verbs: [get, list, watch, patch, create, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/status, services]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dask-client
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dask-client
+subjects:
+  - kind: ServiceAccount
+    name: dask-client
