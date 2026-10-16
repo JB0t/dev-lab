@@ -132,6 +132,12 @@ class DaskClusterSpecTests(unittest.TestCase):
             memory = self.helper.worker_memory(size)
             self.assertLessEqual(parse_gib(memory["pool"]) + self.helper.CUDA_CONTEXT_GIB, max(size, 1))
 
+    def test_rmm_pool_can_be_turned_off(self):
+        spec = self.helper.gpu_cluster_spec("xgb", gpu_memory_gib=5, rmm_pool=False)
+        container = spec["spec"]["worker"]["spec"]["containers"][0]
+        self.assertFalse([arg for arg in container["args"] if arg.startswith("--rmm")])
+        self.assertEqual(container["resources"]["limits"]["nvidia.com/gpu"], "5")
+
     def test_scheduler_serves_adaptive_target_and_knows_task_durations(self):
         import ast
         env = {item["name"]: item["value"] for item in self.scheduler_container["env"]}
@@ -217,7 +223,7 @@ def sleep_task(seconds):
     start = time.time()
     time.sleep(seconds)
     return {"worker": get_worker().name, "gpu": "-", "start": start,
-            "end": time.time(), "iterations": 1}
+            "end": time.time(), "rounds": 1}
 
 
 class ConcurrencyCheckTests(unittest.TestCase):

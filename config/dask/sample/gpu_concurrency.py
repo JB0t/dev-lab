@@ -3,8 +3,8 @@
 Creates a cluster with devlab_dask.gpu_cluster (0 workers, adapting up to
 N_WORKERS), submits one GPU task per worker, and lets the scheduler and the
 Dask Kubernetes Operator start the workers. Each task waits until all workers
-have joined, then keeps its GPU share busy with a numba-cuda kernel for
-TASK_SECONDS and reports when it ran. With time slicing, all tasks run on the
+have joined, then keeps its GPU share busy training XGBoost models on the GPU
+for TASK_SECONDS and reports when it ran. With time slicing, all tasks run on the
 same physical GPU at once. The cluster is deleted at the end; idle workers
 are removed before that by the autoscaler.
 
@@ -26,34 +26,34 @@ import time
 # take (task_durations), so it asks for all workers at once
 TASK_NAME = "gpu_task"
 
+# Training data per task: 200k rows x 32 float32 features (25 MB), small
+# enough for the smallest worker (GPU_MEMORY_GIB=2)
+ROWS = 200_000
+COLUMNS = 32
+ROUNDS_PER_TRAIN = 10
 
-def gpu_task(seconds, n_workers):
+
+def gpu_task(seconds, n_workers, device="cuda"):
     """Wait for all workers, then keep this worker's GPU share busy and report what ran where"""
     import numpy as np
+    import xgboost as xgb
     from distributed import get_client, get_worker
-    from numba import cuda
-
-    @cuda.jit
-    def spin(values, iterations):
-        i = cuda.grid(1)
-        if i < values.size:
-            x = values[i]
-            for _ in range(iterations):
-                x = x * 1.0000001 + 0.0000001
-            values[i] = x
 
     joined = time.time()
     # All tasks start computing together once every worker is up
     get_client().wait_for_workers(n_workers, timeout=900)
     ready = time.time()
 
-    values = cuda.to_device(np.random.random(1 << 20).astype(np.float32))
-    launches = 0
+    rng = np.random.default_rng()
+    features = rng.random((ROWS, COLUMNS), dtype=np.float32)
+    labels = features @ rng.random(COLUMNS, dtype=np.float32) + rng.normal(0, 0.1, ROWS).astype(np.float32)
+    data = xgb.QuantileDMatrix(features, labels)
+    params = {"device": device, "tree_method": "hist", "max_depth": 8, "objective": "reg:squarederror"}
+    rounds = 0
     start = time.time()
     while time.time() - start < seconds:
-        spin[(values.size + 255) // 256, 256](values, 20000)
-        cuda.synchronize()
-        launches += 1
+        xgb.train(params, data, num_boost_round=ROUNDS_PER_TRAIN)
+        rounds += ROUNDS_PER_TRAIN
     end = time.time()
 
     return {
@@ -64,7 +64,7 @@ def gpu_task(seconds, n_workers):
         "ready": ready,
         "start": start,
         "end": end,
-        "iterations": launches,
+        "rounds": rounds,
     }
 
 
@@ -93,11 +93,11 @@ def run(client, n_workers, task, *task_args):
 
 
 def print_timeline(results, submitted):
-    print(f"{'worker':<44} {'joined':>7} {'start':>6} {'end':>6} {'iters':>6}")
+    print(f"{'worker':<44} {'joined':>7} {'start':>6} {'end':>6} {'rounds':>6}")
     for result in sorted(results, key=lambda r: r["start"]):
         print(f"{result['worker']:<44} {result['joined'] - submitted:>6.1f}s "
               f"{result['start'] - submitted:>5.1f}s {result['end'] - submitted:>5.1f}s "
-              f"{result['iterations']:>6}")
+              f"{result['rounds']:>6}")
     print(f"GPU(s): {', '.join(sorted({result['gpu'] for result in results}))}")
     print(f"Scale-up: {max(result['ready'] for result in results) - submitted:.1f}s "
           "from submitting the tasks to all workers running them")
@@ -116,7 +116,9 @@ def main():
           flush=True)
     with gpu_cluster(name, n_workers=n_workers, gpu_memory_gib=gpu_memory_gib,
                      task_durations={TASK_NAME: f"{seconds:g}s"},
-                     worker_resources={"GPU": 1}) as cluster, Client(cluster) as client:
+                     worker_resources={"GPU": 1},
+                     # XGBoost allocates GPU memory itself, not through RMM
+                     rmm_pool=False) as cluster, Client(cluster) as client:
         print(f"Scheduler up with {len(client.scheduler_info()['workers'])} workers; "
               f"submitting {n_workers} GPU tasks...", flush=True)
         submitted = time.time()
