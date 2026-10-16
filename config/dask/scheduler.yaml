@@ -1,0 +1,53 @@
+# Dask scheduler (CPU only)
+# Uses the same RAPIDS image as the workers: Dask versions must match on all
+# sides. It runs on the GPU node so the ~6 GB image is pulled only once.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dask-scheduler
+  labels:
+    app: dask-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dask-scheduler
+  template:
+    metadata:
+      labels:
+        app: dask-scheduler
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: scheduler
+          image: rapidsai/base:26.08-cuda12-py3.12
+          # args (not command) so the image entrypoint still sets up the environment
+          args: ["dask", "scheduler", "--port", "8786"]
+          ports:
+            - name: comm
+              containerPort: 8786
+          readinessProbe:
+            tcpSocket:
+              port: comm
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dask-scheduler
+  labels:
+    app: dask-scheduler
+spec:
+  selector:
+    app: dask-scheduler
+  ports:
+    - name: comm
+      port: 8786
+      targetPort: comm

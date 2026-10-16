@@ -18,7 +18,7 @@ import subprocess
 import logging
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import argparse
 import time
 import re
@@ -26,6 +26,7 @@ import shutil
 import threading
 import hashlib
 import socket
+import copy
 
 # Third-party imports (will be in requirements.txt)
 import click
@@ -98,6 +99,15 @@ CLUSTER_AUTOSCALER_IMAGE_TAGS = {
     (1, 36): "v1.36.1",
 }
 
+# GPU-enabled clusters (bootstrap --gpu). GPUs are added to the kind workers
+# the way nvkind does, and the NVIDIA GPU Operator runs on top.
+GPU_OPERATOR_CHART_VERSION = "v26.7.1"
+NVIDIA_DEVICES_DIR = "/var/run/nvidia-container-devices"
+GPU_PROBE_IMAGE = "ubuntu:22.04"
+GPU_NODE_LABEL = "nvidia.com/gpu.present"
+# The GPU Operator runs no operands on nodes with this label set to "false"
+GPU_OPERANDS_LABEL = "nvidia.com/gpu.deploy.operands"
+
 # Services published through the Traefik ingress. *.localhost resolves to
 # loopback in browsers and curl without any /etc/hosts entries.
 # (service, URL, credentials, part of the monitoring stack)
@@ -139,6 +149,124 @@ def interactive_terminal() -> bool:
 class DevLabError(Exception):
     """Custom exception for dev-lab operations"""
     pass
+
+
+def worker_node_name(index: int) -> str:
+    """KinD names workers dev-lab-worker, dev-lab-worker2, ... in config order."""
+    return f"{CLUSTER_NAME}-worker" + ("" if index == 0 else str(index + 1))
+
+
+def gpu_worker_devices(worker) -> List[str]:
+    """Normalise a gpu-workers.yaml `devices` value to a list of strings."""
+    devices = worker.get("devices") if isinstance(worker, dict) else None
+    if devices is None:
+        return []
+    if not isinstance(devices, list):
+        devices = [devices]
+    result = []
+    for device in devices:
+        if device == "all" or (isinstance(device, int) and not isinstance(device, bool) and device >= 0):
+            result.append(str(device))
+        else:
+            raise DevLabError(
+                f"cluster/gpu-workers.yaml: invalid device {device!r} "
+                "(use a GPU index, a list of indexes, or all)"
+            )
+    return result
+
+
+def gpu_kind_config(config: dict, workers: list) -> Tuple[dict, Dict[str, List[str]]]:
+    """Replace the workers of a kind config with the GPU workers of gpu-workers.yaml.
+
+    Each GPU is injected the way nvkind does it: a /dev/null mount at
+    /var/run/nvidia-container-devices/<device>, which the host
+    nvidia-container-runtime turns into that GPU. Returns the new config and
+    {node name: devices} for the workers that have GPUs.
+    """
+    if not workers:
+        raise DevLabError("cluster/gpu-workers.yaml has no workers")
+    config = copy.deepcopy(config)
+    nodes = config.get("nodes") or [{"role": "control-plane"}]
+    control_planes = [node for node in nodes if node.get("role") != "worker"]
+    templates = [node for node in nodes if node.get("role") == "worker"] or [{"role": "worker"}]
+
+    # NFD sees the host's GPUs from every kind node; keep GPU Operator
+    # operands off the nodes that have none
+    for node in control_planes:
+        node["labels"] = {**(node.get("labels") or {}), GPU_OPERANDS_LABEL: "false"}
+
+    gpu_nodes = {}
+    new_workers = []
+    for index, worker in enumerate(workers):
+        node = copy.deepcopy(templates[min(index, len(templates) - 1)])
+        node["role"] = "worker"
+        devices = gpu_worker_devices(worker)
+        labels = dict(node.get("labels") or {})
+        if devices:
+            labels[GPU_NODE_LABEL] = "true"
+            node["extraMounts"] = list(node.get("extraMounts") or []) + [
+                {"hostPath": "/dev/null", "containerPath": f"{NVIDIA_DEVICES_DIR}/{device}"}
+                for device in devices
+            ]
+            gpu_nodes[worker_node_name(index)] = devices
+        else:
+            labels[GPU_OPERANDS_LABEL] = "false"
+        node["labels"] = labels
+        new_workers.append(node)
+
+    if not gpu_nodes:
+        raise DevLabError("cluster/gpu-workers.yaml gives no worker any GPU devices")
+    config["nodes"] = control_planes + new_workers
+    return config, gpu_nodes
+
+
+def allocatable_gpus(nodes_json: str) -> Dict[str, str]:
+    """Nodes with non-zero allocatable nvidia.com/gpu, from `kubectl get nodes -o json`."""
+    result = {}
+    for node in json.loads(nodes_json).get("items", []):
+        count = node.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu", "0")
+        if count not in ("", "0"):
+            result[node["metadata"]["name"]] = count
+    return result
+
+
+# Node setup scripts for GPU workers, adapted from nvkind's pkg/nvkind/node.go
+# (https://github.com/NVIDIA/nvkind, Apache-2.0). They run in each GPU node
+# after the custom CA certificates are installed, so apt works behind TLS
+# inspection.
+INSTALL_TOOLKIT_SCRIPT = """
+set -e
+apt-get update
+apt-get install -y gpg
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \\
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \\
+  tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+apt-get update
+apt-get install -y nvidia-container-toolkit
+"""
+
+CONFIGURE_RUNTIME_SCRIPT = """
+set -e
+nvidia-ctk runtime configure --runtime=containerd --config-source=file
+systemctl restart containerd
+"""
+
+# Toolkits older than v1.19.0 bind-mount a tmpfs over /proc/driver/nvidia,
+# hiding the real params file. Expose it, set ModifyDeviceFiles to 0 and
+# bind-mount the copy back, so the driver does not recreate device nodes.
+PATCH_PROC_DRIVER_SCRIPT = """
+set -e
+umount -R /proc/driver/nvidia
+cp /proc/driver/nvidia/params root/gpu-params
+sed -i 's/^ModifyDeviceFiles: 1$/ModifyDeviceFiles: 0/' root/gpu-params
+mount --bind root/gpu-params /proc/driver/nvidia/params
+"""
+
+REMOVE_DEVICE_NODE_SCRIPT = """
+while umount /dev/nvidia{index}; do :; done || true
+rm -rf /dev/nvidia{index}
+"""
 
 class ContainerToolRunner:
     """Runs Kubernetes tools in containers for platform independence"""
@@ -606,7 +734,7 @@ class DevLabManager:
             console.print(f"[red]Docker is not available: {e}[/red]")
             return False
     
-    def bootstrap(self, monitoring: bool = None, krew: bool = None) -> bool:
+    def bootstrap(self, monitoring: bool = None, krew: bool = None, gpu: bool = False) -> bool:
         """Bootstrap the complete dev-lab environment"""
         monitoring = profile_setting("monitoring") if monitoring is None else monitoring
         krew = profile_setting("krew") if krew is None else krew
@@ -614,15 +742,22 @@ class DevLabManager:
         
         if not self.check_docker():
             return False
+
+        if gpu and not self._check_gpu_prerequisites():
+            return False
         
         # Ensure shared kubeconfig is available
         self.tools._ensure_shared_kubeconfig()
         
         # Create cluster
-        if not self._create_cluster():
+        if not self._create_cluster(gpu=gpu):
             return False
 
         if not self._configure_kind_node_certificates():
+            return False
+
+        # After the CA certificates: the node setup installs packages with apt
+        if gpu and not self._setup_gpu_nodes():
             return False
         
         # Setup bootstrap infrastructure
@@ -638,6 +773,10 @@ class DevLabManager:
         if monitoring and not self._deploy_monitoring():
             return False
 
+        # After monitoring, so the DCGM exporter gets a ServiceMonitor
+        if gpu and not self._setup_gpu_operator():
+            return False
+
         if krew and not self.tools.ensure_krew_plugins():
             console.print("[yellow]Krew plugins were not installed; retry with ./devlab krew-sync[/yellow]")
         
@@ -648,6 +787,12 @@ class DevLabManager:
         console.print("  • [cyan]devlab build -t my-app:1 --push .[/cyan] - Build into the local registry")
         console.print("  • [cyan]devlab kubectl port-forward svc/<name> 8080:80[/cyan] - Ad hoc access on localhost:8080")
         console.print("  • [cyan]devlab deploy-gitops[/cyan] - Optional: let Flux manage workloads")
+        if gpu:
+            console.print("\n[bold blue]GPU Workloads:[/bold blue]")
+            console.print("  • Request [cyan]nvidia.com/gpu[/cyan] in resource limits and set [cyan]runtimeClassName: nvidia[/cyan]")
+            console.print("  • [cyan]devlab kubectl apply -f config/gpu/gpu-test-pod.yaml[/cyan] - GPU smoke test")
+            console.print("  • Each GPU is time-sliced into shares: config/gpu/gpu-operator-values.yaml, then [cyan]devlab gpu-operator[/cyan]")
+            console.print("  • Dask GPU workers: DASK-GPU-RUNBOOK.md")
         return True
 
     def _kind_nodes(self) -> List[str]:
@@ -763,9 +908,15 @@ class DevLabManager:
 
         return current_image if selection.startswith("Keep current:") else selection
     
-    def _create_cluster(self) -> bool:
+    def _create_cluster(self, gpu: bool = False) -> bool:
         """Create KinD cluster"""
         console.print("[blue]Creating KinD cluster...[/blue]")
+        self.cluster_created = False
+        gpu_config_file = None
+        if gpu:
+            # Also sets self.gpu_nodes, which the GPU node setup needs when an
+            # existing cluster is kept
+            gpu_config_file = self._gpu_cluster_config(PROJECT_ROOT / "cluster" / profile_setting("kind_config"))
         
         # Check if cluster already exists
         result = self.tools.kind(["get", "clusters"], capture_output=True)
@@ -793,6 +944,10 @@ class DevLabManager:
         else:
             selected_image = current_image
         console.print(f"[blue]Using Kubernetes node image: {selected_image}[/blue]")
+        if gpu_config_file:
+            config_file = gpu_config_file
+            workers = [f"{node} ({', '.join(devices)})" for node, devices in self.gpu_nodes.items()]
+            console.print(f"[blue]GPU workers: {'; '.join(workers)}[/blue]")
         
         result = self.tools.kind([
             "create", "cluster", 
@@ -804,6 +959,7 @@ class DevLabManager:
         if result.returncode != 0:
             console.print("[red]Failed to create cluster[/red]")
             return False
+        self.cluster_created = True
         
         # Fix kubeconfig to use the container network IP
         if not self._fix_kubeconfig_for_containers():
@@ -816,6 +972,173 @@ class DevLabManager:
         console.print("[green]Cluster created successfully[/green]")
         return True
     
+    def _gpu_probe(self, *nvidia_smi_args: str) -> subprocess.CompletedProcess:
+        """Run nvidia-smi in a container that gets every GPU the way kind nodes do."""
+        return subprocess.run([
+            "docker", "run", "--rm",
+            "-v", f"/dev/null:{NVIDIA_DEVICES_DIR}/all",
+            GPU_PROBE_IMAGE, "nvidia-smi", *nvidia_smi_args,
+        ], capture_output=True, text=True)
+
+    def _check_gpu_prerequisites(self) -> bool:
+        """Check Docker can inject the host's GPUs into containers."""
+        console.print("[blue]Checking GPU prerequisites...[/blue]")
+        # The same /dev/null volume-mount injection the kind GPU nodes rely on
+        result = self._gpu_probe("-L")
+        if result.returncode != 0 or "GPU " not in result.stdout:
+            console.print("[red]Docker cannot inject GPUs into containers: "
+                          f"{(result.stderr or result.stdout).strip()}[/red]")
+            console.print("[yellow]Needs a Linux Docker host with an NVIDIA GPU, its driver and the "
+                          "NVIDIA Container Toolkit. Configure Docker for GPU-enabled kind (one-time):[/yellow]")
+            console.print("  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled")
+            console.print("  sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place")
+            console.print("  sudo systemctl restart docker")
+            return False
+        console.print(f"[green]GPUs visible to containers:[/green]\n{result.stdout.strip()}")
+        self._check_vgpu_license()
+        console.print("[green]GPU prerequisites met[/green]")
+        return True
+
+    def _check_vgpu_license(self) -> None:
+        """Warn when a vGPU guest has no license (NVIDIA throttles it after 20 minutes)."""
+        result = self._gpu_probe("-q")
+        if result.returncode != 0:
+            return
+        # Only vGPU guests report a license status; bare-metal GPUs have none
+        for status in re.findall(r"^\s*License Status\s*:\s*(.+?)\s*$", result.stdout, re.MULTILINE):
+            if not status.startswith("Licensed"):
+                console.print(f"[yellow]vGPU license status: {status}[/yellow]")
+                console.print("[yellow]Unlicensed vGPUs are throttled after 20 minutes. "
+                              "See the vGPU section of README.md to license this VM.[/yellow]")
+                return
+
+    def _host_gpu_count(self) -> int:
+        result = self._gpu_probe("-L")
+        return sum(1 for line in result.stdout.splitlines() if line.startswith("GPU "))
+
+    def _gpu_cluster_config(self, base_config_file: Path) -> Path:
+        """Write the profile's kind config with the GPU workers of cluster/gpu-workers.yaml."""
+        workers_file = PROJECT_ROOT / "cluster" / "gpu-workers.yaml"
+        base = yaml.safe_load(base_config_file.read_text()) or {}
+        workers = (yaml.safe_load(workers_file.read_text()) or {}).get("workers")
+        config, self.gpu_nodes = gpu_kind_config(base, workers)
+        # Under the project, so the kind tool container sees it at /workspace
+        generated = self.tools.shared_kubeconfig_dir / "kind-config.gpu.yaml"
+        generated.write_text(
+            f"# Generated by devlab bootstrap --gpu from cluster/{base_config_file.name}\n"
+            "# and cluster/gpu-workers.yaml. Edit those instead.\n"
+            + yaml.safe_dump(config, sort_keys=False)
+        )
+        return generated
+
+    def _node_script(self, node: str, script: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["docker", "exec", node, "bash", "-c", script],
+                              capture_output=True, text=True)
+
+    def _modify_device_files_disabled(self, node: str) -> Optional[bool]:
+        """Whether /proc/driver/nvidia/params in the node reads ModifyDeviceFiles: 0.
+
+        Toolkit v1.19.0+ sets this up itself with a CDI hook; None when unknown.
+        """
+        result = subprocess.run(["docker", "exec", node, "cat", "/proc/driver/nvidia/params"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            if line.strip() == "ModifyDeviceFiles: 0":
+                return True
+            if line.strip() == "ModifyDeviceFiles: 1":
+                return False
+        return None
+
+    def _setup_gpu_nodes(self) -> bool:
+        """Install the NVIDIA Container Toolkit and the nvidia containerd runtime in GPU nodes."""
+        nodes = set(self._kind_nodes())
+        host_gpus = None
+        for node, devices in self.gpu_nodes.items():
+            if node not in nodes:
+                console.print(f"[red]GPU worker {node} is not part of the cluster[/red]")
+                return False
+            # A cluster kept from a bootstrap without --gpu has no GPUs in its nodes
+            if subprocess.run(["docker", "exec", node, "nvidia-smi", "-L"],
+                              capture_output=True, text=True).returncode != 0:
+                console.print(f"[red]{node} has no GPUs: the existing cluster was not created with --gpu[/red]")
+                console.print("[yellow]Delete it and re-bootstrap: ./devlab cleanup && ./devlab bootstrap --gpu[/yellow]")
+                return False
+
+            console.print(f"[blue]Setting up GPUs on {node} (devices: {', '.join(devices)})...[/blue]")
+            for step, script in (("installing the NVIDIA Container Toolkit", INSTALL_TOOLKIT_SCRIPT),
+                                 ("configuring containerd", CONFIGURE_RUNTIME_SCRIPT)):
+                result = self._node_script(node, script)
+                if result.returncode != 0:
+                    output = (result.stdout + result.stderr).strip().splitlines()[-15:]
+                    console.print(f"[red]Failed {step} on {node}:[/red]\n" + "\n".join(output))
+                    return False
+
+            # Failures from here on are warnings, like nvkind's benign umount
+            # errors: the GPU capacity check catches a broken node
+            masked = self._modify_device_files_disabled(node)
+            if masked is None:
+                console.print(f"[yellow]Could not read /proc/driver/nvidia/params on {node}[/yellow]")
+            elif not masked and self._node_script(node, PATCH_PROC_DRIVER_SCRIPT).returncode != 0:
+                console.print(f"[yellow]Could not mask /proc/driver/nvidia/params on {node}[/yellow]")
+
+            # The node inherits every host /dev/nvidiaN; remove the ones it was not given
+            if "all" in devices:
+                continue
+            if host_gpus is None:
+                host_gpus = self._host_gpu_count()
+            for index in range(host_gpus):
+                if str(index) not in devices and \
+                        self._node_script(node, REMOVE_DEVICE_NODE_SCRIPT.format(index=index)).returncode != 0:
+                    console.print(f"[yellow]Could not remove /dev/nvidia{index} from {node}[/yellow]")
+
+        console.print("[green]GPU nodes ready[/green]")
+        return True
+
+    def _setup_gpu_operator(self) -> bool:
+        """Install the NVIDIA GPU Operator and wait until GPUs are allocatable."""
+        console.print("[blue]Setting up NVIDIA GPU Operator...[/blue]")
+        if not self._apply_manifest(CONFIG_DIR / "gpu" / "nvidia-runtimeclass.yaml"):
+            return False
+        if not self._ensure_namespace("gpu-operator"):
+            return False
+        # Operands run privileged
+        self.tools.kubectl([
+            "label", "namespace", "gpu-operator", "pod-security.kubernetes.io/enforce=privileged", "--overwrite"
+        ], capture_output=True, context=f"kind-{CLUSTER_NAME}")
+
+        extra_args = ["--wait", "--timeout", "600s"]
+        if not self._has_service_monitor_crd():
+            extra_args += ["--set", "dcgmExporter.serviceMonitor.enabled=false"]
+        if not self._helm_release(
+            "gpu-operator", "nvidia/gpu-operator", GPU_OPERATOR_CHART_VERSION, "gpu-operator",
+            CONFIG_DIR / "gpu" / "gpu-operator-values.yaml",
+            ("nvidia", "https://helm.ngc.nvidia.com/nvidia"),
+            extra_args=extra_args,
+        ):
+            return False
+
+        # NFD, the validator and then the device plugin start one after another
+        console.print("[blue]Waiting for GPUs to be allocatable (up to 10 minutes)...[/blue]")
+        for _ in range(300):
+            result = self.tools.kubectl(["get", "nodes", "-o", "json"], capture_output=True, text=True,
+                                        context=f"kind-{CLUSTER_NAME}")
+            if result.returncode == 0:
+                gpus = allocatable_gpus(result.stdout)
+                if gpus:
+                    for node, count in gpus.items():
+                        console.print(f"[green]{node}: {count} allocatable nvidia.com/gpu[/green]")
+                    console.print("[green]NVIDIA GPU Operator ready[/green]")
+                    return True
+            time.sleep(2)
+
+        console.print("[red]No node advertised nvidia.com/gpu capacity[/red]")
+        console.print("[yellow]Check: ./devlab kubectl get pods -n gpu-operator[/yellow]")
+        console.print("[yellow]If you kept an existing cluster created without --gpu, delete it and "
+                      "re-bootstrap: ./devlab cleanup && ./devlab bootstrap --gpu[/yellow]")
+        return False
+
     def _fix_kubeconfig_for_containers(self) -> bool:
         """Fix kubeconfig to use container network IP instead of localhost"""
         console.print("[blue]Fixing kubeconfig for container networking...[/blue]")
@@ -1744,11 +2067,19 @@ def cli(profile):
               help="Install the Prometheus/Grafana stack (default: yes locally, no in CI)")
 @click.option("--krew/--no-krew", default=None,
               help="Install the default krew plugins (default: yes locally, no in CI)")
-def bootstrap(monitoring, krew):
+@click.option("--gpu", is_flag=True,
+              help="GPU-enabled cluster: NVIDIA GPUs on the workers (cluster/gpu-workers.yaml) and the GPU Operator")
+def bootstrap(monitoring, krew, gpu):
     """Bootstrap the dev-lab environment"""
     manager = DevLabManager()
-    success = manager.bootstrap(monitoring=monitoring, krew=krew)
+    success = manager.bootstrap(monitoring=monitoring, krew=krew, gpu=gpu)
     sys.exit(0 if success else 1)
+
+@cli.command(name='gpu-operator')
+def gpu_operator():
+    """Install or update the NVIDIA GPU Operator (applies time-slicing changes)"""
+    manager = DevLabManager()
+    sys.exit(0 if manager._setup_gpu_operator() else 1)
 
 @cli.command(name='deploy-gitops')
 def deploy_gitops():
@@ -2017,6 +2348,7 @@ def status():
         table.add_column("Name")
         table.add_column("Status")
         table.add_column("Role")
+        table.add_column("GPUs")
         
         for node in nodes["items"]:
             name = node["metadata"]["name"]
@@ -2024,7 +2356,9 @@ def status():
                                   for c in node["status"]["conditions"]) else "NotReady"
             role = "control-plane" if "node-role.kubernetes.io/control-plane" in node["metadata"]["labels"] else "worker"
             
-            table.add_row(name, status, role)
+            gpus = node["status"].get("allocatable", {}).get("nvidia.com/gpu", "-")
+            
+            table.add_row(name, status, role, gpus)
         
         console.print(table)
         show_access_points(manager._has_service_monitor_crd())

@@ -1,0 +1,17 @@
+# Smoke test: lists the GPU allocated to the pod, then exits
+# kubectl apply -f config/gpu/gpu-test-pod.yaml && kubectl logs gpu-test
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+spec:
+  # GPU pods need the nvidia runtime; it is not the default on dev-lab nodes
+  runtimeClassName: nvidia
+  restartPolicy: OnFailure
+  containers:
+    - name: nvidia-smi
+      image: ubuntu:22.04
+      command: ["nvidia-smi", "-L"]
+      resources:
+        limits:
+          nvidia.com/gpu: 1

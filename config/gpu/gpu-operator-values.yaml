@@ -1,0 +1,62 @@
+# NVIDIA GPU Operator on the GPU-enabled dev-lab cluster (bootstrap --gpu)
+# Chart: nvidia/gpu-operator (version pinned in python/devlab.py)
+#
+# The kind nodes already have what the operator would normally install: the
+# host driver is injected into each GPU node by the host
+# nvidia-container-runtime, and bootstrap --gpu installs the NVIDIA Container
+# Toolkit and the `nvidia` containerd runtime in each GPU node. The operator
+# runs the rest: device plugin, GPU feature discovery, node feature discovery,
+# DCGM exporter and its validator. This is the setup nvkind documents.
+driver:
+  enabled: false
+toolkit:
+  enabled: false
+
+operator:
+  # Operand pods need the nvidia runtime; it is not the containerd default
+  runtimeClass: nvidia
+
+# Nodes labelled nvidia.com/gpu.deploy.operands=false (the control plane and
+# CPU-only workers, see cluster/gpu-workers.yaml) get no operands, although
+# NFD sees the host's GPUs from every kind node.
+
+devicePlugin:
+  # GPU time slicing: each physical GPU is advertised as `replicas`
+  # schedulable nvidia.com/gpu, so that many pods share it. Time slicing shares
+  # compute only: there is no memory or fault isolation between pods on the
+  # same GPU, so every pod must limit its own GPU memory (see config/dask).
+  #
+  # - Change the share count: edit `replicas` (must be >= 2), then run
+  #   ./devlab gpu-operator
+  # - Turn off for the whole cluster: set `default: exclusive`, then run
+  #   ./devlab gpu-operator
+  # - Turn off for one node (no reinstall):
+  #   ./devlab kubectl label node <node> nvidia.com/device-plugin.config=exclusive --overwrite
+  config:
+    create: true
+    name: time-slicing-config
+    default: time-sliced
+    data:
+      time-sliced: |-
+        version: v1
+        sharing:
+          timeSlicing:
+            # Keep the resource name nvidia.com/gpu (not nvidia.com/gpu.shared)
+            renameByDefault: false
+            # A pod asking for 2+ shares would not get more GPU time, so reject it
+            failRequestsGreaterThanOne: true
+            resources:
+              - name: nvidia.com/gpu
+                replicas: 4
+      # One pod per physical GPU (no sharing)
+      exclusive: |-
+        version: v1
+
+dcgmExporter:
+  # GPU metrics for the monitoring stack. kube-prometheus-stack only selects
+  # ServiceMonitors labelled release=kube-prometheus-stack; devlab turns the
+  # ServiceMonitor off when the monitoring stack is not installed.
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: kube-prometheus-stack

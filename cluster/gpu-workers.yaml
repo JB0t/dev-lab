@@ -1,0 +1,26 @@
+# GPU worker nodes for `devlab bootstrap --gpu`
+# Replaces the worker nodes of the profile's kind config (kind-config.yaml, or
+# kind-config.ci.yaml with --profile ci); the control plane is unchanged. One
+# entry per worker node. `devices` is a GPU index, a list of indexes, or
+# `all`; omit it for a CPU-only worker. Check indexes with `nvidia-smi -L`.
+#
+# devlab injects each GPU the way nvkind does: a /dev/null mount at
+# /var/run/nvidia-container-devices/<device> that the host
+# nvidia-container-runtime turns into that GPU, plus the label
+# nvidia.com/gpu.present=true for the NVIDIA device plugin.
+#
+# Default: same shape as kind-config.yaml (2 workers), with every host GPU on
+# the first worker and the second worker CPU-only.
+#
+# Examples:
+#   one GPU per worker on a 2-GPU host:
+#     workers:
+#     - devices: 0
+#     - devices: 1
+#   two GPUs on one worker:
+#     workers:
+#     - devices: [0, 1]
+#     - {}
+workers:
+- devices: all
+- {}
