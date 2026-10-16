@@ -8,11 +8,20 @@ for TASK_SECONDS and reports when it ran. With time slicing, all tasks run on th
 same physical GPU at once. The cluster is deleted at the end; idle workers
 are removed before that by the autoscaler.
 
+With SCHEDULER_ADDRESS set, it connects to that scheduler instead, e.g. a
+standing cluster (DASK-GPU-RUNBOOK.md, "Connect Existing Clients By Address"),
+and needs only dask and distributed on the client side:
+
+    SCHEDULER_ADDRESS=tcp://<server IP>:8786 python gpu_concurrency.py
+
 Environment:
-    N_WORKERS        workers to scale up to and tasks to run (4)
+    SCHEDULER_ADDRESS  existing scheduler to use instead of creating a cluster
+    N_WORKERS        workers to scale up to and tasks to run (4); with
+                     SCHEDULER_ADDRESS at most the cluster's --workers
     GPU_MEMORY_GIB   GPU memory per worker = nvidia.com/gpu shares (5)
     TASK_SECONDS     how long each task keeps its GPU busy (30)
     CLUSTER_NAME     name of the DaskCluster to create (gpu-concurrency)
+    DEVICE           XGBoost device (cuda); cpu runs the check without a GPU
 
 Exit code is 0 when every task ran on a different worker and all of them were
 running at the same moment, 1 otherwise.
@@ -83,10 +92,10 @@ def check_concurrent(results, expected_workers):
     return True, f"all {len(results)} tasks were running at the same time for {overlap:.1f}s"
 
 
-def run(client, n_workers, task, *task_args):
-    """Submit n_workers tasks that each need a whole worker (resource GPU=1)."""
+def run(client, n_workers, task, *task_args, resources=None):
+    """Submit n_workers tasks, e.g. needing a whole worker each (resources={"GPU": 1})."""
     futures = [
-        client.submit(task, *task_args, resources={"GPU": 1}, pure=False)
+        client.submit(task, *task_args, resources=resources, pure=False)
         for _ in range(n_workers)
     ]
     return client.gather(futures)
@@ -116,12 +125,26 @@ def print_timeline(results, submitted):
 
 def main():
     from dask.distributed import Client
-    from devlab_dask import gpu_cluster
 
     n_workers = int(os.environ.get("N_WORKERS", "4"))
     gpu_memory_gib = int(os.environ.get("GPU_MEMORY_GIB", "5"))
     seconds = float(os.environ.get("TASK_SECONDS", "30"))
     name = os.environ.get("CLUSTER_NAME", "gpu-concurrency")
+    device = os.environ.get("DEVICE", "cuda")
+    address = os.environ.get("SCHEDULER_ADDRESS")
+
+    if address:
+        print(f"Connecting to {address}", flush=True)
+        with Client(address) as client:
+            print(f"Scheduler has {len(client.scheduler_info()['workers'])} workers; "
+                  f"submitting {n_workers} GPU tasks...", flush=True)
+            submitted = time.time()
+            # Each worker runs one task at a time (--nthreads 1); the standing
+            # cluster has no GPU worker resource unless created with --resources
+            results = run(client, n_workers, gpu_task, seconds, n_workers, device)
+        return report(results, submitted, n_workers)
+
+    from devlab_dask import gpu_cluster
 
     print(f"Creating Dask cluster {name}: 0 to {n_workers} GPU workers, {gpu_memory_gib} GiB GPU memory each",
           flush=True)
@@ -133,8 +156,12 @@ def main():
         print(f"Scheduler up with {len(client.scheduler_info()['workers'])} workers; "
               f"submitting {n_workers} GPU tasks...", flush=True)
         submitted = time.time()
-        results = run(client, n_workers, gpu_task, seconds, n_workers)
+        results = run(client, n_workers, gpu_task, seconds, n_workers, device, resources={"GPU": 1})
 
+    return report(results, submitted, n_workers)
+
+
+def report(results, submitted, n_workers):
     print_timeline(results, submitted)
     ok, message = check_concurrent(results, n_workers)
     print(("PASS: " if ok else "FAIL: ") + message)
