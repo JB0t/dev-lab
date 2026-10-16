@@ -40,6 +40,11 @@ nodes:
         hostPort: 8786
         listenAddress: 0.0.0.0
         protocol: TCP
+      # Its dashboard (NodePort 30787): http://<host IP>:8787/status, /workers
+      - containerPort: 30787
+        hostPort: 8787
+        listenAddress: 0.0.0.0
+        protocol: TCP
     extraMounts:
       # Registry storage on the Docker host, so pushed images survive a
       # cluster recreate

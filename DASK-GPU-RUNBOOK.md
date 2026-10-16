@@ -165,7 +165,7 @@ docker run --rm -e SCHEDULER_ADDRESS=tcp://<server IP>:8786 -e N_WORKERS=4 \
 
 `N_WORKERS` must not exceed the cluster's `--workers`. Use `TASK_SECONDS` to make the tasks longer or shorter.
 
-The dashboard is at http://gpu.dask.localhost; on a headless server, go through the SSH tunnel and open http://gpu.dask.localhost:8080.
+**Dashboard**: http://<server IP>:8787/workers (also `/status`, `/tasks`, `/graph`), or http://gpu.dask.localhost/workers through Traefik on the server or the SSH tunnel (http://gpu.dask.localhost:8080/workers). Workers appear there as the scheduler starts them.
 
 **What the client needs**:
 - **No Dask settings.** GPU memory, scaling and task duration belong to the cluster (the options below).
@@ -184,7 +184,8 @@ Options (`python3 config/dask/devlab_dask.py --help`):
 | `--task-duration` | `1m` | How long the scheduler assumes a task takes until it has measured it. Anything over a few seconds starts one worker per queued task right away |
 | `--rmm-pool` | off | Fixed RMM pool per worker, for code that allocates through RMM (not XGBoost) |
 | `--resources` | none | Worker resources, e.g. `GPU=1`, for tasks submitted with `resources={"GPU": 1}` |
-| `--node-port` | 30786 | Scheduler NodePort. Only 30786 is mapped to the host, so only one standing cluster can be reached from outside; others take `--node-port 0` and are reachable from pods only |
+| `--node-port` | 30786 | Scheduler NodePort. Only 30786 is mapped to the host (port 8786), so only one standing cluster can be reached from outside; others take `--node-port 0` and are reachable from pods only |
+| `--dashboard-node-port` | 30787 | Dashboard NodePort, mapped to host port 8787 |
 
 To change the cluster, delete it and apply it again with new options; running clients lose their connection:
 
@@ -193,7 +194,7 @@ devlab kubectl -n dask delete daskcluster gpu      # also removes its autoscaler
 devlab kubectl -n dask delete ingress gpu-dashboard
 ```
 
-The host port needs `cluster/kind-config.yaml` from this version: a cluster created before it has no port 8786 mapping (`devlab cleanup && devlab bootstrap --gpu`). Without recreating, a client in a container on the `kind` network can still use `tcp://dev-lab-control-plane:30786`.
+The host ports need `cluster/kind-config.yaml` from this version: a cluster created before it has no port 8786 and 8787 mappings (`devlab cleanup && devlab bootstrap --gpu`). Without recreating, a client in a container on the `kind` network can still use `tcp://dev-lab-control-plane:30786`.
 
 **Security: anyone who can connect to port 8786 can run any code on the GPU workers.** A Dask scheduler runs the functions its clients send and has no login, and kind publishes the port on every interface of the server. Allow only the client machines. `ufw` does not apply to ports Docker publishes; filter them in Docker's `DOCKER-USER` chain instead, e.g. to allow only 10.10.0.0/24:
 
