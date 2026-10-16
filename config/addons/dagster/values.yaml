@@ -1,0 +1,170 @@
+# Dagster (devlab addon enable dagster)
+# Chart: dagster/dagster (version pinned in python/devlab.py), installed in the
+# dask namespace next to the Dask clusters it creates. UI: http://dagster.localhost
+#
+# The code location (config/dask/dagster/definitions.py) runs in the Dask image
+# with the devlab_dask helper and the GPU sample mounted from ConfigMaps
+# (config/dask/kustomization.yaml). Runs are Kubernetes Jobs (K8sRunLauncher)
+# with the same image, mounts and service account. Each run's executor
+# (dagster-dask) creates a time-sliced GPU Dask cluster and runs every op on
+# its workers. See DASK-GPU-RUNBOOK.md.
+
+dagsterWebserver:
+  # Code location changes show up with a reload from the UI
+  enableReadOnly: false
+
+dagster-user-deployments:
+  deployments:
+    - name: devlab-dask
+      image:
+        repository: localhost:5000/devlab-dask-gpu
+        tag: "2026.1.1"
+        # Pick up image rebuilds pushed under the same tag
+        pullPolicy: Always
+      # `dagster code-server start`: reloads definitions from the UI
+      codeServerArgs:
+        - "--python-file"
+        - "/dagster/definitions.py"
+      port: 3030
+      # Run pods get this deployment's env, volumes, node selector and
+      # service account
+      includeConfigInLaunchedRuns:
+        enabled: true
+      env:
+        - name: PYTHONPATH
+          value: /devlab:/dagster
+      volumes:
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask
+        - name: devlab-dagster
+          configMap:
+            name: devlab-dagster
+      volumeMounts:
+        - name: devlab-dask
+          mountPath: /devlab
+        - name: devlab-dagster
+          mountPath: /dagster
+      # Dask clients run on a CPU node, like the Dask schedulers
+      nodeSelector:
+        devlab.io/gpu: "false"
+      readinessProbe:
+        enabled: true
+        periodSeconds: 20
+        timeoutSeconds: 10
+        successThreshold: 1
+        # Allow ~5 minutes to pull the 2.5 GB image and load the definitions
+        failureThreshold: 15
+
+  serviceAccount:
+    # Created by config/dask (rbac.yaml): allowed to create Dask clusters in
+    # this namespace. The chart binds its job/pod Role to it as well.
+    create: false
+    name: dask-client
+
+runLauncher:
+  type: K8sRunLauncher
+  config:
+    k8sRunLauncher:
+      # Like the code location: runs use the image last pushed under the tag
+      imagePullPolicy: Always
+      # Show the run as failed in Kubernetes too
+      failPodOnRunFailure: true
+
+# The chart's Bitnami PostgreSQL image is no longer published; run the
+# official postgres image instead (extraManifests below)
+postgresql:
+  enabled: false
+  postgresqlHost: dagster-postgresql
+  postgresqlUsername: dagster
+  postgresqlPassword: dagster
+  postgresqlDatabase: dagster
+  # SQLAlchemy 2.1 maps postgresql:// to psycopg 3, which dagster-postgres
+  # does not install; use psycopg2. The Dask workers that run ops open the
+  # instance with this setting too.
+  postgresqlScheme: postgresql+psycopg2
+  # Init containers wait for the database with this image
+  image:
+    registry: docker.io
+    repository: library/postgres
+    tag: "17.6"
+    pullPolicy: IfNotPresent
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  dagsterWebserver:
+    host: dagster.localhost
+    path: "/"
+    pathType: Prefix
+
+telemetry:
+  enabled: false
+
+extraManifests:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: dagster-postgresql
+    spec:
+      selector:
+        app.kubernetes.io/name: dagster-postgresql
+      ports:
+        - name: postgres
+          port: 5432
+          targetPort: postgres
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: dagster-postgresql
+    spec:
+      serviceName: dagster-postgresql
+      replicas: 1
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: dagster-postgresql
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dagster-postgresql
+        spec:
+          containers:
+            - name: postgres
+              image: docker.io/library/postgres:17.6
+              ports:
+                - name: postgres
+                  containerPort: 5432
+              env:
+                - name: POSTGRES_USER
+                  value: dagster
+                - name: POSTGRES_DB
+                  value: dagster
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      # Created by the chart from postgresql.postgresqlPassword
+                      name: dagster-postgresql-secret
+                      key: postgresql-password
+                - name: PGDATA
+                  value: /var/lib/postgresql/data/pgdata
+              readinessProbe:
+                exec:
+                  command: ["pg_isready", "-U", "dagster", "-d", "dagster"]
+                periodSeconds: 5
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/postgresql/data
+      # Run history survives pod restarts; removed with the cluster
+      volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                # Run history and op outputs (postgres_io_manager.py)
+                storage: 5Gi

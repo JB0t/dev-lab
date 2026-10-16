@@ -20,6 +20,7 @@ GPU node (tainted nvidia.com/gpu): workers, each requesting gpu_memory_gib nvidi
 | Image for scheduler, workers and clients | `config/dask/image/` (from the pinned versions in `dask_requirements.md`) |
 | Namespace `dask`, client RBAC, helper ConfigMap | `config/dask/` (`kubectl apply -k`) |
 | Sample client job | `config/dask/sample/` |
+| Dagster UI and jobs that run on these clusters | `devlab addon enable dagster`, code in `config/dask/dagster/` |
 
 - **Scale from 0**: `gpu_cluster(..., n_workers=4)` creates the cluster with no workers and a `DaskAutoscaler` with minimum 0, maximum 4. The operator asks the scheduler every few seconds how many workers its queued tasks need (Dask's adaptive target) and starts or removes worker pods within that range. Idle workers are removed (at most a quarter of them per step).
 - **GPU memory per worker**: each GPU node advertises one `nvidia.com/gpu` share per GiB of GPU memory (22 on an A10-24Q). A worker with `gpu_memory_gib=5` requests 5 shares, so Kubernetes only starts it on a GPU node with 5 GiB free. By default it also limits itself to a fixed 4.5 GiB RMM pool (5 GiB minus its CUDA context), spilling Dask data to host memory above 4 GiB. Only memory allocated through RMM comes from that pool. XGBoost allocates its own GPU memory, so run XGBoost workers with `rmm_pool=False`; otherwise the pool holds memory XGBoost cannot use. Workers of different sizes and from different clusters share a GPU this way.
@@ -40,7 +41,7 @@ One image (`config/dask/image/`) runs the scheduler, the workers and in-cluster 
 | lightgbm, xgboost, falcata | 4.7.0, 3.2.0, 1.0.5 |
 | numba, numba-cuda | 0.67.0, 0.22.2 |
 
-Added for this setup: `rmm-cu12==26.2.0` (the worker memory pool; same RAPIDS release as dask-cuda 26.2) and `dask-kubernetes==2026.3.0` (`KubeCluster`, for clients). The NVIDIA CUDA wheels are held to 12.8 (`constraints.txt`) to match the A10-24Q VM's CUDA 12.8 driver; raise them together with the driver. `python/tests/test_gpu_sharing.py` fails if `requirements.txt` drifts from `dask_requirements.md`.
+Added for this setup: `rmm-cu12==26.2.0` (the worker memory pool; same RAPIDS release as dask-cuda 26.2), `dask-kubernetes==2026.3.0` (`KubeCluster`, for clients), and Dagster 1.13.26 with `dagster-dask`, `dagster-k8s` and `dagster-postgres` 0.29.26 (the Dagster addon). bokeh, which `dagster-dask` brings in and which serves the Dask dashboard, is held at 3.9.0: 3.10 raises an error when a distributed 2026.1 scheduler shuts down. The NVIDIA CUDA wheels are held to 12.8 (`constraints.txt`) to match the A10-24Q VM's CUDA 12.8 driver; raise them together with the driver. `python/tests/test_gpu_sharing.py` fails if `requirements.txt` drifts from `dask_requirements.md`.
 
 **`numba.cuda` cannot be imported with these versions.** numba-cuda 0.22.2 (the newest dask-cuda 26.2 accepts) does not support numba 0.67 (`module 'numba.cuda.types' has no attribute 'NPDatetime'`) or numpy 2.4 (`np.trapz` was removed). CPU numba works, and so do Dask-CUDA workers: dask-cuda 26.2 only imports `numba.cuda` for GPUDirect Storage spilling. The sample therefore uses XGBoost for its GPU work. numba-cuda 0.30.4 works with numba 0.67 and numpy 2.4.5, but needs dask-cuda 26.4 or later.
 
@@ -59,6 +60,9 @@ devlab addon enable dask-operator
 
 # 3. Namespace, client service account and the devlab_dask helper
 devlab kubectl apply -k config/dask
+
+# 4. Optional: Dagster UI at http://dagster.localhost (also applies step 3)
+devlab addon enable dagster
 ```
 
 The cluster needs at least one CPU-only worker for the scheduler (the default `cluster/gpu-workers.yaml` has one).
@@ -130,6 +134,58 @@ Clusters with different sizes can run side by side, e.g. `gpu_cluster("a", n_wor
 
 **From your machine**: install the same versions (`pip install -r config/dask/image/requirements.txt -c config/dask/image/constraints.txt`, or at least the same Python, `dask`, `distributed` and `dask-kubernetes`), put `config/dask` on `PYTHONPATH`, and point `KUBECONFIG` at the dev-lab cluster. `KubeCluster` reaches the scheduler through a port-forward. Mismatched Dask versions between client and cluster cause errors.
 
+## Run From Dagster
+
+`devlab addon enable dagster` installs Dagster (Helm chart `dagster/dagster`, pinned in `python/devlab.py`) in the `dask` namespace and publishes its UI through Traefik at **http://dagster.localhost**. It needs the image from Setup step 1, which includes Dagster.
+
+To run a job: open http://dagster.localhost, then Jobs, pick the job, then Launchpad, and Launch Run.
+
+| Job | What it does |
+|-----|--------------|
+| `gpu_concurrency_job` | 4 ops that train XGBoost on the GPU, each on its own worker sharing the GPU, then `check_gpu_concurrency`, which fails unless all 4 ran at the same time. Its log shows the same timeline as the sample |
+| `squares_job` | `generate_data` and `compute_squares` from `dagster-dask-integration-example`: data passed between ops on Dask workers |
+
+How a run works:
+
+1. The daemon starts the run as a Kubernetes Job in `dask` (K8sRunLauncher), with the same image, mounts and `dask-client` service account as the code location.
+2. The run uses dagster-dask's `dask_executor`. Its `kube` cluster type creates a GPU Dask cluster with `devlab_dask.gpu_cluster`: a scheduler on the CPU node and 0 GPU workers.
+3. Every op becomes one Dask task. The scheduler starts one worker per op that can run, up to `n_workers`. Each worker gets `gpu_memory_gib` GiB of the time-sliced GPU and runs one op at a time.
+4. Ops pass outputs through PostgreSQL (`postgres_io_manager.py`), since each op may run on a different worker.
+5. The cluster is deleted when the run pod exits, or after 10 idle minutes if the run pod was killed.
+
+The cluster shape is the executor config, editable in the Launchpad:
+
+```yaml
+execution:
+  config:
+    cluster:
+      kube:
+        n_workers: 4          # most GPU workers at once
+        gpu_memory_gib: 5     # nvidia.com/gpu shares per worker; 2 on an 11 GB card
+        # rmm_pool: false, host_memory: 8Gi, op_duration: 5m, idle_timeout: 600
+resources:
+  gpu_task_settings:
+    config:
+      seconds: 30             # how long each GPU op trains
+```
+
+**Your own jobs**: add ops and jobs to `config/dask/dagster/definitions.py` with `executor_def=dask_executor` and `config=cluster_config(...)`, like the two jobs there. Put any extra module next to it and list it under `devlab-dagster` in `config/dask/kustomization.yaml`. Then publish and reload:
+
+```bash
+devlab kubectl apply -k config/dask
+# ~1 minute later, when the pods see the new files: Deployment > devlab-dask > Reload in the UI
+```
+
+Ops run on GPU workers in the Dask image, so they can use the pinned packages. Op outputs are pickled into PostgreSQL, so return results and summaries rather than large datasets. They are kept until `devlab addon disable dagster`, which removes the database.
+
+| Piece | Where |
+|-------|-------|
+| Chart values (code location, run launcher, PostgreSQL, ingress) | `config/addons/dagster/values.yaml` |
+| Jobs, executor cluster (`gpu_kube_cluster`) | `config/dask/dagster/definitions.py` |
+| IO manager | `config/dask/dagster/postgres_io_manager.py` |
+
+The chart's bundled Bitnami PostgreSQL image is no longer published, so the addon runs the official `postgres` image as its own StatefulSet.
+
 ## Sizing
 
 Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each worker also needs about 0.5 GiB for its CUDA context, which comes out of its own shares.
@@ -145,6 +201,7 @@ Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each wo
 
 ```bash
 devlab kubectl -n dask delete daskclusters --all       # clusters left by clients that did not close them
+devlab addon disable dagster                           # also deletes its run history and op outputs
 devlab addon disable dask-operator
 devlab kubectl delete -k config/dask
 ```
@@ -163,3 +220,7 @@ devlab kubectl delete -k config/dask
 | `module 'numba.cuda.types' has no attribute 'NPDatetime'` | `numba.cuda` does not work with the pinned versions; see Versions |
 | `CUDA-capable device(s) is/are busy or unavailable` | GPU compute mode is not Default (see GPU.md, step 3) |
 | Client `ModuleNotFoundError: devlab_dask` | Mount the `devlab-dask` ConfigMap and set `PYTHONPATH`, as in `config/dask/sample/job.yaml` |
+| Dagster code location `devlab-dask` not loading | `devlab kubectl -n dask logs deploy/dagster-dagster-user-deployments-devlab-dask`. `ErrImagePull`: run Setup step 1. `No module named 'dagster'`: the image predates the Dagster addon; rebuild it |
+| Dagster ops never start, or the run pod logs `Dask Cluster resource not actioned` | Is the Dask operator running (`devlab addon enable dask-operator`)? Then see "Workers never start" above |
+| Dagster op `No stored output ...` | The upstream op's output is missing from PostgreSQL, e.g. after `devlab addon disable dagster`; re-run the whole job |
+| `No module named 'psycopg'` | Something opened the Dagster database without `postgresql+psycopg2` (`postgresql.postgresqlScheme` in `config/addons/dagster/values.yaml`) |

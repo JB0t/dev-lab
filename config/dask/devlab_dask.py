@@ -25,8 +25,10 @@ Placement: workers tolerate the GPU node taint and run only on GPU nodes
 (``devlab.io/gpu=false``).
 """
 
+import asyncio
 import math
-from typing import Dict, Optional
+import time
+from typing import Dict, List, Optional
 
 # One image for scheduler, workers and clients (config/dask/image), so all
 # sides run the same Dask version. Built into the local registry with
@@ -81,6 +83,11 @@ def gpu_cluster_spec(
     task_durations: Optional[Dict[str, str]] = None,
     worker_resources: Optional[Dict[str, float]] = None,
     rmm_pool: bool = True,
+    unknown_task_duration: Optional[str] = None,
+    worker_env: Optional[List[dict]] = None,
+    worker_volumes: Optional[List[dict]] = None,
+    worker_volume_mounts: Optional[List[dict]] = None,
+    idle_timeout: Optional[int] = None,
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
@@ -90,7 +97,13 @@ def gpu_cluster_spec(
     become Dask worker resources, e.g. ``{"GPU": 1}``, which tasks can require
     with ``client.submit(..., resources={"GPU": 1})``. ``rmm_pool`` gives
     the worker a fixed RMM pool of its GPU memory; turn it off for code that
-    does not allocate through RMM.
+    does not allocate through RMM. ``unknown_task_duration`` is how long the
+    scheduler assumes any task without a known duration takes (Dask's default
+    is 0.5s); e.g. "5m" makes it ask for one worker per queued task.
+    ``worker_env``, ``worker_volumes`` and ``worker_volume_mounts`` are added
+    to the worker pods (Kubernetes env, volumes and volumeMounts).
+    ``idle_timeout`` (seconds) has the operator delete the cluster when its
+    scheduler has been idle that long, e.g. after its client was killed.
     """
     memory = worker_memory(gpu_memory_gib)
     worker_args = [
@@ -111,9 +124,43 @@ def gpu_cluster_spec(
             "name": "DASK_DISTRIBUTED__SCHEDULER__DEFAULT_TASK_DURATIONS",
             "value": repr(dict(task_durations)),
         })
+    if unknown_task_duration:
+        scheduler_env.append({
+            "name": "DASK_DISTRIBUTED__SCHEDULER__UNKNOWN_TASK_DURATION",
+            "value": unknown_task_duration,
+        })
+
+    worker_container = {
+        "name": "worker",
+        "image": image,
+        "imagePullPolicy": "IfNotPresent",
+        "args": worker_args,
+        "ports": [{"name": "http-dashboard", "containerPort": WORKER_DASHBOARD_PORT, "protocol": "TCP"}],
+        "resources": {
+            "requests": {"cpu": "500m", "memory": "2Gi"},
+            "limits": {
+                # One share per GiB of GPU memory. The DaskCluster
+                # CRD only accepts quantities as strings
+                "nvidia.com/gpu": str(gpu_memory_gib),
+                "memory": host_memory,
+            },
+        },
+    }
+    if worker_env:
+        worker_container["env"] = list(worker_env)
+    if worker_volume_mounts:
+        worker_container["volumeMounts"] = list(worker_volume_mounts)
+    worker_pod = {
+        "runtimeClassName": "nvidia",
+        "nodeSelector": {"devlab.io/gpu": "true"},
+        "tolerations": [GPU_TOLERATION],
+        "containers": [worker_container],
+    }
+    if worker_volumes:
+        worker_pod["volumes"] = list(worker_volumes)
 
     labels = {"dask.org/cluster-name": name, "dask.org/component": "scheduler"}
-    return {
+    spec = {
         "apiVersion": "kubernetes.dask.org/v1",
         "kind": "DaskCluster",
         "metadata": {"name": name},
@@ -121,27 +168,7 @@ def gpu_cluster_spec(
             "worker": {
                 # The DaskAutoscaler sets this; workers start when tasks arrive
                 "replicas": 0,
-                "spec": {
-                    "runtimeClassName": "nvidia",
-                    "nodeSelector": {"devlab.io/gpu": "true"},
-                    "tolerations": [GPU_TOLERATION],
-                    "containers": [{
-                        "name": "worker",
-                        "image": image,
-                        "imagePullPolicy": "IfNotPresent",
-                        "args": worker_args,
-                        "ports": [{"name": "http-dashboard", "containerPort": WORKER_DASHBOARD_PORT, "protocol": "TCP"}],
-                        "resources": {
-                            "requests": {"cpu": "500m", "memory": "2Gi"},
-                            "limits": {
-                                # One share per GiB of GPU memory. The DaskCluster
-                                # CRD only accepts quantities as strings
-                                "nvidia.com/gpu": str(gpu_memory_gib),
-                                "memory": host_memory,
-                            },
-                        },
-                    }],
-                },
+                "spec": worker_pod,
             },
             "scheduler": {
                 "spec": {
@@ -176,6 +203,9 @@ def gpu_cluster_spec(
             },
         },
     }
+    if idle_timeout:
+        spec["spec"]["idleTimeout"] = idle_timeout
+    return spec
 
 
 def default_namespace(service_account_namespace: str = SERVICE_ACCOUNT_NAMESPACE) -> Optional[str]:
@@ -197,17 +227,53 @@ def default_namespace(service_account_namespace: str = SERVICE_ACCOUNT_NAMESPACE
         return None
 
 
-def gpu_cluster(name: str, n_workers: int, gpu_memory_gib: int, namespace: Optional[str] = None, **spec_options):
+_kube_cluster_class = None
+
+
+def kube_cluster_class():
+    """dask_kubernetes' operator KubeCluster, working around a status race in the operator.
+
+    The Dask Kubernetes Operator (2026.3.0) sets the DaskCluster's
+    status.phase to Running when the scheduler Service is created, then its
+    create-components handler finishes and sets it back to Pending. A
+    ClusterIP Service never changes again, so the phase can stay Pending and
+    KubeCluster times out waiting for Running. The operator only sets Pending
+    after creating all components, and KubeCluster then waits for the
+    scheduler pod, Service and connection anyway, so accept either phase.
+    """
+    global _kube_cluster_class
+    if _kube_cluster_class is None:
+        from dask_kubernetes.operator import KubeCluster
+        from dask_kubernetes.operator._objects import DaskCluster
+
+        class OperatorKubeCluster(KubeCluster):
+            async def _wait_for_controller(self):
+                start = time.time()
+                cluster = await DaskCluster.get(self.name, namespace=self.namespace, timeout=30)
+                while start + self._resource_timeout > time.time():
+                    await cluster.async_refresh()
+                    if cluster.raw.get("status", {}).get("phase") in ("Pending", "Running"):
+                        return
+                    await asyncio.sleep(0.25)
+                raise TimeoutError(
+                    f"Dask Cluster resource not actioned after {self._resource_timeout} seconds, "
+                    "is the Dask Operator running?"
+                )
+
+        _kube_cluster_class = OperatorKubeCluster
+    return _kube_cluster_class
+
+
+def gpu_cluster(name: str, n_workers: int, gpu_memory_gib: int, namespace: Optional[str] = None,
+                **spec_options):
     """Create a Dask cluster whose GPU workers scale between 0 and ``n_workers``.
 
     Returns a ``dask_kubernetes.operator.KubeCluster``; the cluster is deleted
-    when it is closed. ``namespace`` defaults to the client pod's namespace in
-    the cluster, or the kubeconfig's current namespace outside it. See
-    ``gpu_cluster_spec`` for ``spec_options``.
+    when it is closed or the client process exits. ``namespace`` defaults to
+    the client pod's namespace in the cluster, or the kubeconfig's current
+    namespace outside it. See ``gpu_cluster_spec`` for ``spec_options``.
     """
-    from dask_kubernetes.operator import KubeCluster
-
-    cluster = KubeCluster(
+    cluster = kube_cluster_class()(
         custom_cluster_spec=gpu_cluster_spec(name, gpu_memory_gib, **spec_options),
         namespace=namespace or default_namespace(),
         shutdown_on_close=True,

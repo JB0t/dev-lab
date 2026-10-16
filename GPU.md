@@ -152,7 +152,21 @@ GPU metrics are in Prometheus and Grafana: query `DCGM_FI_DEV_GPU_UTIL` in Grafa
 
 ### 7. Dask GPU Workers That Scale From 0
 
-[DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) builds the Dask image from the pinned versions, installs the Dask Kubernetes Operator, and runs a sample client that creates a Dask cluster with 0 GPU workers, submits 4 GPU tasks, and shows the scheduler scaling to 4 workers that use the GPU at the same time.
+[DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) builds the Dask image from the pinned versions, installs the Dask Kubernetes Operator, and runs a sample client that creates a Dask cluster with 0 GPU workers, submits 4 GPU tasks, and shows the scheduler scaling to 4 workers that use the GPU at the same time. In short:
+
+```bash
+devlab build -t devlab-dask-gpu:2026.1.1 --push config/dask/image   # ~10 minutes
+devlab addon enable dask-operator
+devlab kubectl apply -k config/dask
+devlab kubectl apply -k config/dask/sample
+devlab kubectl -n dask logs -f job/gpu-concurrency                    # expect: PASS
+```
+
+To launch the same kind of work from a UI, enable Dagster. Then open **http://dagster.localhost**, go to Jobs, then `gpu_concurrency_job`, then Launchpad, and Launch Run. Each run creates its own time-sliced GPU Dask cluster and runs every op on its workers (see "Run From Dagster" in the runbook):
+
+```bash
+devlab addon enable dagster
+```
 
 ### 8. Clean Up
 

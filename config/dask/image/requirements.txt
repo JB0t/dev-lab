@@ -19,3 +19,10 @@ falcata==1.0.5
 rmm-cu12==26.2.0
 # - Dask Kubernetes Operator client (KubeCluster), used by clients only
 dask-kubernetes==2026.3.0
+# - Dagster code location, run pods, and the Dask workers that run the ops
+#   (devlab addon enable dagster); the versions match the Dagster Helm chart
+#   pinned in python/devlab.py
+dagster==1.13.26
+dagster-dask==0.29.26
+dagster-k8s==0.29.26
+dagster-postgres==0.29.26

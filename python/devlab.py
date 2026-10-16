@@ -119,6 +119,8 @@ GPU_TAINT = {"key": "nvidia.com/gpu", "value": "present", "effect": "NoSchedule"
 # replicas: one nvidia.com/gpu share per GiB of GPU memory
 GPU_MEMORY_PLACEHOLDER = "${GPU_MEMORY_GIB}"
 DASK_OPERATOR_CHART_VERSION = "2026.3.0"
+# Matches the dagster packages in config/dask/image/requirements.txt
+DAGSTER_CHART_VERSION = "1.13.26"
 # Host inotify limits for kind with the GPU Operator (as kind and nvkind
 # recommend); with the default 128 instances the device plugin cannot start
 INOTIFY_LIMITS = {"max_user_instances": 8192, "max_user_watches": 524288}
@@ -134,6 +136,10 @@ ACCESS_POINTS = [
     ("Traefik dashboard", "http://traefik.localhost/dashboard/", "-", False),
     ("Registry API", f"http://{REGISTRY_HOST}/v2/_catalog", "-", False),
 ]
+# Published by addons when they are enabled: (service, URL, credentials)
+ADDON_ACCESS_POINTS = {
+    "dagster": ("Dagster", "http://dagster.localhost", "-"),
+}
 DOCKER_ARCHITECTURES = {
     "x86_64": "amd64",
     "amd64": "amd64",
@@ -1648,6 +1654,37 @@ class DevLabManager:
                                   "--wait", "--ignore-not-found"])
         return result.returncode == 0
 
+    def _enable_dagster(self) -> bool:
+        # The code location mounts the devlab-dask and devlab-dagster ConfigMaps
+        # and runs as the dask-client service account, all from config/dask
+        result = self.tools.kubectl(["apply", "-k", str(CONFIG_DIR / "dask")], context=f"kind-{CLUSTER_NAME}")
+        if result.returncode != 0:
+            console.print("[red]Failed to apply config/dask (namespace, RBAC, ConfigMaps)[/red]")
+            return False
+        if not self._helm_release(
+            "dagster", "dagster/dagster", DAGSTER_CHART_VERSION, "dask",
+            CONFIG_DIR / "addons" / "dagster" / "values.yaml",
+            ("dagster", "https://dagster-io.github.io/helm"),
+        ):
+            return False
+        if not self._rollout_status("dask", "statefulset/dagster-postgresql",
+                                    "deployment/dagster-dagster-webserver", "deployment/dagster-daemon",
+                                    "deployment/dagster-dagster-user-deployments-devlab-dask"):
+            console.print(f"[yellow]The code location needs the Dask image: "
+                          f"devlab build -t devlab-dask-gpu:2026.1.1 --push config/dask/image[/yellow]")
+            return False
+        console.print(f"[green]Dagster UI: {ADDON_ACCESS_POINTS['dagster'][1]}[/green]")
+        return True
+
+    def _disable_dagster(self) -> bool:
+        result = self.tools.helm(["uninstall", "dagster", "-n", "dask", "--wait", "--ignore-not-found"])
+        if result.returncode != 0:
+            return False
+        # Run history (the PostgreSQL volume) is not removed by the uninstall
+        self.tools.kubectl(["delete", "pvc", "-n", "dask", "-l", "app.kubernetes.io/name=dagster-postgresql",
+                            "--ignore-not-found"])
+        return True
+
     def _enable_keda(self) -> bool:
         no_monitoring = [] if self._has_service_monitor_crd() else [
             "--set", "prometheus.metricServer.serviceMonitor.enabled=false",
@@ -2199,6 +2236,12 @@ ADDONS = {
         "enable": "_enable_dask_operator",
         "disable": "_disable_dask_operator",
     },
+    "dagster": {
+        "description": "Dagster UI (http://dagster.localhost) with jobs that run on time-sliced GPU Dask clusters (DASK-GPU-RUNBOOK.md)",
+        "release": ("dagster", "dask"),
+        "enable": "_enable_dagster",
+        "disable": "_disable_dagster",
+    },
     "node-autoscaler": {
         "description": "cluster-autoscaler with simulated KWOK nodes (node pool devlab.io/node-pool=kwok)",
         "release": ("cluster-autoscaler", "kube-system"),
@@ -2208,8 +2251,8 @@ ADDONS = {
 }
 
 
-def show_access_points(monitoring: bool = True):
-    """Print the ingress URLs of the bootstrap services."""
+def show_access_points(monitoring: bool = True, addons: List[str] = ()):
+    """Print the ingress URLs of the bootstrap services and enabled addons."""
     table = Table(title="Access Points")
     table.add_column("Service", style="cyan")
     table.add_column("URL", style="green")
@@ -2217,6 +2260,9 @@ def show_access_points(monitoring: bool = True):
     for service, url, credentials, needs_monitoring in ACCESS_POINTS:
         if monitoring or not needs_monitoring:
             table.add_row(service, url, credentials)
+    for addon in addons:
+        if addon in ADDON_ACCESS_POINTS:
+            table.add_row(*ADDON_ACCESS_POINTS[addon])
     console.print(table)
 
 
@@ -2557,7 +2603,8 @@ def status():
             table.add_row(name, status, role, gpus)
         
         console.print(table)
-        show_access_points(manager._has_service_monitor_crd())
+        show_access_points(manager._has_service_monitor_crd(),
+                           [addon for addon in ADDON_ACCESS_POINTS if manager.addon_installed(addon)])
 
 @cli.command(name='build-tools')
 def build_tools():
