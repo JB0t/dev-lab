@@ -1,11 +1,12 @@
-venv/
+# Built devlab and bundled tools (go build -o bin/devlab, scripts/fetch-tools.sh)
+/bin/
+# Release tarballs (scripts/build-distribution.sh)
+/build/
 node_modules/
+__pycache__/
 .kube/
 flux-deploy-key*
-devlab
 .helm/
 .krew/
 Session.vim
 ci/certs/
-python/__pycache__/
-python/certs/

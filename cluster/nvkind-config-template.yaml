@@ -1,5 +1,5 @@
 # nvkind config template for the GPU-enabled dev-lab cluster
-# Rendered by `nvkind cluster create --config-template` with values from
+# Rendered by `devlab bootstrap --gpu` (the nvkind template format) with values from
 # nvkind-values.yaml. Mirrors kind-config.yaml; only the worker nodes differ.
 # See https://github.com/NVIDIA/nvkind for template functions (sprig + numGPUs).
 kind: Cluster

@@ -17,10 +17,10 @@ The mesh-test-app demonstrates zero-downtime deployments with:
 
    ```bash
    # Bootstrap the dev-lab environment
-   ./devlab bootstrap
+   bin/devlab bootstrap
    
    # Deploy GitOps infrastructure
-   ./devlab deploy-gitops
+   bin/devlab deploy-gitops
    ```
 
 1. **Verify Flagger and Registry**:
@@ -194,7 +194,7 @@ kubectl logs -n flagger-system deployment/flagger -f
 kubectl port-forward -n linkerd-viz svc/web 50750:8084 --address=0.0.0.0
 
 # Or use the devlab wrapper (if available)
-./devlab kubectl -- port-forward -n linkerd-viz svc/web 50750:8084 --address=0.0.0.0
+bin/devlab kubectl -- port-forward -n linkerd-viz svc/web 50750:8084 --address=0.0.0.0
 ```
 
 Visit: `<http://localhost:50750>`

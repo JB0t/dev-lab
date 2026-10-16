@@ -15,17 +15,17 @@ The GitOps deployment method uses Flux CD to automatically deploy and manage you
 ## Prerequisites
 
 1. **Git Repository Access**: You need access to a Git repository (GitHub, GitLab, etc.)
-2. **SSH Deploy Key**: The script will generate SSH keys for secure Git access
-3. **Docker**: All tools run in containers
+2. **SSH Deploy Key**: `bin/devlab deploy-gitops` generates an SSH key for secure Git access
+3. **Docker**: The only host requirement; Flux and the other CLIs are bundled in `bin/`
 
 ## Quick Start
 
 ```bash
 # 1. Bootstrap the cluster (if not already done)
-./devlab bootstrap
+bin/devlab bootstrap
 
 # 2. Deploy using GitOps
-./devlab deploy-gitops
+bin/devlab deploy-gitops
 ```
 
 ## Deployment Process
@@ -99,16 +99,16 @@ After deployment, monitor the GitOps system:
 
 ```bash
 # Check all Flux resources
-./devlab flux -- get all -A
+bin/devlab flux -- get all -A
 
 # Watch kustomization status
-watch ./devlab flux -- get kustomizations -A
+watch bin/devlab flux -- get kustomizations -A
 
 # View controller logs
-./devlab flux -- logs --all-namespaces
+bin/devlab flux -- logs --all-namespaces
 
 # Check for events
-./devlab kubectl -- get events -n flux-system
+bin/devlab kubectl -- get events -n flux-system
 ```
 
 ## Common Operations
@@ -117,27 +117,27 @@ watch ./devlab flux -- get kustomizations -A
 
 ```bash
 # Force sync of a specific kustomization
-./devlab flux -- reconcile kustomization dev-lab-infrastructure -n flux-system
+bin/devlab flux -- reconcile kustomization dev-lab-infrastructure -n flux-system
 
 # Force sync of Git repository
-./devlab flux -- reconcile source git dev-lab-repo -n flux-system
+bin/devlab flux -- reconcile source git dev-lab-repo -n flux-system
 ```
 
 ### Suspend/Resume
 
 ```bash
 # Suspend automatic reconciliation
-./devlab flux -- suspend kustomization dev-lab-apps -n flux-system
+bin/devlab flux -- suspend kustomization dev-lab-apps -n flux-system
 
 # Resume automatic reconciliation
-./devlab flux -- resume kustomization dev-lab-apps -n flux-system
+bin/devlab flux -- resume kustomization dev-lab-apps -n flux-system
 ```
 
 ### Update Git Repository
 
 ```bash
 # Update to a different branch
-./devlab kubectl -- patch gitrepository dev-lab-repo -n flux-system --type='merge' -p='{"spec":{"ref":{"branch":"feature-branch"}}}'
+bin/devlab kubectl -- patch gitrepository dev-lab-repo -n flux-system --type='merge' -p='{"spec":{"ref":{"branch":"feature-branch"}}}'
 ```
 
 ## Security Considerations
@@ -153,30 +153,30 @@ watch ./devlab flux -- get kustomizations -A
 
 ```bash
 # Check if secret exists
-./devlab kubectl -- get secret flux-system-auth -n flux-system
+bin/devlab kubectl -- get secret flux-system-auth -n flux-system
 
 # Verify SSH key format
-./devlab kubectl -- get secret flux-system-auth -n flux-system -o yaml
+bin/devlab kubectl -- get secret flux-system-auth -n flux-system -o yaml
 ```
 
 ### Repository Sync Issues
 
 ```bash
 # Check GitRepository status
-./devlab kubectl -- describe gitrepository dev-lab-repo -n flux-system
+bin/devlab kubectl -- describe gitrepository dev-lab-repo -n flux-system
 
 # Check for authentication errors
-./devlab kubectl -- get events -n flux-system --field-selector reason=FailedSync
+bin/devlab kubectl -- get events -n flux-system --field-selector reason=FailedSync
 ```
 
 ### Kustomization Failures
 
 ```bash
 # Check kustomization status
-./devlab kubectl -- describe kustomization dev-lab-infrastructure -n flux-system
+bin/devlab kubectl -- describe kustomization dev-lab-infrastructure -n flux-system
 
 # View detailed error messages
-./devlab flux -- logs --level=error
+bin/devlab flux -- logs --level=error
 ```
 
 ## Advanced Configuration
@@ -194,9 +194,9 @@ For multiple environments (dev, staging, prod), use separate:
 Modify the Flux installation by creating a `flux-config.yaml` file and using:
 
 ```bash
-./devlab flux -- install --export > flux-config.yaml
+bin/devlab flux -- install --export > flux-config.yaml
 # Edit the file, then apply
-./devlab kubectl -- apply -f flux-config.yaml
+bin/devlab kubectl -- apply -f flux-config.yaml
 ```
 
 ### Notification Setup
@@ -205,10 +205,10 @@ Configure Flux to send notifications to Slack, Discord, or other systems:
 
 ```bash
 # Example: Create notification provider
-./devlab flux -- create alert-provider slack --type slack --webhook-url <webhook-url>
+bin/devlab flux -- create alert-provider slack --type slack --webhook-url <webhook-url>
 
 # Create alert for specific resources
-./devlab flux -- create alert dev-lab-alert --provider-ref slack --event-severity info --event-source GitRepository/*
+bin/devlab flux -- create alert dev-lab-alert --provider-ref slack --event-severity info --event-source GitRepository/*
 ```
 
 ## Migration from Traditional Deployment
@@ -217,7 +217,7 @@ If you previously used traditional deployment:
 
 1. **Export Current State**: Use `kubectl get` to export current configurations
 2. **Create Git Repository**: Structure your configurations in Git
-3. **Deploy GitOps**: Run `./devlab deploy-gitops`
+3. **Deploy GitOps**: Run `bin/devlab deploy-gitops`
 4. **Verify Sync**: Ensure Flux recognizes existing resources
 5. **Remove Manual Resources**: Clean up manually deployed resources
 

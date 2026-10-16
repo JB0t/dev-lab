@@ -99,25 +99,12 @@ The files in `notes/dev-lab/` appear to be more mature and feature-complete:
 4. **Testing**: Configurations can be validated independently
 5. **Documentation**: Each file can have its own documentation and comments
 
-### Script Changes Made
+### How devlab Uses These Files
 
-The following scripts were updated to use external files:
+`bin/devlab` reads these files from the dev-lab home at run time, so edits take effect on the next run without rebuilding:
 
-1. **bootstrap.sh**:
-   - Registry configuration now loaded from `config/registry/`
-   - Uses better kind-config.yaml from cluster directory
-
-1. **deploy-traditional.sh**:
-   - Monitoring values loaded from `config/monitoring/prometheus-values.yaml`
-   - Sample app loaded from `config/apps/sample-web-app.yaml`
-
-1. **deploy-gitops.sh**:
-   - GitRepository config loaded from `config/gitops/git-repository.yaml`
-   - Repository URL still parameterized via sed substitution
-
-## Migration Notes
-
-- All scripts maintain backward compatibility
-- Configuration files are referenced using `$PROJECT_ROOT` relative paths
-- Original inline configurations were preserved in the external files
-- The notes directory files could replace these with minor adjustments if desired
+1. **bootstrap**: `gpu/` (with `--gpu`)
+1. **deploy-traditional**: `registry/`, `monitoring/prometheus-values.yaml`
+1. **deploy-gitops**: `gitops/git-repository.yaml` (the url can be overridden with `--repo-url`)
+1. **gpu-plugin**: `gpu/nvidia-device-plugin-values.yaml`
+1. `dask/` is applied by hand (see DASK-GPU-RUNBOOK.md)

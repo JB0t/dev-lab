@@ -27,6 +27,8 @@ warn() {
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# devlab in the dev-lab home (<home>/apps/mesh-test-app/scripts/ -> <home>/bin/devlab)
+DEVLAB="${DEVLAB:-$SCRIPT_DIR/../../../bin/devlab}"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 
 COMMAND=${1:-help}
@@ -50,7 +52,7 @@ build_v2() {
     docker build -t mesh-test-app:v2 .
     
     # Load into KinD
-    kind load docker-image mesh-test-app:v2 --name dev-lab
+    "$DEVLAB" load-image mesh-test-app:v2
     
     # Restore original server.js
     mv server.js.backup server.js

@@ -213,7 +213,7 @@ kubectl port-forward -n linkerd-viz svc/web 8084:8084
 ```bash
 # Rebuild and load images
 docker build -t mesh-test-app:v1 .
-kind load docker-image mesh-test-app:v1 --name dev-lab
+bin/devlab load-image mesh-test-app:v1
 ```
 
 **Linkerd Proxy Injection Not Working**:
