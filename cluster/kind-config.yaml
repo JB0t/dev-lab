@@ -14,7 +14,8 @@ networking:
 
 # Only the control-plane node receives traffic from the host. Services are
 # exposed through the Traefik ingress (ports 80/443) by hostname, or ad hoc with
-# `devlab kubectl port-forward`, so no per-service ports are mapped here.
+# `devlab kubectl port-forward`, so no per-service ports are mapped here, except
+# the standing Dask scheduler's TCP port.
 # See NETWORKING.md.
 nodes:
   - role: control-plane
@@ -29,6 +30,13 @@ nodes:
         protocol: TCP
       - containerPort: 443
         hostPort: 443
+        protocol: TCP
+      # Standing Dask scheduler (NodePort 30786, DASK-GPU-RUNBOOK.md): plain
+      # TCP, so it cannot go through the HTTP ingress. Loopback only: anyone
+      # who reaches a Dask scheduler can run code on its workers
+      - containerPort: 30786
+        hostPort: 8786
+        listenAddress: 127.0.0.1
         protocol: TCP
     extraMounts:
       # Registry storage on the Docker host, so pushed images survive a
