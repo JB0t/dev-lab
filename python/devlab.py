@@ -107,6 +107,9 @@ GPU_PROBE_IMAGE = "ubuntu:22.04"
 GPU_NODE_LABEL = "nvidia.com/gpu.present"
 # The GPU Operator runs no operands on nodes with this label set to "false"
 GPU_OPERANDS_LABEL = "nvidia.com/gpu.deploy.operands"
+# Host inotify limits for kind with the GPU Operator (as kind and nvkind
+# recommend); with the default 128 instances the device plugin cannot start
+INOTIFY_LIMITS = {"max_user_instances": 8192, "max_user_watches": 524288}
 
 # Services published through the Traefik ingress. *.localhost resolves to
 # loopback in browsers and curl without any /etc/hosts entries.
@@ -995,9 +998,34 @@ class DevLabManager:
             console.print("  sudo systemctl restart docker")
             return False
         console.print(f"[green]GPUs visible to containers:[/green]\n{result.stdout.strip()}")
+        if not self._check_inotify_limits():
+            return False
         self._check_vgpu_license()
         console.print("[green]GPU prerequisites met[/green]")
         return True
+
+    def _check_inotify_limits(self) -> bool:
+        """Fail when the Docker host's inotify limits are too low for the GPU Operator."""
+        # Only readable for a local daemon; a remote one is the user's to check
+        if os.environ.get("DOCKER_HOST", "").startswith(("tcp://", "ssh://")):
+            return True
+        low = []
+        for name, minimum in INOTIFY_LIMITS.items():
+            path = Path("/proc/sys/fs/inotify") / name
+            try:
+                if int(path.read_text()) < minimum:
+                    low.append(name)
+            except (OSError, ValueError):
+                return True
+        if not low:
+            return True
+        console.print(f"[red]inotify limits too low for the GPU Operator ({', '.join(low)}): "
+                      "the device plugin fails with 'too many open files'[/red]")
+        console.print("[yellow]Raise them (persists across reboots):[/yellow]")
+        console.print("  printf 'fs.inotify.max_user_instances = 8192\\nfs.inotify.max_user_watches = 524288\\n' | "
+                      "sudo tee /etc/sysctl.d/99-devlab-kind.conf")
+        console.print("  sudo sysctl --system")
+        return False
 
     def _check_vgpu_license(self) -> None:
         """Warn when a vGPU guest has no license (NVIDIA throttles it after 20 minutes)."""
@@ -1096,6 +1124,21 @@ class DevLabManager:
         console.print("[green]GPU nodes ready[/green]")
         return True
 
+    def _report_cluster_policy(self) -> None:
+        """Warn when the GPU Operator's validation has not passed (yet)."""
+        result = self.tools.kubectl([
+            "get", "clusterpolicy", "cluster-policy", "-o", "jsonpath={.status.state}"
+        ], capture_output=True, text=True, context=f"kind-{CLUSTER_NAME}")
+        state = result.stdout.strip() if result.returncode == 0 else ""
+        if state == "ready":
+            console.print("[green]GPU Operator ClusterPolicy: ready[/green]")
+            return
+        console.print(f"[yellow]GPU Operator ClusterPolicy: {state or 'unknown'}. GPUs are allocatable, "
+                      "but the operator validator has not passed yet.[/yellow]")
+        console.print("[yellow]Check: ./devlab kubectl -n gpu-operator get pods; a cuda-validator error "
+                      "'forward compatibility was attempted on non supported HW' means the driver is too old "
+                      "for this GPU (see GPU.md, step 1)[/yellow]")
+
     def _setup_gpu_operator(self) -> bool:
         """Install the NVIDIA GPU Operator and wait until GPUs are allocatable."""
         console.print("[blue]Setting up NVIDIA GPU Operator...[/blue]")
@@ -1108,7 +1151,10 @@ class DevLabManager:
             "label", "namespace", "gpu-operator", "pod-security.kubernetes.io/enforce=privileged", "--overwrite"
         ], capture_output=True, context=f"kind-{CLUSTER_NAME}")
 
-        extra_args = ["--wait", "--timeout", "600s"]
+        # No --wait: Helm 4 also waits for the ClusterPolicy to become ready,
+        # which needs the operator validator to pass. GPU capacity, checked
+        # below, is what workloads need.
+        extra_args = []
         if not self._has_service_monitor_crd():
             extra_args += ["--set", "dcgmExporter.serviceMonitor.enabled=false"]
         if not self._helm_release(
@@ -1129,6 +1175,7 @@ class DevLabManager:
                 if gpus:
                     for node, count in gpus.items():
                         console.print(f"[green]{node}: {count} allocatable nvidia.com/gpu[/green]")
+                    self._report_cluster_policy()
                     console.print("[green]NVIDIA GPU Operator ready[/green]")
                     return True
             time.sleep(2)
