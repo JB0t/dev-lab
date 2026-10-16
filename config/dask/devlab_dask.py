@@ -36,7 +36,7 @@ from 0 for whatever its clients submit::
     Client("tcp://localhost:8786")               # on the Docker host
     Client("tcp://dev-lab-control-plane:30786")  # in a container on the kind network
     Client("tcp://gpu-scheduler.dask:8786")      # in a pod
-    # dashboard: http://gpu.dask.localhost
+    # dashboard: http://<host IP>:8787/workers or http://gpu.dask.localhost/workers
 """
 
 import argparse
@@ -59,6 +59,8 @@ SCHEDULER_PORT = 8786
 # NodePort of the standing cluster's scheduler; kind publishes it as port
 # 8786 on every interface of the Docker host (cluster/kind-config.yaml)
 STANDING_SCHEDULER_NODE_PORT = 30786
+# NodePort of its dashboard, published as port 8787 of the Docker host
+STANDING_DASHBOARD_NODE_PORT = 30787
 DASHBOARD_PORT = 8787
 WORKER_DASHBOARD_PORT = 8788
 
@@ -109,6 +111,7 @@ def gpu_cluster_spec(
     worker_volume_mounts: Optional[List[dict]] = None,
     idle_timeout: Optional[int] = None,
     scheduler_node_port: Optional[int] = None,
+    dashboard_node_port: Optional[int] = None,
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
@@ -126,7 +129,8 @@ def gpu_cluster_spec(
     ``idle_timeout`` (seconds) has the operator delete the cluster when its
     scheduler has been idle that long, e.g. after its client was killed.
     ``scheduler_node_port`` makes the scheduler Service a NodePort with this
-    port for the scheduler (TCP 8786), reachable on every node.
+    port for the scheduler (TCP 8786), reachable on every node, and
+    ``dashboard_node_port`` the port for its dashboard (HTTP 8787).
     """
     memory = worker_memory(gpu_memory_gib)
     worker_args = [
@@ -221,7 +225,9 @@ def gpu_cluster_spec(
                         {"name": "tcp-comm", "protocol": "TCP", "port": SCHEDULER_PORT, "targetPort": "tcp-comm",
                          **({"nodePort": scheduler_node_port} if scheduler_node_port else {})},
                         {"name": "http-dashboard", "protocol": "TCP", "port": DASHBOARD_PORT,
-                         "targetPort": "http-dashboard"},
+                         "targetPort": "http-dashboard",
+                         **({"nodePort": dashboard_node_port} if scheduler_node_port and dashboard_node_port
+                            else {})},
                     ],
                 },
             },
@@ -374,6 +380,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help=f"scheduler NodePort; {STANDING_SCHEDULER_NODE_PORT} (default) is published "
                              "as port 8786 of the Docker host. Only one cluster can use a port; "
                              "0 for none (in-cluster clients only)")
+    parser.add_argument("--dashboard-node-port", type=int, default=STANDING_DASHBOARD_NODE_PORT,
+                        help=f"dashboard NodePort with --node-port; {STANDING_DASHBOARD_NODE_PORT} (default) is "
+                             "published as port 8787 of the Docker host (http://<host IP>:8787/workers); "
+                             "0 for a random one")
     parser.add_argument("--image", default=IMAGE)
     args = parser.parse_args(argv)
 
@@ -385,6 +395,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         image=args.image, host_memory=args.host_memory, rmm_pool=args.rmm_pool,
         unknown_task_duration=args.task_duration, worker_resources=worker_resources or None,
         scheduler_node_port=args.node_port or None,
+        dashboard_node_port=args.dashboard_node_port or None,
     )
     json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout, indent=2)
     print()

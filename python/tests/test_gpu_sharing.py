@@ -166,6 +166,7 @@ class DaskClusterSpecTests(unittest.TestCase):
         service = cluster["spec"]["scheduler"]["service"]
         self.assertEqual(service["type"], "NodePort")
         self.assertEqual(service["ports"][0]["nodePort"], self.helper.STANDING_SCHEDULER_NODE_PORT)
+        self.assertEqual(service["ports"][1]["nodePort"], self.helper.STANDING_DASHBOARD_NODE_PORT)
         env = {item["name"]: item["value"] for item in cluster["spec"]["scheduler"]["spec"]["containers"][0]["env"]}
         self.assertEqual(env["DASK_DISTRIBUTED__SCHEDULER__UNKNOWN_TASK_DURATION"], "1m")
         worker_args = cluster["spec"]["worker"]["spec"]["containers"][0]["args"]
@@ -181,9 +182,11 @@ class DaskClusterSpecTests(unittest.TestCase):
         gpu_config, _ = devlab.gpu_kind_config(config, [{"devices": 0}, {}])
         for kind_config in (config, gpu_config):
             mappings = kind_config["nodes"][0]["extraPortMappings"]
-            mapping = [m for m in mappings if m["containerPort"] == self.helper.STANDING_SCHEDULER_NODE_PORT]
-            self.assertEqual(mapping, [{"containerPort": self.helper.STANDING_SCHEDULER_NODE_PORT,
-                                        "hostPort": 8786, "listenAddress": "0.0.0.0", "protocol": "TCP"}])
+            for node_port, host_port in ((self.helper.STANDING_SCHEDULER_NODE_PORT, 8786),
+                                         (self.helper.STANDING_DASHBOARD_NODE_PORT, 8787)):
+                mapping = [m for m in mappings if m["containerPort"] == node_port]
+                self.assertEqual(mapping, [{"containerPort": node_port, "hostPort": host_port,
+                                            "listenAddress": "0.0.0.0", "protocol": "TCP"}])
 
     def test_rmm_pool_can_be_turned_off(self):
         spec = self.helper.gpu_cluster_spec("xgb", gpu_memory_gib=5, rmm_pool=False)

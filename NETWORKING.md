@@ -43,6 +43,7 @@ from `localhost` to a pod crosses these hops:
 | 5000 | 5000 | Registry (`hostPort: 5000`) | Local image registry |
 | 127.0.0.1:6443 | 6443 | kube-apiserver | Kubernetes API (added by KinD) |
 | 8786 (all interfaces) | 30786 | Standing Dask scheduler (NodePort Service, scheduler on a CPU worker) | Dask clients by address ([DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md)) |
+| 8787 (all interfaces) | 30787 | Standing Dask scheduler's dashboard (same Service) | Dask dashboard: `/status`, `/workers` |
 
 If host port 80 or 443 is already in use, `devlab bootstrap` fails when it
 creates the cluster. Change `hostPort` in `cluster/kind-config.yaml` (for
