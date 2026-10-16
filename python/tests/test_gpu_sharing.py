@@ -118,7 +118,11 @@ class DaskClusterSpecTests(unittest.TestCase):
 
     def test_gpu_memory_is_shares_and_rmm_pool(self):
         args = self.worker_container["args"]
-        self.assertEqual(self.worker_container["resources"]["limits"]["nvidia.com/gpu"], 5)
+        # Quantities must be strings: the DaskCluster CRD rejects integers
+        for quantities in self.worker_container["resources"].values():
+            for value in quantities.values():
+                self.assertIsInstance(value, str)
+        self.assertEqual(self.worker_container["resources"]["limits"]["nvidia.com/gpu"], "5")
         pool = parse_gib(flag_value(args, "--rmm-pool-size"))
         self.assertEqual(pool, parse_gib(flag_value(args, "--rmm-maximum-pool-size")))
         self.assertLessEqual(pool + self.helper.CUDA_CONTEXT_GIB, 5)
