@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-dask-run-config
+  namespace: dagster-dask
+data:
+  run_config.yaml: |
+    resources:
+      # 1. The tracker only handles the bucket name
+      io_manager:
+        config:
+          s3_bucket: "dagster-dask-test-bucket"
+
+      # 2. The connection credentials belong completely here
+      s3:
+        config:
+          endpoint_url: "http://minio.minio.svc.cluster.local:9000"
+          aws_access_key_id: "9p8qEASIqUsJO4PjAFLz"
+          aws_secret_access_key: "Zovd6BLhDjlw9XQCemHM0to6DDzp2DewcJUQm8mA"
+
+    execution:
+      config:
+        cluster:
+          kube:
+            name: "ephemeral-test-cluster"
+            namespace: "dagster-dask"
+            image: "localhost:5000/local-dagster-dask:test"
+            n_workers: 2
+            # Workers load the Dagster instance (Postgres) themselves
+            env:
+              - name: DAGSTER_PG_USER
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: username } }
+              - name: DAGSTER_PG_PASSWORD
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: password } }
+              - name: DAGSTER_PG_HOST
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: host } }
+              - name: DAGSTER_PG_DB
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: dbname } }
+
