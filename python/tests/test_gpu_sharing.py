@@ -132,6 +132,24 @@ class DaskClusterSpecTests(unittest.TestCase):
             memory = self.helper.worker_memory(size)
             self.assertLessEqual(parse_gib(memory["pool"]) + self.helper.CUDA_CONTEXT_GIB, max(size, 1))
 
+    def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
+        self.assertNotIn("volumes", self.worker["spec"])
+        self.assertNotIn("idleTimeout", self.spec["spec"])
+        volumes = [{"name": "code", "configMap": {"name": "code"}}]
+        mounts = [{"name": "code", "mountPath": "/code"}]
+        env = [{"name": "PYTHONPATH", "value": "/code"}]
+        spec = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2, worker_env=env, worker_volumes=volumes,
+                                            worker_volume_mounts=mounts, unknown_task_duration="5m",
+                                            idle_timeout=600)
+        worker = spec["spec"]["worker"]["spec"]
+        self.assertEqual(worker["volumes"], volumes)
+        self.assertEqual(worker["containers"][0]["volumeMounts"], mounts)
+        self.assertEqual(worker["containers"][0]["env"], env)
+        self.assertEqual(spec["spec"]["idleTimeout"], 600)
+        scheduler_env = {item["name"]: item["value"]
+                         for item in spec["spec"]["scheduler"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(scheduler_env["DASK_DISTRIBUTED__SCHEDULER__UNKNOWN_TASK_DURATION"], "5m")
+
     def test_rmm_pool_can_be_turned_off(self):
         spec = self.helper.gpu_cluster_spec("xgb", gpu_memory_gib=5, rmm_pool=False)
         container = spec["spec"]["worker"]["spec"]["containers"][0]
@@ -181,6 +199,73 @@ class DaskClusterSpecTests(unittest.TestCase):
                 if len(parts) == 2 and parts[0].lower() != "python":
                     name = parts[0] + ("[cu12]" if parts[0] == "numba-cuda" else "")
                     self.assertEqual(pinned.get(name), parts[1], f"{parts[0]} differs from dask_requirements.md")
+
+
+def assigned_literal(path, name):
+    """Value of a module-level `name = <literal>` in a Python file, without importing it."""
+    import ast
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == name for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise KeyError(name)
+
+
+class DagsterAddonTests(unittest.TestCase):
+    """Dagster (devlab addon enable dagster): code location, run pods and Dask workers line up."""
+
+    def setUp(self):
+        self.values = yaml.safe_load((REPO_ROOT / "config" / "addons" / "dagster" / "values.yaml").read_text())
+        self.deployment = self.values["dagster-user-deployments"]["deployments"][0]
+        self.definitions = DASK_DIR / "dagster" / "definitions.py"
+
+    def test_ui_is_published_through_traefik(self):
+        ingress = self.values["ingress"]
+        self.assertTrue(ingress["enabled"])
+        self.assertEqual(ingress["ingressClassName"], "traefik")
+        self.assertEqual(ingress["dagsterWebserver"]["host"], "dagster.localhost")
+
+    def test_code_location_loads_mounted_definitions(self):
+        sys.path.insert(0, str(Path(__file__).parents[1]))
+        import devlab
+        self.assertEqual(self.deployment["image"]["repository"] + ":" + self.deployment["image"]["tag"],
+                         assigned_literal(DASK_DIR / "devlab_dask.py", "IMAGE"))
+        self.assertEqual(self.deployment["codeServerArgs"], ["--python-file", "/dagster/definitions.py"])
+        self.assertTrue(self.deployment["includeConfigInLaunchedRuns"]["enabled"])
+        self.assertEqual(self.values["dagster-user-deployments"]["serviceAccount"],
+                         {"create": False, "name": "dask-client"})
+        self.assertIn("dagster", devlab.ADDONS)
+        requirements = (DASK_DIR / "image" / "requirements.txt").read_text()
+        self.assertIn(f"dagster=={devlab.DAGSTER_CHART_VERSION}\n", requirements)
+
+    def test_run_pods_and_dask_workers_get_the_same_code(self):
+        kustomization = yaml.safe_load((DASK_DIR / "kustomization.yaml").read_text())
+        generated = {item["name"]: [Path(f).name for f in item["files"]]
+                     for item in kustomization["configMapGenerator"]}
+        for item in kustomization["configMapGenerator"]:
+            for file in item["files"]:
+                self.assertTrue((DASK_DIR / file).exists(), file)
+        self.assertIn("definitions.py", generated["devlab-dagster"])
+        self.assertIn("postgres_io_manager.py", generated["devlab-dagster"])
+        self.assertIn("gpu_concurrency.py", generated["devlab-dagster"])
+        self.assertEqual(self.deployment["volumes"], assigned_literal(self.definitions, "WORKER_VOLUMES"))
+        self.assertEqual(self.deployment["volumeMounts"],
+                         assigned_literal(self.definitions, "WORKER_VOLUME_MOUNTS"))
+        for volume in self.deployment["volumes"]:
+            self.assertIn(volume["configMap"]["name"], generated)
+        pythonpath = {item["name"]: item.get("value") for item in self.deployment["env"]}["PYTHONPATH"]
+        worker_env = {item["name"]: item for item in assigned_literal(self.definitions, "WORKER_ENV")}
+        self.assertEqual(worker_env["PYTHONPATH"]["value"], pythonpath)
+        self.assertEqual(worker_env["DAGSTER_PG_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"],
+                         "dagster-postgresql-secret")
+
+    def test_postgres_replaces_the_unpublished_bitnami_chart(self):
+        postgres = self.values["postgresql"]
+        self.assertFalse(postgres["enabled"])
+        self.assertEqual(postgres["postgresqlScheme"], "postgresql+psycopg2")
+        manifests = {item["kind"]: item for item in self.values["extraManifests"]}
+        self.assertEqual(manifests["Service"]["metadata"]["name"], postgres["postgresqlHost"])
+        container = manifests["StatefulSet"]["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["image"], "docker.io/library/postgres:" + postgres["image"]["tag"])
 
 
 @unittest.skipUnless(importlib.util.find_spec("distributed"), "dask distributed not installed")

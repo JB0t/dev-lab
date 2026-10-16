@@ -14,5 +14,11 @@ configMapGenerator:
   - name: devlab-dask
     files:
       - devlab_dask.py
+  # The Dagster code location (devlab addon enable dagster), mounted at /dagster
+  - name: devlab-dagster
+    files:
+      - dagster/definitions.py
+      - dagster/postgres_io_manager.py
+      - sample/gpu_concurrency.py
 generatorOptions:
   disableNameSuffixHash: true

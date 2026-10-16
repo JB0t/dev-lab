@@ -505,7 +505,7 @@ devlab status                      # GPUs column: 4 shares per physical GPU
 devlab kubectl apply -f config/gpu/gpu-test-pod.yaml && devlab kubectl logs gpu-test
 ```
 
-The GPU workers come from `cluster/gpu-workers.yaml` and are tainted for GPU workloads only. The NVIDIA GPU Operator runs the device plugin (time-sliced: one `nvidia.com/gpu` share per GiB of GPU memory), GPU feature discovery and the DCGM exporter for the monitoring stack. Time slicing shares compute only: there is no GPU memory isolation between pods. [GPU.md](./GPU.md) has the whole setup from a fresh machine (driver, Docker, NVIDIA Container Toolkit, vGPU licensing) in order, plus placement, time slicing and troubleshooting, and [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) for Dask clusters whose GPU workers scale from 0 (`devlab addon enable dask-operator`).
+The GPU workers come from `cluster/gpu-workers.yaml` and are tainted for GPU workloads only. The NVIDIA GPU Operator runs the device plugin (time-sliced: one `nvidia.com/gpu` share per GiB of GPU memory), GPU feature discovery and the DCGM exporter for the monitoring stack. Time slicing shares compute only: there is no GPU memory isolation between pods. [GPU.md](./GPU.md) has the whole setup from a fresh machine (driver, Docker, NVIDIA Container Toolkit, vGPU licensing) in order, plus placement, time slicing and troubleshooting, and [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) for Dask clusters whose GPU workers scale from 0 (`devlab addon enable dask-operator`), launched from code or from the Dagster UI at http://dagster.localhost (`devlab addon enable dagster`).
 
 ## Running in CI
 
@@ -560,10 +560,11 @@ dev-lab/
 │   └── gpu-workers.yaml         # GPU worker nodes for bootstrap --gpu
 ├── config/
 │   ├── addons/                  # Optional addons (devlab addon enable ...)
+│   │   ├── dagster/             # Dagster Helm values: UI at dagster.localhost, PostgreSQL
 │   │   ├── dask-operator/       # Dask Kubernetes Operator Helm values
 │   │   ├── keda/                # KEDA Helm values
 │   │   └── node-autoscaler/     # cluster-autoscaler values and KWOK node pools
-│   ├── dask/                    # Dask GPU clusters: client helper, image, RBAC, sample (DASK-GPU-RUNBOOK.md)
+│   ├── dask/                    # Dask GPU clusters: client helper, image, RBAC, sample, Dagster jobs (DASK-GPU-RUNBOOK.md)
 │   ├── gitops/                  # Flux GitRepository configuration
 │   ├── gpu/                     # GPU Operator values (time slicing), RuntimeClass, GPU smoke test pod
 │   ├── ingress/

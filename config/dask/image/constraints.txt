@@ -6,3 +6,7 @@ nvidia-cuda-nvrtc-cu12==12.8.*
 nvidia-nvjitlink-cu12==12.8.*
 nvidia-cuda-nvcc-cu12==12.8.*
 nvidia-cuda-cccl-cu12==12.8.*
+# Dask dashboard (bokeh comes with dagster-dask). bokeh 3.10 raises
+# "Cannot synchronously wait on a running event loop" when a distributed
+# 2026.1 scheduler shuts down
+bokeh==3.9.0

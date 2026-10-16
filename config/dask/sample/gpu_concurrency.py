@@ -92,15 +92,26 @@ def run(client, n_workers, task, *task_args):
     return client.gather(futures)
 
 
-def print_timeline(results, submitted):
-    print(f"{'worker':<44} {'joined':>7} {'start':>6} {'end':>6} {'rounds':>6}")
+def timeline(results, submitted):
+    """When each task joined, started and ended, relative to submitting them"""
+    lines = [f"{'worker':<44} {'joined':>7} {'start':>6} {'end':>6} {'rounds':>6}"]
     for result in sorted(results, key=lambda r: r["start"]):
-        print(f"{result['worker']:<44} {result['joined'] - submitted:>6.1f}s "
-              f"{result['start'] - submitted:>5.1f}s {result['end'] - submitted:>5.1f}s "
-              f"{result['rounds']:>6}")
-    print(f"GPU(s): {', '.join(sorted({result['gpu'] for result in results}))}")
-    print(f"Scale-up: {max(result['ready'] for result in results) - submitted:.1f}s "
-          "from submitting the tasks to all workers running them")
+        lines.append(f"{result['worker']:<44} {result['joined'] - submitted:>6.1f}s "
+                     f"{result['start'] - submitted:>5.1f}s {result['end'] - submitted:>5.1f}s "
+                     f"{result['rounds']:>6}")
+    lines.append(f"GPU(s): {', '.join(sorted({result['gpu'] for result in results}))}")
+    lines.append(f"Scale-up: {scale_up_seconds(results, submitted):.1f}s "
+                 "from submitting the tasks to all workers running them")
+    return "\n".join(lines)
+
+
+def scale_up_seconds(results, submitted):
+    """Seconds from submitting the tasks until the last worker was running its task"""
+    return max(result["ready"] for result in results) - submitted
+
+
+def print_timeline(results, submitted):
+    print(timeline(results, submitted))
 
 
 def main():
