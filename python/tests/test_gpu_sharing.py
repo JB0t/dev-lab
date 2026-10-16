@@ -174,7 +174,7 @@ class DaskClusterSpecTests(unittest.TestCase):
         self.assertEqual(backend, {"name": "gpu-scheduler", "port": {"number": self.helper.DASHBOARD_PORT}})
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "gpu.dask.localhost")
 
-    def test_kind_maps_the_standing_scheduler_to_host_loopback(self):
+    def test_kind_publishes_the_standing_scheduler_on_host_port_8786(self):
         sys.path.insert(0, str(Path(__file__).parents[1]))
         import devlab
         config = yaml.safe_load((REPO_ROOT / "cluster" / "kind-config.yaml").read_text())
@@ -183,7 +183,7 @@ class DaskClusterSpecTests(unittest.TestCase):
             mappings = kind_config["nodes"][0]["extraPortMappings"]
             mapping = [m for m in mappings if m["containerPort"] == self.helper.STANDING_SCHEDULER_NODE_PORT]
             self.assertEqual(mapping, [{"containerPort": self.helper.STANDING_SCHEDULER_NODE_PORT,
-                                        "hostPort": 8786, "listenAddress": "127.0.0.1", "protocol": "TCP"}])
+                                        "hostPort": 8786, "listenAddress": "0.0.0.0", "protocol": "TCP"}])
 
     def test_rmm_pool_can_be_turned_off(self):
         spec = self.helper.gpu_cluster_spec("xgb", gpu_memory_gib=5, rmm_pool=False)

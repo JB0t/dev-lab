@@ -32,6 +32,7 @@ from 0 for whatever its clients submit::
     python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-memory-gib 5 \\
         | devlab kubectl apply -n dask -f -
 
+    Client("tcp://<host IP>:8786")               # from other machines
     Client("tcp://localhost:8786")               # on the Docker host
     Client("tcp://dev-lab-control-plane:30786")  # in a container on the kind network
     Client("tcp://gpu-scheduler.dask:8786")      # in a pod
@@ -55,8 +56,8 @@ IMAGE = "localhost:5000/devlab-dask-gpu:2026.1.1"
 CUDA_CONTEXT_GIB = 0.5
 
 SCHEDULER_PORT = 8786
-# NodePort of the standing cluster's scheduler; kind maps it to
-# 127.0.0.1:8786 on the Docker host (cluster/kind-config.yaml)
+# NodePort of the standing cluster's scheduler; kind publishes it as port
+# 8786 on every interface of the Docker host (cluster/kind-config.yaml)
 STANDING_SCHEDULER_NODE_PORT = 30786
 DASHBOARD_PORT = 8787
 WORKER_DASHBOARD_PORT = 8788
@@ -353,7 +354,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Print the manifests of a standing GPU Dask cluster as a Kubernetes List (JSON)."""
     parser = argparse.ArgumentParser(
         description="Print a standing GPU Dask cluster for `devlab kubectl apply -n dask -f -`. "
-                    "Clients connect to tcp://localhost:8786 on the Docker host, "
+                    "Clients connect to tcp://<host IP>:8786 from other machines, "
+                    "tcp://localhost:8786 on the Docker host, "
                     "tcp://dev-lab-control-plane:30786 on the kind network, or "
                     "tcp://NAME-scheduler.dask:8786 in the cluster.")
     parser.add_argument("name", help="cluster name; the scheduler Service is NAME-scheduler")
@@ -369,8 +371,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--resources", default="",
                         help="Dask worker resources, e.g. GPU=1, for tasks submitted with resources={...}")
     parser.add_argument("--node-port", type=int, default=STANDING_SCHEDULER_NODE_PORT,
-                        help=f"scheduler NodePort; {STANDING_SCHEDULER_NODE_PORT} (default) is mapped to "
-                             "127.0.0.1:8786 on the Docker host. Only one cluster can use a port; "
+                        help=f"scheduler NodePort; {STANDING_SCHEDULER_NODE_PORT} (default) is published "
+                             "as port 8786 of the Docker host. Only one cluster can use a port; "
                              "0 for none (in-cluster clients only)")
     parser.add_argument("--image", default=IMAGE)
     args = parser.parse_args(argv)
