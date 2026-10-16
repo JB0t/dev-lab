@@ -162,7 +162,7 @@ devlab kubectl apply -k config/dask/sample
 devlab kubectl -n dask logs -f job/gpu-concurrency                    # expect: PASS
 ```
 
-For existing code that connects with `Client("tcp://<address>:8786")`, run a standing cluster instead and point the client at `tcp://localhost:8786` (`tcp://dev-lab-control-plane:30786` from a container on the `kind` network). See "Connect Existing Clients By Address" in the runbook:
+For existing code that connects with `Client("tcp://<address>:8786")`, run a standing cluster instead and point the client at `tcp://<server IP>:8786`. Anyone who can reach that port can run code on the GPU workers, so firewall it as the runbook describes. See "Connect Existing Clients By Address" in the runbook:
 
 ```bash
 python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-memory-gib 5 | devlab kubectl apply -n dask -f -
