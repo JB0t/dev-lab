@@ -1,0 +1,12 @@
+# Sample workload: one GPU task per Dask worker, run at the same time
+# Apply: ./devlab kubectl -- apply -k config/dask/sample
+# Re-run: ./devlab kubectl -- delete job -n dask gpu-concurrency, then apply again
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dask
+resources:
+  - job.yaml
+configMapGenerator:
+  - name: gpu-concurrency-script
+    files:
+      - gpu_concurrency.py

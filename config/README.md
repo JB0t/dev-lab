@@ -8,8 +8,18 @@ This directory contains externalized configuration files that were previously em
 config/
 ├── apps/
 │   └── sample-web-app.yaml          # Sample application manifests
+├── dask/                           # Dask scheduler + 4 GPU workers (DASK-GPU-RUNBOOK.md)
+│   ├── kustomization.yaml          # kubectl apply -k config/dask
+│   ├── namespace.yaml
+│   ├── scheduler.yaml
+│   ├── workers.yaml                # Dask-CUDA workers with self-limited GPU memory
+│   └── sample/                     # Job proving the 4 workers share the GPU concurrently
 ├── gitops/
 │   └── git-repository.yaml         # Flux GitRepository configuration
+├── gpu/                            # GPU-enabled cluster (bootstrap --gpu)
+│   ├── gpu-test-pod.yaml           # nvidia-smi smoke test pod
+│   ├── nvidia-device-plugin-values.yaml # NVIDIA device plugin Helm values (time slicing)
+│   └── nvidia-runtimeclass.yaml    # RuntimeClass for the nvidia runtime
 ├── monitoring/
 │   └── prometheus-values.yaml      # Prometheus stack Helm values
 └── registry/

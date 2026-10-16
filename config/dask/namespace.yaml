@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dask
+  annotations:
+    # Dask uses its own TCP protocol between scheduler and workers; keep it off the mesh
+    linkerd.io/inject: disabled
