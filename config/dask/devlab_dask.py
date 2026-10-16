@@ -13,11 +13,12 @@ when idle::
 
 GPU memory: each GPU node advertises one ``nvidia.com/gpu`` share per GiB of
 GPU memory. A worker requests ``gpu_memory_gib`` shares, so Kubernetes only
-starts it where that much GPU memory is free, on any GPU node, and the worker
-limits itself to it: a fixed RMM pool of that size minus its CUDA context.
-Workers of different sizes can share a GPU. Time slicing does not isolate GPU
-memory, so allocations outside RMM (e.g. a library with its own CUDA
-allocator) are not limited.
+starts it where that much GPU memory is free, on any GPU node. Workers of
+different sizes can share a GPU. Time slicing does not isolate GPU memory:
+with ``rmm_pool=True`` (default) the worker limits memory allocated through
+RMM to a fixed pool of its size minus its CUDA context; libraries with their
+own CUDA allocator (e.g. XGBoost) are not limited and should run with
+``rmm_pool=False``, so the pool does not hold memory they cannot use.
 
 Placement: workers tolerate the GPU node taint and run only on GPU nodes
 (``devlab.io/gpu=true``); the scheduler runs on a CPU node
@@ -79,6 +80,7 @@ def gpu_cluster_spec(
     host_memory: str = "8Gi",
     task_durations: Optional[Dict[str, str]] = None,
     worker_resources: Optional[Dict[str, float]] = None,
+    rmm_pool: bool = True,
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
@@ -86,18 +88,20 @@ def gpu_cluster_spec(
     (the function name) take, e.g. ``{"train": "2m"}``, so it asks for enough
     workers right away instead of starting with one. ``worker_resources``
     become Dask worker resources, e.g. ``{"GPU": 1}``, which tasks can require
-    with ``client.submit(..., resources={"GPU": 1})``.
+    with ``client.submit(..., resources={"GPU": 1})``. ``rmm_pool`` gives
+    the worker a fixed RMM pool of its GPU memory; turn it off for code that
+    does not allocate through RMM.
     """
     memory = worker_memory(gpu_memory_gib)
     worker_args = [
         "dask", "cuda", "worker", "$(DASK_SCHEDULER_ADDRESS)",
         "--name", "$(DASK_WORKER_NAME)",
         "--nthreads", "1",
-        "--rmm-pool-size", memory["pool"],
-        "--rmm-maximum-pool-size", memory["pool"],
         "--device-memory-limit", memory["spill"],
         "--dashboard-address", f":{WORKER_DASHBOARD_PORT}",
     ]
+    if rmm_pool:
+        worker_args += ["--rmm-pool-size", memory["pool"], "--rmm-maximum-pool-size", memory["pool"]]
     if worker_resources:
         worker_args += ["--resources", " ".join(f"{key}={value}" for key, value in worker_resources.items())]
 

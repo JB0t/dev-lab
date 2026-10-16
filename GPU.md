@@ -190,7 +190,7 @@ Recreate the cluster (`devlab bootstrap --gpu`, answer yes to recreate) to apply
 
 The device plugin [time-slices](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) each physical GPU into **one `nvidia.com/gpu` share per GiB of GPU memory**: bootstrap reads the GPU's memory and sets the share count (an A10-24Q advertises 22, an 11 GB card 10). A pod requests as many shares as the GiB of GPU memory it may use, so Kubernetes only places it on a node with that much GPU memory still free, and pods of different sizes pack onto the same GPU. The GPU switches between their CUDA contexts.
 
-**Time slicing gives no memory or fault isolation.** Every pod sees the whole GPU and its full memory. Shares only make Kubernetes count GPU memory; each workload must still keep to the memory it requested, or it can make the others fail with out-of-memory errors. The Dask helper does this for you: each worker gets a fixed RMM pool the size of its shares. A crash or GPU fault in one pod can also affect the others.
+**Time slicing gives no memory or fault isolation.** Every pod sees the whole GPU and its full memory. Shares only make Kubernetes count GPU memory; each workload must still keep to the memory it requested, or it can make the others fail with out-of-memory errors. The Dask helper can do this for code that allocates through RMM: each worker gets a fixed RMM pool the size of its shares. XGBoost allocates its own memory, so size its workers for their peak use. A crash or GPU fault in one pod can also affect the others.
 
 Other effects:
 

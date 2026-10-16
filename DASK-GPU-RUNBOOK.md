@@ -22,10 +22,10 @@ GPU node (tainted nvidia.com/gpu): workers, each requesting gpu_memory_gib nvidi
 | Sample client job | `config/dask/sample/` |
 
 - **Scale from 0**: `gpu_cluster(..., n_workers=4)` creates the cluster with no workers and a `DaskAutoscaler` with minimum 0, maximum 4. The operator asks the scheduler every few seconds how many workers its queued tasks need (Dask's adaptive target) and starts or removes worker pods within that range. Idle workers are removed (at most a quarter of them per step).
-- **GPU memory per worker**: each GPU node advertises one `nvidia.com/gpu` share per GiB of GPU memory (22 on an A10-24Q). A worker with `gpu_memory_gib=5` requests 5 shares, so Kubernetes only starts it on a GPU node with 5 GiB free, and it limits itself to a fixed 4.5 GiB RMM pool (5 GiB minus its CUDA context), spilling Dask data to host memory above 4 GiB. numba-cuda allocates from that pool. Workers of different sizes and from different clusters share a GPU this way.
+- **GPU memory per worker**: each GPU node advertises one `nvidia.com/gpu` share per GiB of GPU memory (22 on an A10-24Q). A worker with `gpu_memory_gib=5` requests 5 shares, so Kubernetes only starts it on a GPU node with 5 GiB free. By default it also limits itself to a fixed 4.5 GiB RMM pool (5 GiB minus its CUDA context), spilling Dask data to host memory above 4 GiB. Only memory allocated through RMM comes from that pool. XGBoost allocates its own GPU memory, so run XGBoost workers with `rmm_pool=False`; otherwise the pool holds memory XGBoost cannot use. Workers of different sizes and from different clusters share a GPU this way.
 - **Placement**: GPU nodes are tainted; workers tolerate the taint and select `devlab.io/gpu=true`. The scheduler and clients select `devlab.io/gpu=false`, so they run on the CPU worker.
 
-**GPU memory is not isolated.** Time slicing shares compute; every worker sees the whole GPU. The shares only make Kubernetes count GPU memory, and the RMM pool only limits memory allocated through RMM (Dask-CUDA, numba-cuda). A library with its own CUDA allocator can use more than its worker requested and starve the others.
+**GPU memory is not isolated.** Time slicing shares compute; every worker sees the whole GPU. The shares only make Kubernetes count GPU memory, and the RMM pool only limits memory allocated through RMM. A library with its own CUDA allocator, such as XGBoost, can use more than its worker requested and starve the others, so size `gpu_memory_gib` for its peak use.
 
 ## Versions
 
@@ -41,6 +41,8 @@ One image (`config/dask/image/`) runs the scheduler, the workers and in-cluster 
 | numba, numba-cuda | 0.67.0, 0.22.2 |
 
 Added for this setup: `rmm-cu12==26.2.0` (the worker memory pool; same RAPIDS release as dask-cuda 26.2) and `dask-kubernetes==2026.3.0` (`KubeCluster`, for clients). The NVIDIA CUDA wheels are held to 12.8 (`constraints.txt`) to match the A10-24Q VM's CUDA 12.8 driver; raise them together with the driver. `python/tests/test_gpu_sharing.py` fails if `requirements.txt` drifts from `dask_requirements.md`.
+
+**`numba.cuda` cannot be imported with these versions.** numba-cuda 0.22.2 (the newest dask-cuda 26.2 accepts) does not support numba 0.67 (`module 'numba.cuda.types' has no attribute 'NPDatetime'`) or numpy 2.4 (`np.trapz` was removed). CPU numba works, and so do Dask-CUDA workers: dask-cuda 26.2 only imports `numba.cuda` for GPUDirect Storage spilling. The sample therefore uses XGBoost for its GPU work. numba-cuda 0.30.4 works with numba 0.67 and numpy 2.4.5, but needs dask-cuda 26.4 or later.
 
 ## Setup
 
@@ -63,7 +65,7 @@ The cluster needs at least one CPU-only worker for the scheduler (the default `c
 
 ## Run the Sample
 
-The sample client (`config/dask/sample/gpu_concurrency.py`) creates a cluster with 0 workers, submits 4 GPU tasks, and checks that the scheduler scaled to 4 workers that used the GPU at the same time:
+The sample client (`config/dask/sample/gpu_concurrency.py`) creates a cluster with 0 workers (`rmm_pool=False`), submits 4 tasks that each train XGBoost models on the GPU (`device="cuda"`), and checks that the scheduler scaled to 4 workers that used the GPU at the same time:
 
 ```bash
 devlab kubectl apply -k config/dask/sample
@@ -76,11 +78,11 @@ Expected output (names and numbers vary):
 ```text
 Creating Dask cluster gpu-concurrency: 0 to 4 GPU workers, 5 GiB GPU memory each
 Scheduler up with 0 workers; submitting 4 GPU tasks...
-worker                                        joined  start    end  iters
-gpu-concurrency-default-worker-1f2e3d4c5b      14.2s  31.0s  61.1s    412
-gpu-concurrency-default-worker-6a7b8c9d0e      15.0s  31.0s  61.2s    409
-gpu-concurrency-default-worker-a1b2c3d4e5      15.3s  31.0s  61.2s    411
-gpu-concurrency-default-worker-f6e5d4c3b2      30.9s  31.0s  61.3s    410
+worker                                        joined  start    end rounds
+gpu-concurrency-default-worker-1f2e3d4c5b      14.2s  31.0s  61.1s    410
+gpu-concurrency-default-worker-6a7b8c9d0e      15.0s  31.0s  61.2s    400
+gpu-concurrency-default-worker-a1b2c3d4e5      15.3s  31.0s  61.2s    410
+gpu-concurrency-default-worker-f6e5d4c3b2      30.9s  31.0s  61.3s    400
 GPU(s): GPU-4cf8db2d-06c0-7d70-1a51-e59b25b2c16c
 Scale-up: 31.0s from submitting the tasks to all workers running them
 PASS: all 4 tasks were running at the same time for 30.1s
@@ -89,6 +91,7 @@ PASS: all 4 tasks were running at the same time for 30.1s
 - **4 workers, 1 GPU UUID**: four workers on time-sliced shares of the same GPU.
 - **Scale-up**: from 0 workers to all 4 running. The first run is slower while the GPU node pulls the image.
 - **Overlapping start/end**: the tasks ran at once; each gets about a quarter of the GPU time.
+- **rounds**: XGBoost boosting rounds each task trained.
 
 The cluster is deleted when the job ends. Settings are env vars in `config/dask/sample/job.yaml`: `N_WORKERS` (4), `GPU_MEMORY_GIB` (5; use 2 on an 11 GB card), `TASK_SECONDS` (30). Jobs cannot be re-applied while the old one exists:
 
@@ -104,7 +107,7 @@ from dask.distributed import Client
 from devlab_dask import gpu_cluster
 
 # Up to 4 workers with 5 GiB of GPU memory each, scaling from 0
-with gpu_cluster("training", n_workers=4, gpu_memory_gib=5,
+with gpu_cluster("training", n_workers=4, gpu_memory_gib=5, rmm_pool=False,
                  task_durations={"train_model": "2m"}) as cluster, Client(cluster) as client:
     futures = client.map(train_model, partitions)
     results = client.gather(futures)
@@ -115,6 +118,7 @@ with gpu_cluster("training", n_workers=4, gpu_memory_gib=5,
 | `name` | DaskCluster name, unique in the namespace |
 | `n_workers` | Most workers the scheduler may start (it starts from 0) |
 | `gpu_memory_gib` | GPU memory per worker: its `nvidia.com/gpu` shares and RMM pool |
+| `rmm_pool` | Give each worker a fixed RMM pool of its GPU memory (default `True`). Use `False` for XGBoost and other code that does not allocate through RMM |
 | `task_durations` | How long tasks of a function take, e.g. `{"train_model": "2m"}`. Dask's adaptive target assumes unknown tasks take 0.5 s, so without this it first asks for 1 worker and adds more once tasks have finished and their real duration is known. With it, the scheduler asks for enough workers at once. |
 | `worker_resources` | Dask worker resources, e.g. `{"GPU": 1}`; tasks submitted with `resources={"GPU": 1}` then run one per worker |
 | `host_memory` | Host memory limit per worker pod (default `8Gi`) |
@@ -155,5 +159,7 @@ devlab kubectl delete -k config/dask
 | Only 1 worker starts for many tasks | Dask does not know the tasks are long yet; pass `task_durations` |
 | `ErrImagePull` for `localhost:5000/devlab-dask-gpu` | Image not in the local registry; run step 1 of Setup |
 | `out_of_memory` / `MemoryError` in a task | The task needs more GPU memory than its worker's pool; raise `gpu_memory_gib` |
+| XGBoost `cudaErrorMemoryAllocation` / out of memory | Other workers' RMM pools or XGBoost use hold the GPU memory; use `rmm_pool=False` for XGBoost workers and size `gpu_memory_gib` for their peak use |
+| `module 'numba.cuda.types' has no attribute 'NPDatetime'` | `numba.cuda` does not work with the pinned versions; see Versions |
 | `CUDA-capable device(s) is/are busy or unavailable` | GPU compute mode is not Default (see GPU.md, step 3) |
 | Client `ModuleNotFoundError: devlab_dask` | Mount the `devlab-dask` ConfigMap and set `PYTHONPATH`, as in `config/dask/sample/job.yaml` |
