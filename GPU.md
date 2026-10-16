@@ -12,7 +12,9 @@ Written for Ubuntu (22.04 or newer) on a machine or VM with an NVIDIA GPU, with 
 
 ### 1. NVIDIA Driver
 
-Skip this step if `nvidia-smi` already lists your GPU.
+Skip this step if `nvidia-smi` already lists your GPU with a new enough driver.
+
+**Driver version**: use R580 or newer (`nvidia-smi` header: CUDA Version 13.0 or higher). The GPU Operator's validator and current CUDA images (including the RAPIDS image in the Dask runbook) are built for CUDA 12.9 or newer. With an older driver they need CUDA forward compatibility, which works only on datacenter GPUs (A10, A100, L4, ...). On GeForce and other consumer cards they fail with `forward compatibility was attempted on non supported HW`.
 
 **Bare-metal GPU** (or a GPU passed through to a VM):
 
@@ -22,7 +24,7 @@ sudo ubuntu-drivers install --gpgpu   # the recommended server driver
 sudo reboot
 ```
 
-**NVIDIA vGPU VM** (e.g. an A10-24Q profile): install the vGPU guest driver that matches your hypervisor's vGPU software release, from the NVIDIA Licensing Portal; the public driver does not work in a vGPU guest. Then license the VM with the client configuration token from the portal (or your DLS) ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
+**NVIDIA vGPU VM** (e.g. an A10-24Q profile): install the vGPU guest driver that matches your hypervisor's vGPU software release, from the NVIDIA Licensing Portal; the public driver does not work in a vGPU guest. Prefer vGPU 19 (R580) or newer, so CUDA 12.9+ images run without forward compatibility. Then license the VM with the client configuration token from the portal (or your DLS) ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
 
 ```bash
 sudo cp client_configuration_token_*.tok /etc/nvidia/ClientConfigToken/
@@ -82,6 +84,12 @@ sudo apt install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
 sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
 sudo systemctl restart docker    # restarts every container on this host
+
+# kind nodes share the host's inotify limits; the GPU Operator's device plugin
+# fails with "too many open files" at the default 128 instances
+printf 'fs.inotify.max_user_instances = 8192\nfs.inotify.max_user_watches = 524288\n' | \
+  sudo tee /etc/sysctl.d/99-devlab-kind.conf
+sudo sysctl --system
 ```
 
 Check (must list your GPU):
@@ -90,7 +98,7 @@ Check (must list your GPU):
 docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L
 ```
 
-`devlab bootstrap --gpu` runs this same check first.
+`devlab bootstrap --gpu` runs this same check, and the inotify check, first.
 
 ### 4. devlab
 
@@ -251,5 +259,7 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 - **`CUDA_ERROR_OUT_OF_MEMORY` with time slicing**: another pod on the same GPU used the memory. Limit each workload's GPU memory (see [Time Slicing](#time-slicing)).
 - **`requirement error: unsatisfied condition: cuda>=...`**: the image needs a newer driver than the host or vGPU guest has. Use an image built for an older CUDA version.
 - **GPU slows down after ~20 minutes in a VM**: the vGPU is not licensed (see [vGPU Guests](#vgpu-guests-eg-a10-24q)).
+- **Device plugin in CrashLoopBackOff with `couldn't initialize inotify: too many open files`**: raise the host's inotify limits ([step 3](#3-nvidia-container-toolkit)), then `devlab kubectl -n gpu-operator delete pod -l app=nvidia-device-plugin-daemonset`.
+- **`nvidia-cuda-validator` in Init:Error, or CUDA apps fail with `forward compatibility was attempted on non supported HW`**: the driver is older than the CUDA in the image, on a GPU without forward compatibility (GeForce/consumer cards). Upgrade the driver to R580 or newer ([step 1](#1-nvidia-driver)).
 - **`nvidia-smi: not found` in the pod**: the pod is missing `runtimeClassName: nvidia`.
 - **GPUs a node sees**: `docker exec dev-lab-worker nvidia-smi -L`.

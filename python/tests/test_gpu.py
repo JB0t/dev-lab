@@ -97,6 +97,16 @@ class GpuPrerequisiteTests(unittest.TestCase):
         printed = " ".join(str(call.args[0]) for call in console_print.call_args_list)
         self.assertIn("accept-nvidia-visible-devices-as-volume-mounts=true", printed)
 
+    def test_low_inotify_limits_fail_with_fix(self):
+        for values, ok in ((("128", "65536"), False), (("8192", "524288"), True)):
+            with self.subTest(values=values), \
+                    patch.dict(devlab.os.environ, {"DOCKER_HOST": ""}), \
+                    patch.object(devlab.Path, "read_text", side_effect=list(values)), \
+                    patch.object(devlab.console, "print") as console_print:
+                self.assertEqual(manager()._check_inotify_limits(), ok)
+            printed = " ".join(str(call.args[0]) for call in console_print.call_args_list)
+            self.assertEqual("99-devlab-kind.conf" in printed, not ok)
+
     def test_vgpu_license_warning(self):
         cases = (
             ("bare metal", "Product Name : NVIDIA A10\n", False),
@@ -191,6 +201,8 @@ class GpuOperatorTests(unittest.TestCase):
         self.assertEqual(args[:4], ("gpu-operator", "nvidia/gpu-operator", GPU_OPERATOR_CHART_VERSION, "gpu-operator"))
         self.assertEqual(args[4], CONFIG_DIR / "gpu" / "gpu-operator-values.yaml")
         self.assertNotIn("dcgmExporter.serviceMonitor.enabled=false", kwargs["extra_args"])
+        # Helm 4's --wait would block on the ClusterPolicy; capacity is checked instead
+        self.assertNotIn("--wait", kwargs["extra_args"])
         self.m._apply_manifest.assert_called_once_with(CONFIG_DIR / "gpu" / "nvidia-runtimeclass.yaml")
 
     def test_service_monitor_off_without_monitoring_stack(self):
