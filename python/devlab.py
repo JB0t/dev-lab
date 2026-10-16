@@ -392,8 +392,12 @@ class ContainerToolRunner:
         
         return volumes
     
-    def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False, tty: bool = False, publish: List[str] = ()) -> subprocess.CompletedProcess:
-        """Run kubectl in container"""
+    def kubectl(self, args: List[str], capture_output: bool = False, context: str = None, input: str = None, text: bool = False, tty: bool = False, publish: List[str] = (), workdir: Path = None) -> subprocess.CompletedProcess:
+        """Run kubectl in container
+
+        `workdir` (default: the current directory) is mounted at /workspace,
+        the container's working directory; file arguments must be relative to it.
+        """
         
         if args and args[0] == "apply":
             target = " ".join(str(arg) for arg in args[1:]) or "manifest from stdin"
@@ -416,7 +420,7 @@ class ContainerToolRunner:
             "--network", "kind",  # Use kind network to communicate with KinD cluster
             "-v", f"{self.shared_kubeconfig_dir}:/root/.kube:rw",  # Use shared kubeconfig
             "-v", f"{krew_dir}:/root/.krew:rw",  # Persist krew index and plugins
-            "-v", f"{os.getcwd()}:/workspace:rw",
+            "-v", f"{workdir or os.getcwd()}:/workspace:rw",
             "-w", "/workspace",
             kubectl_image,
         ]
@@ -1657,7 +1661,9 @@ class DevLabManager:
     def _enable_dagster(self) -> bool:
         # The code location mounts the devlab-dask and devlab-dagster ConfigMaps
         # and runs as the dask-client service account, all from config/dask
-        result = self.tools.kubectl(["apply", "-k", str(CONFIG_DIR / "dask")], context=f"kind-{CLUSTER_NAME}")
+        # kubectl runs in a container that sees only `workdir`
+        result = self.tools.kubectl(["apply", "-k", str((CONFIG_DIR / "dask").relative_to(PROJECT_ROOT))],
+                                    context=f"kind-{CLUSTER_NAME}", workdir=PROJECT_ROOT)
         if result.returncode != 0:
             console.print("[red]Failed to apply config/dask (namespace, RBAC, ConfigMaps)[/red]")
             return False
