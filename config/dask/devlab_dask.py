@@ -130,8 +130,9 @@ def gpu_cluster_spec(
                         "resources": {
                             "requests": {"cpu": "500m", "memory": "2Gi"},
                             "limits": {
-                                # One share per GiB of GPU memory
-                                "nvidia.com/gpu": gpu_memory_gib,
+                                # One share per GiB of GPU memory. The DaskCluster
+                                # CRD only accepts quantities as strings
+                                "nvidia.com/gpu": str(gpu_memory_gib),
                                 "memory": host_memory,
                             },
                         },
