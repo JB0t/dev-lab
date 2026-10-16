@@ -98,7 +98,19 @@ Check (must list your GPU):
 docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L
 ```
 
-`devlab bootstrap --gpu` runs this same check, and the inotify check, first.
+Time slicing needs the GPU in the `Default` compute mode, with no MPS server on the host. Some VMs and GPU servers are set up with `Exclusive_Process` and an MPS daemon; then pods fail with `CUDA-capable device(s) is/are busy or unavailable`. If nothing else on the host uses MPS:
+
+```bash
+nvidia-smi -q | grep -i "compute mode"                     # must be Default
+nvidia-smi --query-compute-apps=pid,name --format=csv      # nvidia-cuda-mps-server listed? then:
+systemctl list-units --all | grep -i mps                   # started by a service? stop and disable it
+echo quit | sudo nvidia-cuda-mps-control                   # stop the MPS daemon and its server
+sudo nvidia-smi -c DEFAULT
+```
+
+The compute mode resets to Default at reboot unless a service sets it; disable that service too.
+
+`devlab bootstrap --gpu` runs the GPU check, the compute mode check and the inotify check first.
 
 ### 4. devlab
 
@@ -122,7 +134,7 @@ source ~/.bashrc
 devlab bootstrap --gpu
 ```
 
-It asks which Kubernetes version to use (Enter keeps the default), then runs for 10 to 20 minutes: cluster, GPU node setup, registry, Traefik, monitoring, then the GPU Operator. It ends with `NVIDIA GPU Operator ready` and the access points (Grafana at <http://grafana.localhost>, admin / admin123).
+It asks which Kubernetes version to use (Enter keeps the default), then runs for 10 to 20 minutes: cluster, GPU node setup, registry, Traefik, monitoring, then the GPU Operator. If an optional component such as the monitoring stack fails, bootstrap still installs everything else, including the GPU Operator, lists the failed components at the end and exits with an error; re-run `devlab bootstrap --gpu` and keep the existing cluster to retry them. It ends with `NVIDIA GPU Operator ready` and the access points (Grafana at <http://grafana.localhost>, admin / admin123).
 
 By default the first worker gets every GPU and the second worker is CPU-only; see [GPU Placement](#gpu-placement) to change this before bootstrapping.
 
@@ -262,5 +274,6 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 - **Device plugin in CrashLoopBackOff with `couldn't initialize inotify: too many open files`**: raise the host's inotify limits ([step 3](#3-nvidia-container-toolkit)), then `devlab kubectl -n gpu-operator delete pod -l app=nvidia-device-plugin-daemonset`.
 - **`forward compatibility was attempted on non supported HW`**: CUDA forward-compatibility libraries from the image were loaded on a GPU that does not support them. devlab turns this off in the GPU nodes; if you see it, the node setup did not finish: re-run `devlab bootstrap --gpu`.
 - **`CUDA driver version is insufficient for CUDA runtime version`**: the image is built for a newer CUDA major version than the driver (e.g. a CUDA 13 image on a 12.x driver). Use a CUDA 12 image, or upgrade the driver ([step 1](#1-nvidia-driver)).
+- **`CUDA-capable device(s) is/are busy or unavailable`**: the GPU is in `Exclusive_Process` compute mode, or a host MPS server holds it. Set the Default mode and stop MPS ([step 3](#3-nvidia-container-toolkit)), then `devlab kubectl -n gpu-operator delete pod -l app=nvidia-device-plugin-daemonset` and re-run the workload.
 - **`nvidia-smi: not found` in the pod**: the pod is missing `runtimeClassName: nvidia`.
 - **GPUs a node sees**: `docker exec dev-lab-worker nvidia-smi -L`.
