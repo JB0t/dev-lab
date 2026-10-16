@@ -1,12 +1,13 @@
 # Local Kubernetes Development Lab
 
-A comprehensive local development environment with **dual deployment options**: traditional script-based or modern GitOps-based, now featuring a **platform-agnostic Python CLI**.
+A local Kubernetes development environment on [kind](https://kind.sigs.k8s.io/), with **two deployment options**: traditional (devlab installs everything) or GitOps (Flux deploys from this repository). It is driven by `devlab`, a single Go binary, and ships as a tarball you can copy to any Linux machine with Docker.
 
 > **📖 For GitOps setup guide, see [GITOPS-GUIDE.md](./GITOPS-GUIDE.md)**
 
 ## Features
 
-- **Platform Agnostic**: Python CLI with Docker-only dependency (works on Windows, macOS, Linux)
+- **Docker is the only requirement**: `devlab` has kind built in, and the release tarball bundles `kubectl`, `helm`, `linkerd` and `flux`
+- **Copy-and-run releases**: one tarball per architecture (x86_64, aarch64) with the binaries, config and guides
 - **High Availability Kubernetes Cluster**: 3-node KinD cluster (1 control-plane + 2 workers)
 - **GitOps with Flux CD**: Complete Flux v2 setup with source/kustomize/helm/notification controllers
 - **Service Mesh Testing**: Complete Linkerd service mesh with canary deployments and mTLS
@@ -14,93 +15,140 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Local Container Registry**: Docker registry accessible at localhost:5000
 - **Ingress Controller**: NGINX ingress for local service exposure
 - **Metrics Server**: For cluster autoscaling and resource monitoring
-- **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
-- **GPU-Enabled Option**: `./devlab bootstrap --gpu` builds the same cluster with [nvkind](https://github.com/NVIDIA/nvkind) and NVIDIA GPUs on the workers
+- **GPU-Enabled Option**: `bin/devlab bootstrap --gpu` builds the same cluster with NVIDIA GPUs on the workers, time-sliced for sharing
 
 ## Quick Start
 
-### Option 1: Python CLI (Recommended)
+### From a Release Tarball
+
+Download `dev-lab_main_v<version>_<arch>.tar.gz` for your machine (`x86_64` or `aarch64`) from the [GitHub releases](https://github.com/jbotstevens/dev-lab/releases), copy it to the machine that will run the cluster, and unpack it:
 
 ```bash
-# Setup Python environment
-python3 python/setup.py
+tar -xzf dev-lab_main_v0.1.0_x86_64.tar.gz
+cd dev-lab_main_x86_64
 
-# Build local tool container images (optional, built automatically when needed)
-./devlab build-tools
+# Create the cluster and install Linkerd
+bin/devlab bootstrap
 
-# Bootstrap the cluster
-./devlab bootstrap
+# OR a GPU-enabled cluster (Linux + NVIDIA GPU, see below)
+bin/devlab bootstrap --gpu
 
-# OR bootstrap a GPU-enabled cluster (Linux + NVIDIA GPU, see below)
-./devlab bootstrap --gpu
+# Deploy using the traditional method
+bin/devlab deploy-traditional
 
-# Deploy using traditional method
-./devlab deploy-traditional
+# OR using GitOps
+bin/devlab deploy-gitops
 
-# OR deploy using GitOps method
-./devlab deploy-gitops
+# Check status, and test the whole environment
+bin/devlab status
+bin/devlab test
 
-# Check status
-./devlab status
+# Bundled tools, pointed at the dev-lab cluster
+bin/devlab kubectl get pods -A
+bin/devlab helm list -A
+bin/devlab linkerd check
+bin/devlab flux get all -A
 
-# Use container-based tools
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
-./devlab flux -- get all -A
-
-# Cleanup when done
-./devlab cleanup
+# Delete the cluster when done
+bin/devlab cleanup
 ```
 
-### Option 2: Bash Scripts (Legacy)
+The target machine needs Docker (running, and usable by your user) and internet access: kind node images and the Linkerd, monitoring and other images are pulled during bootstrap and deploy. Nothing else needs installing. Release tarballs contain:
+
+| Path | Contents |
+|------|----------|
+| `bin/devlab` | dev-lab CLI (static binary, kind built in) |
+| `bin/kubectl`, `bin/helm`, `bin/linkerd`, `bin/flux` | Pinned upstream CLIs (versions in `manifest.txt`) |
+| `cluster/`, `config/`, `clusters/` | kind config, Helm values and Kubernetes manifests; edit them in place |
+| `apps/` | Sample applications for the service mesh guides |
+| `*.md` | This README and the guides |
+| `licenses/` | Third-party licenses |
+| `manifest.txt` | Version, branch, commit and architecture |
+
+`devlab` finds its files relative to its own location (`<home>/bin/devlab`), so it can be run from any directory. Set `--home` or `DEVLAB_HOME` to use a different home.
+
+### Kubeconfig
+
+`devlab` writes the cluster's kubeconfig to `<home>/.kube/config` (context `kind-dev-lab`) and never touches `~/.kube/config`. The `bin/devlab kubectl|helm|linkerd|flux` commands use it automatically.
+
+The rest of this README and the guides use plain `kubectl`, `helm` and `linkerd`. To run those with the bundled tools against the dev-lab cluster, from the dev-lab home:
 
 ```bash
-# 1. Install prerequisites (if needed)
-./scripts/install-prerequisites.sh
-
-# 2. Bootstrap common infrastructure  
-./scripts/bootstrap.sh
-
-# 3. Deploy either:
-# via scripts
-./scripts/deploy-traditional.sh
-# via GitOps
-./scripts/deploy-gitops.sh
+export KUBECONFIG=$(bin/devlab kubeconfig) PATH="$PWD/bin:$PATH"
+kubectl get nodes
 ```
+
+### From a Checkout
+
+The repository has the same layout as a release, so you can build and run it in place (Go from `go.mod`):
+
+```bash
+go build -o bin/devlab ./cmd/devlab
+scripts/fetch-tools.sh x86_64 bin      # bundled CLIs, checksum-verified
+bin/devlab bootstrap
+```
+
+`scripts/build-distribution.sh --arch all <version>` builds the release tarballs into `build/`; CI does this on every push (see [Releases](#releases)).
 
 ### Test the Environment
 
 ```bash
-# Run comprehensive tests
-./scripts/test-environment.sh
+# Cluster, nodes, registry, monitoring, ingress, and building, loading
+# and running an image
+bin/devlab test
 
 # Manual verification
-kubectl get nodes
-kubectl -n monitoring get pods
+bin/devlab kubectl get nodes
+bin/devlab kubectl -n monitoring get pods
 curl -s http://localhost:5000/v2/_catalog
 ```
 
-## GPU-Enabled Cluster (nvkind)
+## Commands
 
-`./devlab bootstrap --gpu` creates the same `dev-lab` cluster (same name, ports, registry and labels) with [nvkind](https://github.com/NVIDIA/nvkind) instead of plain KinD, then installs the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) so pods can request `nvidia.com/gpu`. Each physical GPU is [time-sliced](#gpu-time-slicing) into 4 shares by default. Everything after bootstrap (`deploy-traditional`, `deploy-gitops`, `status`, `cleanup`) works the same.
+| Command | Does |
+|---------|------|
+| `bootstrap [--gpu] [--recreate]` | Create the cluster, install Gateway API CRDs and Linkerd (+ NVIDIA device plugin with `--gpu`) |
+| `deploy-traditional` (alias `deploy`) | Install registry, metrics-server, NGINX ingress and the Prometheus stack |
+| `deploy-gitops [--repo-url URL] [--no-prompt]` | Install Flux, create a deploy key, and deploy `infrastructure/` and `apps/` from Git |
+| `status` | Docker, cluster and node status (with allocatable GPUs) |
+| `test` | End-to-end check of a deployed environment |
+| `load-image IMAGE... [--nodes ...]` | Load local Docker images into the cluster nodes |
+| `gpu-plugin` | Reinstall the NVIDIA device plugin (applies time-slicing changes) |
+| `kubeconfig` | Print the kubeconfig path |
+| `kubectl`, `helm`, `linkerd`, `flux` | Run the bundled tool against the cluster (a leading `--` is optional) |
+| `cleanup [-y]` | Delete the cluster |
+
+## Releases
+
+GitHub Actions (`.github/workflows/build.yml`) runs on every push and pull request:
+
+1. **test**: `gofmt`, `go vet`, `go test ./...`, and the Dask sample workload tests.
+2. **build**: `scripts/build-distribution.sh` builds `dev-lab_<branch>_v<version>_<arch>.tar.gz` for x86_64 and aarch64, and checks they contain no Go source. Branch builds are versioned `X.Y.Z.ci.<run>` (the next patch after the latest tag) and kept as workflow artifacts for 7 days.
+3. **release**, on a `vX.Y.Z` tag only: builds at version `X.Y.Z` and attaches the tarballs to a GitHub Release, with that version's section of [CHANGELOG.md](./CHANGELOG.md) as the notes.
+
+To release: add a `## vX.Y.Z` section to `CHANGELOG.md`, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+Pinned versions (bump them in one place each):
+
+| Component | Version | Pinned in |
+|-----------|---------|-----------|
+| kind library / node image | v0.20.0 / Kubernetes v1.27.3 | `go.mod`, `internal/lab/lab.go` |
+| kubectl, helm, linkerd, flux | v1.28.3, v3.13.1, stable-2.14.10, v2.3.0 | `scripts/fetch-tools.sh` (with SHA-256s) |
+| Gateway API, metrics-server, NGINX ingress | v1.0.0, v0.7.2, v1.8.1 | `internal/lab/lab.go` |
+| NVIDIA device plugin chart | 0.20.1 | `internal/lab/lab.go` |
+
+## GPU-Enabled Cluster
+
+`bin/devlab bootstrap --gpu` creates the same `dev-lab` cluster (same name, ports, registry and labels) with NVIDIA GPUs injected into the worker nodes, then installs the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) so pods can request `nvidia.com/gpu`. Each physical GPU is [time-sliced](#gpu-time-slicing) into 4 shares by default. Everything after bootstrap (`deploy-traditional`, `deploy-gitops`, `status`, `cleanup`) works the same.
+
+The GPU setup follows [nvkind](https://github.com/NVIDIA/nvkind): `devlab` renders the cluster from an nvkind-style template and runs nvkind's node setup itself, so nvkind, kind and kubectl are not needed on the host.
 
 ### Host Requirements
 
-nvkind needs the host GPU driver, and it runs `kind` and `kubectl` itself. So unlike the default bootstrap, `--gpu` needs these on the host:
-
 - Linux (or WSL2) with an NVIDIA GPU and driver: `nvidia-smi -L` lists your GPUs
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-- `kind` and `kubectl` on `PATH`
-- `nvkind` on `PATH`:
 
-  ```bash
-  go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
-  # or, without a local Go toolchain:
-  docker run --rm -v $PWD/bin/:/go/bin/ golang:1.23 go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
-  ```
-
-Configure Docker so nvkind can inject GPUs into the KinD node containers (one-time):
+Configure Docker so GPUs can be injected into the kind node containers (one-time):
 
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
@@ -111,13 +159,13 @@ sudo systemctl restart docker
 docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L
 ```
 
-`./devlab bootstrap --gpu` runs these checks first and stops with these setup steps if one fails.
+`bin/devlab bootstrap --gpu` runs these checks first and stops with these setup steps if one fails.
 
 ### vGPU Guests (e.g. A10-24Q)
 
 The same requirements and checks apply inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the vGPU profile, e.g. `GPU 0: NVIDIA A10-24Q (UUID: GPU-...)`. Differences from a bare-metal GPU:
 
-- **Guest driver**: install the NVIDIA vGPU guest driver from the NVIDIA Licensing Portal. It must match the vGPU software release of the hypervisor's vGPU manager. The public data center driver does not work in a vGPU guest. The NVIDIA Container Toolkit and nvkind work the same on top of it.
+- **Guest driver**: install the NVIDIA vGPU guest driver from the NVIDIA Licensing Portal. It must match the vGPU software release of the hypervisor's vGPU manager. The public data center driver does not work in a vGPU guest. The NVIDIA Container Toolkit and `devlab` work the same on top of it.
 - **Licensing**: an unlicensed vGPU runs at full capability for 20 minutes. After that NVIDIA degrades its performance, and degrades it further after 24 hours. The exact effect on CUDA depends on the vGPU release; see the [licensing guide](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/intro-to-grid-licensing.html). To license the VM ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
 
   ```bash
@@ -133,7 +181,7 @@ The same requirements and checks apply inside a VM with an NVIDIA vGPU. `nvidia-
   nvidia-smi -q | grep -i 'license status'
   ```
 
-  `./devlab bootstrap --gpu` warns, but continues, when `nvidia-smi -q` reports the vGPU as unlicensed.
+  `bin/devlab bootstrap --gpu` warns, but continues, when `nvidia-smi -q` reports the vGPU as unlicensed.
 - **CUDA version**: container images must support the guest driver. CUDA 12 images run on any vGPU 16 (R535) or newer guest driver. CUDA 13 images need an R580+ driver. Check the driver's CUDA version in the `nvidia-smi` header.
 - **No MIG on A10**: an A10 cannot be partitioned with MIG, so time slicing is the only way to share it between pods.
 - **Unified memory**: CUDA unified (managed) memory is off by default on vGPUs. Your hypervisor admin must turn it on per vGPU, and NVIDIA documents it only for some profiles. Don't rely on managed memory (e.g. RMM managed memory) unless you have checked it is enabled.
@@ -141,12 +189,12 @@ The same requirements and checks apply inside a VM with an NVIDIA vGPU. `nvidia-
 
 ### What Bootstrap Does
 
-1. Renders `cluster/nvkind-config-template.yaml` with `cluster/nvkind-values.yaml`. Then it creates the cluster with `nvkind cluster create`.
-2. nvkind installs the NVIDIA Container Toolkit in each GPU worker and adds an `nvidia` containerd runtime. It also registers the `nvidia` RuntimeClass.
+1. Renders `cluster/nvkind-config-template.yaml` with `cluster/nvkind-values.yaml` (a Go template with [sprig](https://masterminds.github.io/sprig/) functions and `numGPUs`, as in nvkind). Then it creates the cluster with the built-in kind library.
+2. Installs the NVIDIA Container Toolkit in each GPU worker and adds an `nvidia` containerd runtime (nvkind's node setup). It also applies the `nvidia` RuntimeClass.
 3. Installs the `nvidia-device-plugin` Helm chart in the `nvidia` namespace with `config/gpu/nvidia-device-plugin-values.yaml`. This config turns on time slicing.
 4. Waits until a node advertises allocatable `nvidia.com/gpu` (4 per physical GPU by default). Then it installs Linkerd as usual.
 
-`nvkind cluster create` can exit with an error from harmless unmount failures after the cluster is up. Bootstrap continues when the cluster exists. The GPU capacity check catches a real failure.
+Masking `/proc/driver/nvidia/params` and removing unassigned `/dev/nvidia*` nodes can fail harmlessly on some toolkit versions. Bootstrap logs these as warnings and continues; the GPU capacity check catches a real failure.
 
 ### GPU Placement
 
@@ -159,7 +207,7 @@ workers:
 - devices: 1
 ```
 
-GPU workers get the `nvidia.com/gpu.present=true` label. The device plugin DaemonSet only runs on nodes with that label. Re-run `./devlab bootstrap --gpu` and recreate the cluster to apply changes.
+GPU workers get the `nvidia.com/gpu.present=true` label. The device plugin DaemonSet only runs on nodes with that label. Re-run `bin/devlab bootstrap --gpu` and recreate the cluster to apply changes.
 
 ### GPU Time Slicing
 
@@ -177,18 +225,18 @@ The config is in `config/gpu/nvidia-device-plugin-values.yaml`:
 
 ```bash
 # Change the number of shares per GPU: edit `replicas` (must be >= 2), then
-./devlab gpu-plugin
+bin/devlab gpu-plugin
 
 # Turn time slicing off for the whole cluster: set `config.default: exclusive`, then
-./devlab gpu-plugin
+bin/devlab gpu-plugin
 
 # Turn it off on one node only (no reinstall; the plugin picks up the label change itself)
-./devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config=exclusive --overwrite
+bin/devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config=exclusive --overwrite
 # ...and back on
-./devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config-
+bin/devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config-
 ```
 
-`./devlab gpu-plugin` re-runs the device plugin Helm install and waits for the new capacity. Pods already running on a share keep running, so delete them first if you reduce the share count.
+`bin/devlab gpu-plugin` re-runs the device plugin Helm install and waits for the new capacity. Pods already running on a share keep running, so delete them first if you reduce the share count.
 
 For a worked example with 4 Dask workers sharing one A10, see [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md).
 
@@ -210,24 +258,24 @@ spec:
 Smoke test:
 
 ```bash
-./devlab kubectl -- apply -f config/gpu/gpu-test-pod.yaml
-./devlab kubectl -- logs gpu-test     # GPU 0: NVIDIA ... (UUID: GPU-...)
-./devlab kubectl -- delete pod gpu-test
+bin/devlab kubectl -- apply -f config/gpu/gpu-test-pod.yaml
+bin/devlab kubectl -- logs gpu-test     # GPU 0: NVIDIA ... (UUID: GPU-...)
+bin/devlab kubectl -- delete pod gpu-test
 
 # Allocatable GPU shares per node (GPUs column: 4 per physical GPU)
-./devlab status
+bin/devlab status
 ```
 
 ### GPU Troubleshooting
 
-- **No node advertised nvidia.com/gpu capacity**: check the plugin logs with `./devlab kubectl -- logs -n nvidia -l app.kubernetes.io/name=nvidia-device-plugin -c nvidia-device-plugin-ctr`. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `./devlab cleanup && ./devlab bootstrap --gpu`.
-- **Pod stuck in Pending**: all GPU shares are in use (4 per GPU by default). Check with `./devlab status`.
+- **No node advertised nvidia.com/gpu capacity**: check the plugin logs with `bin/devlab kubectl -- logs -n nvidia -l app.kubernetes.io/name=nvidia-device-plugin -c nvidia-device-plugin-ctr`. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `bin/devlab cleanup && bin/devlab bootstrap --gpu`.
+- **Pod stuck in Pending**: all GPU shares are in use (4 per GPU by default). Check with `bin/devlab status`.
 - **Pod fails with `UnexpectedAdmissionError`**: it requests more than 1 `nvidia.com/gpu` while time slicing is on.
 - **`CUDA_ERROR_OUT_OF_MEMORY` with time slicing**: another pod on the same GPU used the memory. Limit each workload's GPU memory (see [GPU Time Slicing](#gpu-time-slicing)).
 - **`requirement error: unsatisfied condition: cuda>=...`**: the image needs a newer driver than the host or vGPU guest has. Use an image built for an older CUDA version.
 - **GPU slows down after ~20 minutes in a VM**: the vGPU is not licensed (see [vGPU Guests](#vgpu-guests-eg-a10-24q)).
 - **`nvidia-smi: not found` in the pod**: the pod is missing `runtimeClassName: nvidia`.
-- **GPU details per node**: run `kind export kubeconfig --name dev-lab`, then `nvkind cluster print-gpus --name dev-lab`. nvkind reads the cluster through your host kubeconfig. The `./devlab` kubeconfig in `.kube/config` uses an address that only resolves inside the `kind` Docker network.
+- **GPU details per node**: `docker exec dev-lab-worker nvidia-smi -L` lists the GPUs a worker node sees.
 
 ## Image Workflow
 
@@ -240,7 +288,7 @@ For KinD clusters, there are two approaches for container images:
 docker build -t my-app:latest .
 
 # Load directly into KinD cluster
-kind load docker-image my-app:latest --name dev-lab
+bin/devlab load-image my-app:latest
 
 # Deploy with imagePullPolicy: Never
 kubectl apply -f - <<EOF
@@ -280,7 +328,7 @@ docker push localhost:5000/my-app:latest
 curl -s http://localhost:5000/v2/_catalog
 
 # Note: Due to KinD networking, you'll need to load the image anyway:
-kind load docker-image localhost:5000/my-app:latest --name dev-lab
+bin/devlab load-image localhost:5000/my-app:latest
 ```
 
 ## Helm Chart Development
@@ -314,7 +362,7 @@ helm test my-release
 docker build -t my-app:latest .
 
 # Load into KinD
-kind load docker-image my-app:latest --name dev-lab
+bin/devlab load-image my-app:latest
 
 # Install chart with local image
 helm install my-release ./my-chart \
@@ -571,43 +619,37 @@ watch kubectl top nodes
 
 ```text
 dev-lab/
-├── apps/
-│   └── mesh-test-app/           # Service mesh testing application
-│       ├── server.js            # Node.js application with Redis integration
-│       ├── package.json         # Dependencies and scripts
-│       ├── Dockerfile           # Container configuration
-│       ├── k8s/                 # Kubernetes manifests
-│       │   ├── base.yaml        # Core app, service, ingress
-│       │   ├── redis.yaml       # Redis database deployment
-│       │   ├── canary.yaml      # SMI TrafficSplit canary
-│       │   ├── canary-simple.yaml # Simple canary services
-│       │   ├── linkerd-native-split.yaml # Linkerd native traffic splitting
-│       │   ├── linkerd-httproute.yaml    # HTTPRoute-based canary
-│       │   └── trafficsplit-crd.yaml     # TrafficSplit CRD
-│       └── scripts/             # Automation scripts
-│           ├── setup-service-mesh.sh     # Complete environment setup
-│           ├── canary-deploy.sh          # SMI-based canary management
-│           ├── linkerd-canary.sh         # Linkerd native canary management
-│           └── test-suite.sh             # Comprehensive testing framework
+├── cmd/devlab/                  # devlab CLI entry point (Go)
+├── internal/
+│   ├── cli/                     # Commands and flags
+│   └── lab/                     # Bootstrap, deploy, GitOps, GPU, status and test logic
 ├── cluster/
 │   ├── kind-config.yaml         # KinD cluster configuration
 │   ├── nvkind-config-template.yaml # GPU cluster config template (bootstrap --gpu)
 │   └── nvkind-values.yaml       # GPU placement per worker node
 ├── config/
 │   ├── dask/                    # Dask scheduler + time-sliced GPU workers (DASK-GPU-RUNBOOK.md)
-│   └── gpu/                     # NVIDIA RuntimeClass, device plugin values (time slicing), GPU smoke test pod
-├── monitoring/
-│   ├── prometheus-values-lightweight.yaml    # Prometheus stack values
-│   └── custom-monitoring.yaml  # Additional monitoring resources
-├── registry/
-│   └── registry-k8s-daemonset.yaml          # Registry deployment
+│   ├── gitops/                  # Flux GitRepository
+│   ├── gpu/                     # NVIDIA RuntimeClass, device plugin values (time slicing), GPU smoke test pod
+│   ├── monitoring/              # Prometheus stack Helm values
+│   └── registry/                # Registry DaemonSet and UI
+├── clusters/dev-lab/            # Flux Kustomizations for infrastructure/ and apps/
+├── infrastructure/              # Deployed by Flux from Git (GitOps mode)
+├── apps/
+│   ├── mesh-test-app/           # Service mesh test app (Node.js, Redis, canary manifests and scripts)
+│   └── mtls-test-app/           # mTLS verification app
 ├── scripts/
-│   ├── setup.sh                # Main setup script
-│   └── test-environment.sh     # Environment testing script
-├── examples/
-│   └── sample-workload.yaml    # Example workload for testing
-└── README.md                   # This file
+│   ├── build-distribution.sh    # Release tarballs (CI and local)
+│   ├── fetch-tools.sh           # Pinned, checksum-verified kubectl/helm/linkerd/flux
+│   ├── ci/build-version.sh      # CI build version
+│   └── dist/                    # Files added to the tarballs
+├── tests/dask/                  # Tests for the Dask sample workload
+├── .github/workflows/build.yml  # CI: test, build, release
+├── CHANGELOG.md                 # Release notes (one section per tag)
+└── README.md                    # This file
 ```
+
+Release tarballs contain only what runs the lab: `bin/`, `cluster/`, `config/`, `clusters/`, `apps/`, the guides and `licenses/` (see [From a Release Tarball](#from-a-release-tarball)).
 
 ## Common Tasks
 
@@ -636,14 +678,14 @@ curl -s http://localhost:5000/v2/
 
 #### Pods Stuck in ImagePullBackOff
 
-- For KinD: Use `kind load docker-image <image> --name dev-lab`
+- For KinD: Use `bin/devlab load-image <image>`
 - Check image exists: `docker images | grep <image>`
 - Verify imagePullPolicy is set to `Never` for local images
 
 #### Monitoring Stack Not Starting
 
 - Check resource constraints: `kubectl describe pods -n monitoring`
-- Verify Helm repos: `helm repo list`
+- Check the Helm release: `helm status kube-prometheus-stack -n monitoring`
 - Check PVC status: `kubectl get pvc -n monitoring`
 
 #### Registry Not Accessible
@@ -656,18 +698,17 @@ curl -s http://localhost:5000/v2/
 
 ```bash
 # Delete the entire cluster
-./scripts/setup.sh cleanup
+bin/devlab cleanup
 
-# Or manually:
-kind delete cluster --name dev-lab
-docker system prune -f  # Optional: clean up images
+# Optional: clean up unused images
+docker system prune -f
 ```
 
 ## Advanced Configuration
 
 ### Custom Monitoring
 
-Edit `monitoring/prometheus-values-lightweight.yaml` to:
+Edit `config/monitoring/prometheus-values.yaml` to:
 
 - Add custom metrics endpoints
 - Configure alert rules
@@ -676,7 +717,7 @@ Edit `monitoring/prometheus-values-lightweight.yaml` to:
 
 ### Registry Configuration
 
-Edit `registry/registry-k8s-daemonset.yaml` to:
+Edit `config/registry/registry-daemonset.yaml` to:
 
 - Change storage backend
 - Add authentication
@@ -695,7 +736,7 @@ Edit `cluster/kind-config.yaml` to:
 ## Performance Tips
 
 1. **Resource Allocation**: The lightweight monitoring configuration reduces resource usage significantly
-2. **Image Management**: Use `kind load` for development, registry for CI/CD simulation
+2. **Image Management**: Use `bin/devlab load-image` for development, registry for CI/CD simulation
 3. **Persistent Storage**: Registry data persists in `/var/lib/registry` on control-plane node
 4. **Port Forwarding**: Use kubectl port-forward instead of NodePort for better performance
 

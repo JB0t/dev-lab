@@ -1,5 +1,5 @@
 # Dask scheduler + 4 GPU workers sharing one time-sliced GPU
-# Apply: ./devlab kubectl -- apply -k config/dask
+# Apply: bin/devlab kubectl -- apply -k config/dask
 # Runbook: DASK-GPU-RUNBOOK.md
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

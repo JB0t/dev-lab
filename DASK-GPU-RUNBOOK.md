@@ -2,7 +2,7 @@
 
 Run a Dask scheduler and 4 Dask-CUDA workers that share one NVIDIA GPU, then run a sample workload that shows all 4 workers using the GPU at the same time.
 
-Target: the GPU-enabled dev-lab cluster (`./devlab bootstrap --gpu`) in a VM with an NVIDIA A10 vGPU, profile **A10-24Q** (24 GB). Other GPUs work too; see [Sizing for Other GPUs](#sizing-for-other-gpus-or-worker-counts).
+Target: the GPU-enabled dev-lab cluster (`bin/devlab bootstrap --gpu`) in a VM with an NVIDIA A10 vGPU, profile **A10-24Q** (24 GB). Other GPUs work too; see [Sizing for Other GPUs](#sizing-for-other-gpus-or-worker-counts).
 
 | File | Purpose |
 |------|---------|
@@ -34,11 +34,11 @@ Do not drop `--device-memory-limit`. Its default is 80% of the *whole* GPU per w
 
 ## Prerequisites
 
-1. A GPU-enabled dev-lab cluster: `./devlab bootstrap --gpu`. For a vGPU VM, see "vGPU Guests" in [README.md](./README.md#vgpu-guests-eg-a10-24q). The vGPU must be **licensed**: an unlicensed vGPU is throttled after 20 minutes.
+1. A GPU-enabled dev-lab cluster: `bin/devlab bootstrap --gpu`. For a vGPU VM, see "vGPU Guests" in [README.md](./README.md#vgpu-guests-eg-a10-24q). The vGPU must be **licensed**: an unlicensed vGPU is throttled after 20 minutes.
 2. Time slicing on with 4 shares (the default). Check that the GPU worker advertises 4:
 
    ```bash
-   ./devlab status        # dev-lab-worker  Ready  worker  4
+   bin/devlab status        # dev-lab-worker  Ready  worker  4
    ```
 
 3. Disk space for the RAPIDS image `rapidsai/base:26.08-cuda12-py3.12`. It is about 6 GB compressed and larger once unpacked. It needs a guest driver with CUDA 12 support, i.e. vGPU 16 (R535) or newer.
@@ -49,7 +49,7 @@ All Dask pods run on the GPU node, so only that node needs the image. Pulling it
 
 ```bash
 docker pull rapidsai/base:26.08-cuda12-py3.12
-kind load docker-image rapidsai/base:26.08-cuda12-py3.12 --name dev-lab --nodes dev-lab-worker
+bin/devlab load-image rapidsai/base:26.08-cuda12-py3.12 --nodes dev-lab-worker
 ```
 
 Skip this step and the node pulls the image itself. Pods then stay in `ContainerCreating` for several minutes.
@@ -57,10 +57,10 @@ Skip this step and the node pulls the image itself. Pods then stay in `Container
 ## 2. Deploy the Scheduler and Workers
 
 ```bash
-./devlab kubectl -- apply -k config/dask
-./devlab kubectl -- -n dask rollout status deployment/dask-scheduler --timeout=20m
-./devlab kubectl -- -n dask rollout status deployment/dask-cuda-worker --timeout=20m
-./devlab kubectl -- -n dask get pods -o wide
+bin/devlab kubectl -- apply -k config/dask
+bin/devlab kubectl -- -n dask rollout status deployment/dask-scheduler --timeout=20m
+bin/devlab kubectl -- -n dask rollout status deployment/dask-cuda-worker --timeout=20m
+bin/devlab kubectl -- -n dask get pods -o wide
 ```
 
 Expected: 1 `dask-scheduler` and 4 `dask-cuda-worker` pods, all `Running` on `dev-lab-worker`. The 4 workers share the same GPU.
@@ -78,9 +78,9 @@ The memory usage is about 4 × (4.5 GiB pool + CUDA context), roughly 19–20 Gi
 The sample Job connects to the scheduler and pins one task to each worker. Each task runs CuPy matrix multiplies for 30 seconds and records when it ran:
 
 ```bash
-./devlab kubectl -- apply -k config/dask/sample
-./devlab kubectl -- -n dask wait --for=condition=complete job/gpu-concurrency --timeout=15m
-./devlab kubectl -- -n dask logs job/gpu-concurrency
+bin/devlab kubectl -- apply -k config/dask/sample
+bin/devlab kubectl -- -n dask wait --for=condition=complete job/gpu-concurrency --timeout=15m
+bin/devlab kubectl -- -n dask logs job/gpu-concurrency
 ```
 
 While it runs, `watch -n1 nvidia-smi` on the VM shows GPU utilization near 100% with all 4 worker processes.
@@ -109,8 +109,8 @@ The Job exits non-zero and prints `FAIL:` when the tasks did not overlap or fewe
 To run it again (Jobs cannot be re-applied while the old one exists):
 
 ```bash
-./devlab kubectl -- -n dask delete job gpu-concurrency
-./devlab kubectl -- apply -k config/dask/sample
+bin/devlab kubectl -- -n dask delete job gpu-concurrency
+bin/devlab kubectl -- apply -k config/dask/sample
 ```
 
 Optional settings, as env vars in `config/dask/sample/job.yaml`: `TASK_SECONDS` (default 30) and `MATRIX_SIZE` (default 4096, ~64 MiB per matrix).
@@ -131,28 +131,28 @@ Per-worker RMM pool ≈ (GPU memory reported by `nvidia-smi` − ~0.5 GiB per wo
 
 To change the worker count, keep these equal to each other:
 
-1. `replicas` in `config/gpu/nvidia-device-plugin-values.yaml`, then `./devlab gpu-plugin`
+1. `replicas` in `config/gpu/nvidia-device-plugin-values.yaml`, then `bin/devlab gpu-plugin`
 2. `replicas` in `config/dask/workers.yaml`, and the pool flags from the table
 3. `EXPECTED_WORKERS` in `config/dask/sample/job.yaml`
 
-Then `./devlab kubectl -- apply -k config/dask`. `python/tests/test_gpu_sharing.py` checks that these numbers match and that the pools fit in an A10-24Q.
+Then `bin/devlab kubectl -- apply -k config/dask`. `go test ./...` (internal/lab/config_test.go) checks that these numbers match and that the pools fit in an A10-24Q.
 
 ## Clean Up
 
 ```bash
-./devlab kubectl -- delete -k config/dask/sample
-./devlab kubectl -- delete -k config/dask
+bin/devlab kubectl -- delete -k config/dask/sample
+bin/devlab kubectl -- delete -k config/dask
 ```
 
 ## Troubleshooting
 
 | Symptom | Cause / Fix |
 |---------|-------------|
-| Workers `Pending`, event `Insufficient nvidia.com/gpu` | Fewer than 4 free shares. Check `./devlab status` and other pods using GPUs; is time slicing on? |
+| Workers `Pending`, event `Insufficient nvidia.com/gpu` | Fewer than 4 free shares. Check `bin/devlab status` and other pods using GPUs; is time slicing on? |
 | Worker fails with `UnexpectedAdmissionError` | It requests more than 1 `nvidia.com/gpu`; with time slicing each worker takes exactly 1 |
 | Worker crash-loops with RMM / `out_of_memory` at startup | Pools don't fit: other GPU processes are using memory, or the pool is too large for the GPU. Lower the pool size |
 | `MemoryError` / `out_of_memory` in a task | The task needs more than its 4.5 GiB pool. Use smaller partitions, or fewer workers with larger pools |
 | `requirement error: unsatisfied condition: cuda>=12.9` | Guest driver too old for the image. Use vGPU 16 (R535) or newer, or an older RAPIDS image |
 | Everything slows down after ~20 minutes | vGPU not licensed: `nvidia-smi -q \| grep -i 'license status'` |
-| Sample Job waits forever at "waiting for 4 workers" | Workers not running or can't reach `dask-scheduler:8786`. Check `./devlab kubectl -- -n dask logs deployment/dask-cuda-worker` |
+| Sample Job waits forever at "waiting for 4 workers" | Workers not running or can't reach `dask-scheduler:8786`. Check `bin/devlab kubectl -- -n dask logs deployment/dask-cuda-worker` |
 | Pods stuck in `ContainerCreating` | Still pulling the ~6 GB image; preload it (step 1) |

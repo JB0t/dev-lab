@@ -1,0 +1,95 @@
+# dev-lab CI: test, build the release tarballs, and publish them on a tag.
+#
+# Every push and pull request: tests, then a throwaway build versioned
+# X.Y.Z.ci.<run number> (workflow artifact, kept 7 days).
+# A vX.Y.Z tag: the same build at version X.Y.Z, attached to a GitHub
+# Release with the CHANGELOG.md section for that version as its notes.
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # The Dask sample workload (config/dask/sample) is Python; its
+      # orchestration test also runs a real 4-worker Dask LocalCluster
+      - run: pip install distributed
+      - run: python -m unittest discover -s tests/dask -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags, for scripts/ci/build-version.sh
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Version
+        run: scripts/ci/build-version.sh | tee -a "$GITHUB_ENV"
+      - name: Build tarballs
+        run: |
+          rm -rf build
+          scripts/build-distribution.sh --arch all "$BUILD_VERSION"
+      - name: Check tarball contents
+        run: |
+          for tarball in build/*.tar.gz; do
+            echo "== $tarball"
+            tar -tzf "$tarball" | sed 's#^[^/]*/##' | grep -E '^(bin/|manifest.txt|README.md)' | sort
+            if tar -tzf "$tarball" | grep -E '\.go$|/go\.(mod|sum)$'; then
+              echo "Go source in $tarball"; exit 1
+            fi
+          done
+          tar -xzf build/*_x86_64.tar.gz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP"/dev-lab_*_x86_64/bin/devlab --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dev-lab-${{ env.BUILD_VERSION }}
+          path: build/*.tar.gz
+          retention-days: 7
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: build
+          merge-multiple: true
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## v" v "( |$)" { on=1; print; next }
+            on && /^## v/ { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo "no CHANGELOG.md section for v${version}"; exit 1; }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/*.tar.gz --title "dev-lab $GITHUB_REF_NAME" --notes-file release-notes.md

@@ -27,6 +27,8 @@ warn() {
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# devlab in the dev-lab home (<home>/apps/mesh-test-app/scripts/ -> <home>/bin/devlab)
+DEVLAB="${DEVLAB:-$SCRIPT_DIR/../../../bin/devlab}"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 echo "=== Setting up Service Mesh Testing Environment ==="
@@ -120,8 +122,8 @@ deploy_app() {
     docker tag mesh-test-app:v1 mesh-test-app:v2
     
     # Load into KinD cluster
-    kind load docker-image mesh-test-app:v1 --name dev-lab
-    kind load docker-image mesh-test-app:v2 --name dev-lab
+    "$DEVLAB" load-image mesh-test-app:v1
+    "$DEVLAB" load-image mesh-test-app:v2
     
     success "Application images built and loaded"
     

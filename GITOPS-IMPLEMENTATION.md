@@ -2,13 +2,13 @@
 
 ## Overview
 
-Successfully implemented GitOps functionality in the DevLab Python CLI, extending the platform-agnostic container-based development environment with automated deployment capabilities using Flux CD.
+GitOps deployment in the `devlab` CLI (Go, `internal/lab/gitops.go`): Flux CD installs and reconciles the infrastructure and apps from this repository.
 
 ## What Was Added
 
 ### 1. GitOps Deployment Command
 
-- **New command**: `./devlab deploy-gitops`
+- **New command**: `bin/devlab deploy-gitops`
 - **Functionality**: Complete GitOps deployment with Flux CD
 - **Features**: SSH key generation, Git repository configuration, automated reconciliation
 
@@ -19,12 +19,12 @@ Successfully implemented GitOps functionality in the DevLab Python CLI, extendin
 - **Added**: `flux` command for Flux CLI access
 - **Maintained**: All existing functionality
 
-### 3. Container-based Flux Support
+### 3. Bundled Flux Support
 
-- **Flux CLI**: Runs in `fluxcd/flux-cli:latest` container
+- **Flux CLI**: Pinned `bin/flux` in the release tarball, run as `bin/devlab flux ...`
 - **SSH Key Management**: Automated generation and secret creation
 - **Git Authentication**: Secure SSH deploy key setup
-- **No Local Installation**: Flux runs entirely in containers
+- **No Local Installation**: Flux ships with dev-lab
 
 ### 4. GitOps Configuration Files
 
@@ -64,29 +64,26 @@ Successfully implemented GitOps functionality in the DevLab Python CLI, extendin
 
 ```
 dev-lab/
-├── python/
-│   ├── devlab.py              # Main CLI with GitOps functionality
-│   ├── setup.py               # Environment setup
-│   └── requirements.txt       # Python dependencies
+├── internal/lab/
+│   └── gitops.go              # deploy-gitops: Flux install, deploy key, sources
 ├── config/
 │   └── gitops/
 │       └── git-repository.yaml # Git source configuration
 ├── clusters/
 │   └── dev-lab/
 │       └── dev-lab-kustomizations.yaml # Cluster-specific kustomizations
-├── devlab                     # Wrapper script
 ├── GITOPS-GUIDE.md           # Comprehensive GitOps documentation
 └── README.md                 # Updated with GitOps information
 ```
 
 ## Key Features
 
-### Container-First Architecture
+### Self-Contained Tooling
 
-- **All tools containerized**: kubectl, helm, linkerd, flux, kind
+- **Bundled tools**: release tarballs ship pinned kubectl, helm, linkerd and flux; kind is built into `devlab`
 - **No local tool installation**: Only Docker required
-- **Platform agnostic**: Works on Windows, macOS, Linux
-- **Consistent environments**: Same tool versions across all platforms
+- **No ssh-keygen or ssh-keyscan**: the deploy key and GitHub host keys are generated and fetched in Go
+- **Consistent environments**: Same tool versions on every machine
 
 ### GitOps Best Practices
 
@@ -107,21 +104,21 @@ dev-lab/
 
 ```bash
 # Deploy with GitOps
-./devlab deploy-gitops
+bin/devlab deploy-gitops
 
 # Monitor GitOps status
-./devlab flux -- get all -A
+bin/devlab flux -- get all -A
 
 # Force reconciliation
-./devlab flux -- reconcile kustomization dev-lab-infrastructure -n flux-system
+bin/devlab flux -- reconcile kustomization dev-lab-infrastructure -n flux-system
 
 # Check cluster status
-./devlab status
+bin/devlab status
 
 # Access tools
-./devlab kubectl -- get pods -A
-./devlab helm -- list -A
-./devlab linkerd -- check
+bin/devlab kubectl -- get pods -A
+bin/devlab helm -- list -A
+bin/devlab linkerd -- check
 ```
 
 ## Benefits Achieved
@@ -130,14 +127,14 @@ dev-lab/
 2. **GitOps Automation**: Infrastructure and applications managed automatically from Git
 3. **Developer Productivity**: One-command deployment with comprehensive monitoring
 4. **Security**: SSH-based authentication with read-only repository access
-5. **Maintainability**: Python OOP design easier to extend than bash scripts
-6. **Consistency**: Container-based tools ensure identical environments across platforms
+5. **Maintainability**: One Go CLI with unit tests instead of separate Python and bash implementations
+6. **Consistency**: Pinned, bundled tools ensure identical environments across machines
 
 ## Next Steps
 
 The DevLab environment now supports both traditional and GitOps deployment methods:
 
-- **Traditional**: `./devlab deploy-traditional` - Direct kubectl/helm deployments
-- **GitOps**: `./devlab deploy-gitops` - Flux-managed deployments from Git
+- **Traditional**: `bin/devlab deploy-traditional` - Direct kubectl/helm deployments
+- **GitOps**: `bin/devlab deploy-gitops` - Flux-managed deployments from Git
 
 Users can choose the deployment method that best fits their workflow, with GitOps providing automated, Git-driven infrastructure management for production-like development environments.
