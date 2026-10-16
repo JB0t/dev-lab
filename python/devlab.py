@@ -249,9 +249,16 @@ apt-get update
 apt-get install -y nvidia-container-toolkit
 """
 
+# CUDA 12.x images run on any 12.x driver through minor-version
+# compatibility. The forward-compatibility libraries some images ship (the
+# GPU Operator validator, nvidia/cuda and RAPIDS images) only work on
+# datacenter GPUs, and break the image elsewhere (GeForce cards, possibly
+# vGPUs), so they are never loaded: CUDA 13 images need a CUDA 13 driver.
 CONFIGURE_RUNTIME_SCRIPT = """
 set -e
 nvidia-ctk runtime configure --runtime=containerd --config-source=file
+nvidia-ctk config --set nvidia-container-runtime.modes.legacy.cuda-compat-mode=disabled --in-place
+nvidia-ctk config --set features.disable-cuda-compat-lib-hook=true --in-place
 systemctl restart containerd
 """
 

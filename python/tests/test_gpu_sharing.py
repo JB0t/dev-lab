@@ -76,6 +76,14 @@ class TimeSlicingTests(unittest.TestCase):
         self.assertFalse(self.values["toolkit"]["enabled"])
         self.assertEqual(self.values["operator"]["runtimeClass"], "nvidia")
 
+    def test_cuda_forward_compat_is_off(self):
+        # Legacy mode, where the node setup disables forward-compat libraries
+        sys.path.insert(0, str(Path(__file__).parents[1]))
+        import devlab
+        self.assertFalse(self.values["cdi"]["enabled"])
+        self.assertIn("cuda-compat-mode=disabled", devlab.CONFIGURE_RUNTIME_SCRIPT)
+        self.assertIn("features.disable-cuda-compat-lib-hook=true", devlab.CONFIGURE_RUNTIME_SCRIPT)
+
     def test_dcgm_service_monitor_is_selected_by_prometheus(self):
         monitor = self.values["dcgmExporter"]["serviceMonitor"]
         self.assertEqual(monitor["additionalLabels"]["release"], "kube-prometheus-stack")
