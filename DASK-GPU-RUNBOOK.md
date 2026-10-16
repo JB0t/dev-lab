@@ -138,7 +138,7 @@ Clusters with different sizes can run side by side, e.g. `gpu_cluster("a", n_wor
 
 `devlab addon enable dagster` installs Dagster (Helm chart `dagster/dagster`, pinned in `python/devlab.py`) in the `dask` namespace and publishes its UI through Traefik at **http://dagster.localhost**. It needs the image from Setup step 1, which includes Dagster.
 
-To run a job: open http://dagster.localhost, then Jobs, pick the job, then Launchpad, and Launch Run.
+To run a job: open http://dagster.localhost, then Jobs, pick the job, then Launchpad, and Launch Run. On a headless server, tunnel the server's port 80 and open http://dagster.localhost:8080 instead: `ssh -N -L 8080:localhost:80 user@gpu-server` (see "Headless server" in [GPU.md](./GPU.md), step 7).
 
 | Job | What it does |
 |-----|--------------|
