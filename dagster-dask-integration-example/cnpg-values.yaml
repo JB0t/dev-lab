@@ -1,0 +1,22 @@
+# Configuration for the CloudNativePG PostgreSQL Cluster
+cluster:
+  # The name of the PostgreSQL cluster resource
+  name: "dagster-db"
+
+  # Number of instances (1 for a standalone single-instance setup)
+  instances: 1
+
+  # Storage configuration for the database data directory
+  storage:
+    size: "5Gi"
+    # Optional: specify a custom StorageClass if required by your infrastructure
+    # storageClass: "standard"
+
+  # Recommendation: Automatically bootstrap a dedicated database for Dagster
+  # NOTE: chart key is cluster.initdb (not cluster.bootstrap.initdb).
+  # Only applied at cluster creation; the running devlab cluster was built
+  # with the wrong key and so uses the default "app" database/owner.
+  initdb:
+    database: "dagster"
+    owner: "dagster"
+

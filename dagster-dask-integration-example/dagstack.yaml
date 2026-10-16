@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-deployment
+  namespace: dagster-dask
+  labels:
+    app: dagster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster
+  template:
+    metadata:
+      labels:
+        app: dagster
+        ui: dagster-ui
+    spec:
+      serviceAccountName: dagster-runner-sa
+      volumes:
+        - name: config-vol
+          configMap:
+            name: dagster-dask-run-config
+        - name: instance-config-vol
+          configMap:
+            name: dagster-instance-config
+      containers:
+        # Container 1: The Interactive Web UI
+        - name: dagster-webserver
+          image: localhost:5000/local-dagster-dask:test
+          imagePullPolicy: Always
+          command: ["dagster-webserver", "-f", "/opt/dagster/app/repo.py", "-h", "0.0.0.0", "-p", "3000"]
+          env:
+            - name: DAGSTER_HOME
+              value: /etc/dagster
+            - name: DAGSTER_PG_USER
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: username } }
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: password } }
+            - name: DAGSTER_PG_HOST
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: host } }
+            - name: DAGSTER_PG_DB
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: dbname } }
+            - name: DAGSTER_PG_URL
+              value: "postgresql://$(DAGSTER_PG_USER):$(DAGSTER_PG_PASSWORD)@$(DAGSTER_PG_HOST):5432/$(DAGSTER_PG_DB)"
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: config-vol
+              mountPath: /opt/dagster/configs
+            - name: instance-config-vol
+              mountPath: /etc/dagster/dagster.yaml
+              subPath: dagster.yaml
+        # Container 2: The Production Daemon Engine
+        - name: dagster-daemon
+          image: localhost:5000/local-dagster-dask:test
+          imagePullPolicy: Always
+          command: ["dagster-daemon", "run", "-f", "/opt/dagster/app/repo.py"]
+          env:
+            - name: DAGSTER_HOME
+              value: /etc/dagster
+            - name: DAGSTER_PG_USER
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: username } }
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: password } }
+            - name: DAGSTER_PG_HOST
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: host } }
+            - name: DAGSTER_PG_DB
+              valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: dbname } }
+            - name: DAGSTER_PG_URL
+              value: "postgresql://$(DAGSTER_PG_USER):$(DAGSTER_PG_PASSWORD)@$(DAGSTER_PG_HOST):5432/$(DAGSTER_PG_DB)"
+          volumeMounts:
+            - name: instance-config-vol
+              mountPath: /etc/dagster/dagster.yaml
+              subPath: dagster.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-ui-service
+  namespace: dagster-dask
+spec:
+  type: NodePort
+  ports:
+    - port: 6000
+      targetPort: 3000
+      nodePort: 30060
+  selector:
+    ui: dagster-ui
+

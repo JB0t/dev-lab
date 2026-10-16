@@ -1,0 +1,15 @@
+storage:
+  sqlite:
+    base_dir: /opt/dagster/storage
+
+run_launcher:
+  class: K8sRunLauncher
+  module: dagster_k8s
+  config:
+    load_incluster_config: true
+    job_namespace: default
+    service_account_name: dagster-runner-sa
+    job_image: localhost:5000/local-dagster-dask:test
+    image_pull_policy: IfNotPresent
+    instance_config_map: dagster-instance-config
+

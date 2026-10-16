@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-instance-config
+  namespace: dagster-dask
+data:
+  dagster.yaml: |
+    storage:
+      postgres:
+        postgres_db:
+          username:
+            env: DAGSTER_PG_USER
+          password:
+            env: DAGSTER_PG_PASSWORD
+          hostname:
+            env: DAGSTER_PG_HOST
+          port: 5432
+          db_name:
+            env: DAGSTER_PG_DB
+
+    run_launcher:
+      class: K8sRunLauncher
+      module: dagster_k8s
+      config:
+        load_incluster_config: true
+        job_namespace: dagster-dask
+        service_account_name: dagster-runner-sa
+        job_image: localhost:5000/local-dagster-dask:test
+        image_pull_policy: Always
+        instance_config_map: dagster-instance-config
+        # Map the CNPG app secret keys onto the env vars dagster.yaml expects.
+        # (env_secrets would inject keys verbatim as username/host/...,
+        # and env_vars KEY=value sets literal strings.)
+        run_k8s_config:
+          container_config:
+            env:
+              - name: DAGSTER_PG_USER
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: username } }
+              - name: DAGSTER_PG_PASSWORD
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: password } }
+              - name: DAGSTER_PG_HOST
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: host } }
+              - name: DAGSTER_PG_DB
+                valueFrom: { secretKeyRef: { name: dagster-db-cluster-app, key: dbname } }
