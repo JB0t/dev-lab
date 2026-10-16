@@ -1,0 +1,7 @@
+# RuntimeClass for the nvidia containerd runtime that `devlab bootstrap --gpu`
+# adds to GPU worker nodes. Applied by bootstrap --gpu and devlab gpu-plugin.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia

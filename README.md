@@ -18,6 +18,7 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Metrics Server**: For HPA and resource monitoring
 - **Autoscaling Addons**: KEDA event-driven pod autoscaling and cluster-autoscaler node autoscaling with simulated KWOK nodes (`devlab addon enable keda node-autoscaler`, see [AUTOSCALING.md](./AUTOSCALING.md))
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
+- **GPU-Enabled Option**: `devlab bootstrap --gpu` puts NVIDIA GPUs in the workers and installs the NVIDIA GPU Operator, with each GPU time-sliced for sharing (see [GPU.md](./GPU.md))
 - **CI Profile**: Run the lab inside a pipeline job, including GitLab Kubernetes-executor runners with Docker-in-Docker (`DEVLAB_PROFILE=ci`, see [CI.md](./CI.md))
 
 ## Pre-requisites
@@ -494,6 +495,18 @@ New nodes are simulated by KWOK: they are Ready in seconds and cost almost
 nothing, but run no containers. See [AUTOSCALING.md](./AUTOSCALING.md) for how
 it works, how to add node pools, and more test scenarios.
 
+## GPU-Enabled Cluster
+
+On a Linux host with an NVIDIA GPU and the NVIDIA Container Toolkit:
+
+```bash
+devlab bootstrap --gpu
+devlab status                      # GPUs column: 4 shares per physical GPU
+devlab kubectl apply -f config/gpu/gpu-test-pod.yaml && devlab kubectl logs gpu-test
+```
+
+The GPU workers come from `cluster/gpu-workers.yaml`, and the NVIDIA GPU Operator runs the device plugin (time-sliced, 4 shares per GPU), GPU feature discovery and the DCGM exporter for the monitoring stack. Time slicing shares compute only: there is no GPU memory isolation between pods. [GPU.md](./GPU.md) has the whole setup from a fresh machine (driver, Docker, NVIDIA Container Toolkit, vGPU licensing) in order, plus placement, time slicing and troubleshooting, and [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md) for 4 Dask workers sharing one GPU.
+
 ## Running in CI
 
 `DEVLAB_PROFILE=ci` selects a slimmer, non-interactive setup for pipelines:
@@ -543,12 +556,15 @@ dev-lab/
 ├── ci/                          # GitLab CI template, setup script, local job emulator
 ├── cluster/
 │   ├── kind-config.yaml         # KinD cluster configuration
-│   └── kind-config.ci.yaml      # Smaller cluster for the ci profile
+│   ├── kind-config.ci.yaml      # Smaller cluster for the ci profile
+│   └── gpu-workers.yaml         # GPU worker nodes for bootstrap --gpu
 ├── config/
 │   ├── addons/                  # Optional addons (devlab addon enable ...)
 │   │   ├── keda/                # KEDA Helm values
 │   │   └── node-autoscaler/     # cluster-autoscaler values and KWOK node pools
+│   ├── dask/                    # Dask scheduler + time-sliced GPU workers (DASK-GPU-RUNBOOK.md)
 │   ├── gitops/                  # Flux GitRepository configuration
+│   ├── gpu/                     # GPU Operator values (time slicing), RuntimeClass, GPU smoke test pod
 │   ├── ingress/
 │   │   └── traefik-values.yaml  # Traefik Helm values
 │   ├── monitoring/
