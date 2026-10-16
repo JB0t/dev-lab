@@ -60,6 +60,21 @@ devicePlugin:
       exclusive: |-
         version: v1
 
+validator:
+  # The validator's CUDA sample loads CUDA forward-compatibility libraries
+  # from its own image when the driver is older than CUDA 12.9 (e.g. a 12.8
+  # vGPU guest driver), which fails on GPUs without forward compatibility
+  # support. Skip the sample workloads; the driver, toolkit and device plugin
+  # checks still run, and config/gpu/gpu-test-pod.yaml runs a real CUDA test.
+  cuda:
+    env:
+      - name: WITH_WORKLOAD
+        value: "false"
+  plugin:
+    env:
+      - name: WITH_WORKLOAD
+        value: "false"
+
 dcgmExporter:
   # GPU metrics for the monitoring stack. kube-prometheus-stack only selects
   # ServiceMonitors labelled release=kube-prometheus-stack; devlab turns the

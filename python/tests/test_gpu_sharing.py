@@ -84,6 +84,11 @@ class TimeSlicingTests(unittest.TestCase):
         self.assertIn("cuda-compat-mode=disabled", devlab.CONFIGURE_RUNTIME_SCRIPT)
         self.assertIn("features.disable-cuda-compat-lib-hook=true", devlab.CONFIGURE_RUNTIME_SCRIPT)
 
+    def test_validator_skips_cuda_sample_workloads(self):
+        for component in ("cuda", "plugin"):
+            env = {item["name"]: item["value"] for item in self.values["validator"][component]["env"]}
+            self.assertEqual(env["WITH_WORKLOAD"], "false")
+
     def test_dcgm_service_monitor_is_selected_by_prometheus(self):
         monitor = self.values["dcgmExporter"]["serviceMonitor"]
         self.assertEqual(monitor["additionalLabels"]["release"], "kube-prometheus-stack")
