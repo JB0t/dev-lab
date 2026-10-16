@@ -1,0 +1,69 @@
+# Dask-CUDA workers: 4 pods, each with one time-sliced share of the GPU
+#
+# Time slicing shares GPU compute only. Every worker still sees the whole GPU
+# and Kubernetes does not limit GPU memory, so each worker limits itself:
+#   --rmm-pool-size / --rmm-maximum-pool-size: fixed 4.5 GiB RMM pool. RMM (and
+#     CuPy, via --set-rmm-allocator-for-libs) allocations beyond it fail with
+#     out-of-memory instead of starving the other workers.
+#   --device-memory-limit: spill Dask data to host memory above 4 GiB, before
+#     the pool is full. Its default (80% of the whole GPU) would oversubscribe.
+# Budget for an A10-24Q (24 GB vGPU): 4 x 4.5 GiB pools = 18 GiB, plus a CUDA
+# context per worker (~0.3-0.5 GiB) and vGPU-reserved memory, leaving ~2 GiB
+# headroom. Memory allocated outside RMM (e.g. PyTorch without RMM, raw CUDA)
+# is not limited. Scale the numbers with replicas (see DASK-GPU-RUNBOOK.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dask-cuda-worker
+  labels:
+    app: dask-cuda-worker
+spec:
+  # Keep equal to the time-slicing replicas in config/gpu/nvidia-device-plugin-values.yaml
+  replicas: 4
+  selector:
+    matchLabels:
+      app: dask-cuda-worker
+  template:
+    metadata:
+      labels:
+        app: dask-cuda-worker
+    spec:
+      # GPU pods need the nvidia runtime; it is not the default on dev-lab nodes
+      runtimeClassName: nvidia
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: worker
+          image: rapidsai/base:26.08-cuda12-py3.12
+          args:
+            - dask
+            - cuda
+            - worker
+            - tcp://dask-scheduler:8786
+            - --name
+            - $(POD_NAME)
+            - --nthreads
+            - "1"
+            - --rmm-pool-size
+            - 4.5GiB
+            - --rmm-maximum-pool-size
+            - 4.5GiB
+            - --set-rmm-allocator-for-libs
+            - cupy
+            - --device-memory-limit
+            - 4GiB
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              # One time-sliced share, not a whole GPU (failRequestsGreaterThanOne
+              # rejects pods that ask for more than 1)
+              nvidia.com/gpu: 1
+              # Host memory; Dask's --memory-limit=auto follows this cgroup limit
+              memory: 6Gi

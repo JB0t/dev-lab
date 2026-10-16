@@ -1,0 +1,19 @@
+# Values for nvkind-config-template.yaml
+# One entry per worker node. `devices` is a GPU index, a list of indexes, or
+# `all`; omit it for a CPU-only worker. Check indexes with `nvidia-smi -L`.
+#
+# Default: same shape as kind-config.yaml (2 workers), with every host GPU on
+# the first worker and the second worker CPU-only.
+#
+# Examples:
+#   one GPU per worker on a 2-GPU host:
+#     workers:
+#     - devices: 0
+#     - devices: 1
+#   two GPUs on one worker:
+#     workers:
+#     - devices: [0, 1]
+#     - {}
+workers:
+- devices: all
+- {}

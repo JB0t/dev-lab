@@ -14,12 +14,14 @@ Features:
 import os
 import sys
 import platform
+import shutil
 import subprocess
 import logging
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
 import argparse
+import re
 import time
 
 # Third-party imports (will be in requirements.txt)
@@ -50,6 +52,10 @@ TOOL_VERSIONS = {
     "kind": "v0.20.0",
     "flux": "v2.1.2"
 }
+
+# NVIDIA device plugin Helm chart for GPU clusters (bootstrap --gpu)
+NVIDIA_DEVICE_PLUGIN_VERSION = "0.20.1"
+NVIDIA_DEVICE_PLUGIN_REPO = "https://nvidia.github.io/k8s-device-plugin"
 
 class DevLabError(Exception):
     """Custom exception for dev-lab operations"""
@@ -157,6 +163,12 @@ class ContainerToolRunner:
         ] + args
         
         return subprocess.run(cmd, capture_output=capture_output, text=True)
+    
+    def nvkind(self, args: List[str], capture_output: bool = False) -> subprocess.CompletedProcess:
+        """Run nvkind CLI on the host (it needs host NVML, kind and kubectl)"""
+        env = os.environ.copy()
+        env["KUBECONFIG"] = str(self.shared_kubeconfig_path)
+        return subprocess.run(["nvkind"] + args, capture_output=capture_output, text=True, env=env)
     
     def _build_kind_image(self, image_name: str):
         """Build the local KinD container image"""
@@ -284,18 +296,25 @@ class DevLabManager:
             console.print(f"[red]Docker is not available: {e}[/red]")
             return False
     
-    def bootstrap(self) -> bool:
+    def bootstrap(self, gpu: bool = False) -> bool:
         """Bootstrap the complete dev-lab environment"""
         console.print("[bold blue]🚀 Bootstrapping Dev Lab Environment[/bold blue]")
         
         if not self.check_docker():
             return False
         
+        if gpu and not self._check_gpu_prerequisites():
+            return False
+        
         # Ensure shared kubeconfig is available
         self.tools._ensure_shared_kubeconfig()
         
         # Create cluster
-        if not self._create_cluster():
+        if not self._create_cluster(gpu=gpu):
+            return False
+        
+        # Setup NVIDIA device plugin
+        if gpu and not self._setup_gpu_device_plugin():
             return False
         
         # Setup Linkerd
@@ -303,10 +322,10 @@ class DevLabManager:
             return False
         
         console.print("\n[bold green]🎉 Bootstrap completed successfully![/bold green]")
-        self._show_bootstrap_info()
+        self._show_bootstrap_info(gpu=gpu)
         return True
     
-    def _show_bootstrap_info(self) -> None:
+    def _show_bootstrap_info(self, gpu: bool = False) -> None:
         """Display helpful information after bootstrap"""
         console.print("\n[bold cyan]🎯 What's Next?[/bold cyan]")
         console.print("\n[green]Available Commands:[/green]")
@@ -314,6 +333,14 @@ class DevLabManager:
         console.print("  • [cyan]./devlab linkerd check[/cyan] - Verify Linkerd installation")
         console.print("  • [cyan]./devlab helm list[/cyan] - List installed Helm charts")
         console.print("  • [cyan]./devlab status[/cyan] - Show environment status")
+        if gpu:
+            console.print("  • [cyan]./devlab kubectl -- apply -f config/gpu/gpu-test-pod.yaml[/cyan] - Run a GPU smoke test")
+            console.print("  • [cyan]./devlab kubectl -- logs gpu-test[/cyan] - Show GPUs seen by the smoke test")
+            console.print("\n[green]GPU Workloads:[/green]")
+            console.print("  • Request [cyan]nvidia.com/gpu[/cyan] in resource limits and set [cyan]runtimeClassName: nvidia[/cyan]")
+            console.print("  • Change GPU placement in [cyan]cluster/nvkind-values.yaml[/cyan], then re-run bootstrap --gpu")
+            console.print("  • Each GPU is time-sliced into shares; change this in [cyan]config/gpu/nvidia-device-plugin-values.yaml[/cyan], then run [cyan]./devlab gpu-plugin[/cyan]")
+            console.print("  • Dask GPU workers: see [cyan]DASK-GPU-RUNBOOK.md[/cyan]")
         console.print("\n[green]Access Points:[/green]")
         console.print(f"  • [cyan]Linkerd Viz:[/cyan] http://localhost:50750 (after: ./devlab linkerd viz dashboard)")
         console.print("\n[yellow]Next Steps:[/yellow]")
@@ -321,7 +348,61 @@ class DevLabManager:
         console.print("  2. Or setup GitOps with [cyan]./devlab deploy-gitops[/cyan] (Flux manages all infrastructure including metrics-server)")
         console.print("  3. Check everything with [cyan]./devlab status[/cyan]")
     
-    def _create_cluster(self) -> bool:
+    def _check_gpu_prerequisites(self) -> bool:
+        """Check the host can create an nvkind GPU cluster"""
+        console.print("[blue]Checking GPU prerequisites...[/blue]")
+        
+        if platform.system() != "Linux":
+            console.print("[red]--gpu needs a Linux host (or WSL2) with an NVIDIA GPU[/red]")
+            return False
+        
+        # nvkind shells out to kind and kubectl, so these must be on the host
+        missing = [tool for tool in ("nvidia-smi", "nvkind", "kind", "kubectl") if shutil.which(tool) is None]
+        if missing:
+            console.print(f"[red]Missing host tools for --gpu: {', '.join(missing)}[/red]")
+            if "nvkind" in missing:
+                console.print("[yellow]Install nvkind with: go install github.com/NVIDIA/nvkind/cmd/nvkind@latest[/yellow]")
+            return False
+        
+        result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            console.print(f"[red]nvidia-smi found no GPUs: {result.stderr.strip()}[/red]")
+            return False
+        console.print(f"[green]Host GPUs:[/green]\n{result.stdout.strip()}")
+        self._check_vgpu_license()
+        
+        # nvkind injects GPUs into kind nodes through /dev/null volume mounts
+        console.print("[blue]Checking Docker can inject GPUs via volume mounts...[/blue]")
+        result = subprocess.run([
+            "docker", "run", "--rm",
+            "-v", "/dev/null:/var/run/nvidia-container-devices/all",
+            "ubuntu:22.04", "nvidia-smi", "-L"
+        ], capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]Docker cannot inject GPUs into containers: {result.stderr.strip()}[/red]")
+            console.print("[yellow]Configure the NVIDIA Container Toolkit for nvkind, then retry:[/yellow]")
+            console.print("  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled")
+            console.print("  sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place")
+            console.print("  sudo systemctl restart docker")
+            return False
+        
+        console.print("[green]✅ GPU prerequisites met[/green]")
+        return True
+    
+    def _check_vgpu_license(self) -> None:
+        """Warn when a vGPU guest has no license (NVIDIA throttles it after 20 minutes)"""
+        result = subprocess.run(["nvidia-smi", "-q"], capture_output=True, text=True)
+        if result.returncode != 0:
+            return
+        # Only vGPU guests report a license status; bare-metal GPUs have none
+        statuses = re.findall(r"^\s*License Status\s*:\s*(.+?)\s*$", result.stdout, re.MULTILINE)
+        unlicensed = [status for status in statuses if not status.startswith("Licensed")]
+        if unlicensed:
+            console.print(f"[yellow]vGPU license status: {unlicensed[0]}[/yellow]")
+            console.print("[yellow]Unlicensed vGPUs are throttled after 20 minutes. "
+                          "See the vGPU section of README.md to license this VM.[/yellow]")
+    
+    def _create_cluster(self, gpu: bool = False) -> bool:
         """Create KinD cluster"""
         console.print("[blue]Creating KinD cluster...[/blue]")
         
@@ -335,21 +416,25 @@ class DevLabManager:
             console.print("[blue]Deleting existing cluster...[/blue]")
             self.tools.kind(["delete", "cluster", "--name", CLUSTER_NAME])
         
-        # Create cluster with config
-        config_file = PROJECT_ROOT / "cluster" / "kind-config.yaml"
-        if not config_file.exists():
-            console.print(f"[red]Kind config not found at {config_file}[/red]")
-            return False
-        
-        result = self.tools.kind([
-            "create", "cluster", 
-            "--config", "/workspace/cluster/kind-config.yaml",
-            "--wait", "300s"
-        ])
-        
-        if result.returncode != 0:
-            console.print("[red]Failed to create cluster[/red]")
-            return False
+        if gpu:
+            if not self._create_gpu_cluster():
+                return False
+        else:
+            # Create cluster with config
+            config_file = PROJECT_ROOT / "cluster" / "kind-config.yaml"
+            if not config_file.exists():
+                console.print(f"[red]Kind config not found at {config_file}[/red]")
+                return False
+            
+            result = self.tools.kind([
+                "create", "cluster", 
+                "--config", "/workspace/cluster/kind-config.yaml",
+                "--wait", "300s"
+            ])
+            
+            if result.returncode != 0:
+                console.print("[red]Failed to create cluster[/red]")
+                return False
         
         if not self._fix_kubeconfig_for_containers():
             return False
@@ -360,6 +445,82 @@ class DevLabManager:
         
         console.print("[green]✅ Cluster created successfully[/green]")
         return True
+    
+    def _create_gpu_cluster(self) -> bool:
+        """Create GPU-enabled KinD cluster with nvkind"""
+        console.print("[blue]Creating GPU-enabled cluster with nvkind...[/blue]")
+        
+        template = PROJECT_ROOT / "cluster" / "nvkind-config-template.yaml"
+        values = PROJECT_ROOT / "cluster" / "nvkind-values.yaml"
+        for path in (template, values):
+            if not path.exists():
+                console.print(f"[red]nvkind config not found at {path}[/red]")
+                return False
+        
+        result = self.tools.nvkind([
+            "cluster", "create",
+            "--name", CLUSTER_NAME,
+            "--config-template", str(template),
+            "--config-values", str(values),
+            "--wait", "300s"
+        ])
+        
+        if result.returncode != 0:
+            # nvkind can exit non-zero on benign umount errors after the cluster
+            # is up, so only fail when the cluster was never created
+            clusters = self.tools.kind(["get", "clusters"], capture_output=True)
+            if CLUSTER_NAME not in clusters.stdout.split():
+                console.print("[red]Failed to create GPU cluster[/red]")
+                return False
+            console.print("[yellow]nvkind exited with an error but the cluster exists, continuing[/yellow]")
+        
+        return True
+    
+    def _setup_gpu_device_plugin(self) -> bool:
+        """Install NVIDIA device plugin and wait for GPUs to be allocatable"""
+        console.print("[blue]Setting up NVIDIA device plugin...[/blue]")
+        context = f"kind-{CLUSTER_NAME}"
+        
+        result = self.tools.kubectl(["apply", "-f", "/workspace/config/gpu/nvidia-runtimeclass.yaml"], context=context)
+        if result.returncode != 0:
+            console.print("[red]Failed to apply nvidia RuntimeClass[/red]")
+            return False
+        
+        result = self.tools.helm([
+            "upgrade", "--install", "nvidia-device-plugin", "nvidia-device-plugin",
+            "--repo", NVIDIA_DEVICE_PLUGIN_REPO,
+            "--version", NVIDIA_DEVICE_PLUGIN_VERSION,
+            "--namespace", "nvidia", "--create-namespace",
+            "--values", "/workspace/config/gpu/nvidia-device-plugin-values.yaml",
+            "--kube-context", context,
+            "--wait", "--timeout", "300s"
+        ])
+        if result.returncode != 0:
+            console.print("[red]Failed to install NVIDIA device plugin[/red]")
+            return False
+        
+        # The plugin registers GPUs with the kubelet shortly after it starts
+        console.print("[blue]Waiting for GPUs to be allocatable...[/blue]")
+        for _ in range(60):
+            result = self.tools.kubectl(["get", "nodes", "-o", "json"], capture_output=True, text=True, context=context)
+            if result.returncode == 0:
+                gpu_nodes = {
+                    node["metadata"]["name"]: node["status"].get("allocatable", {}).get("nvidia.com/gpu", "0")
+                    for node in json.loads(result.stdout)["items"]
+                }
+                gpu_nodes = {name: count for name, count in gpu_nodes.items() if count != "0"}
+                if gpu_nodes:
+                    for name, count in gpu_nodes.items():
+                        console.print(f"[green]{name}: {count} allocatable nvidia.com/gpu[/green]")
+                    console.print("[green]✅ NVIDIA device plugin setup completed[/green]")
+                    return True
+            time.sleep(2)
+        
+        console.print("[red]No node advertised nvidia.com/gpu capacity[/red]")
+        console.print("[yellow]Check: ./devlab kubectl -- logs -n nvidia -l app.kubernetes.io/name=nvidia-device-plugin -c nvidia-device-plugin-ctr[/yellow]")
+        console.print("[yellow]If you kept an existing cluster created without --gpu, delete it and re-bootstrap: "
+                      "./devlab cleanup && ./devlab bootstrap --gpu[/yellow]")
+        return False
     
     def _fix_kubeconfig_for_containers(self) -> bool:
         """Use the stable control-plane DNS name for container networking"""
@@ -987,10 +1148,11 @@ def cli():
     pass
 
 @cli.command()
-def bootstrap():
+@click.option('--gpu', is_flag=True, help='Create a GPU-enabled cluster with nvkind (Linux host with NVIDIA GPU)')
+def bootstrap(gpu):
     """Bootstrap the dev-lab environment"""
     manager = DevLabManager()
-    success = manager.bootstrap()
+    success = manager.bootstrap(gpu=gpu)
     sys.exit(0 if success else 1)
 
 @cli.command(name='deploy-traditional')
@@ -1076,6 +1238,7 @@ def status():
         table.add_column("Name")
         table.add_column("Status")
         table.add_column("Role")
+        table.add_column("GPUs")
         
         for node in nodes["items"]:
             name = node["metadata"]["name"]
@@ -1083,9 +1246,18 @@ def status():
                                   for c in node["status"]["conditions"]) else "NotReady"
             role = "control-plane" if "node-role.kubernetes.io/control-plane" in node["metadata"]["labels"] else "worker"
             
-            table.add_row(name, status, role)
+            gpus = node["status"].get("allocatable", {}).get("nvidia.com/gpu", "-")
+            
+            table.add_row(name, status, role, gpus)
         
         console.print(table)
+
+@cli.command(name='gpu-plugin')
+def gpu_plugin():
+    """Install or update the NVIDIA device plugin (applies time-slicing changes)"""
+    manager = DevLabManager()
+    success = manager._setup_gpu_device_plugin()
+    sys.exit(0 if success else 1)
 
 @cli.command(name='build-tools')
 def build_tools():

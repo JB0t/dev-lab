@@ -1,0 +1,38 @@
+# Helm values for the NVIDIA device plugin on the GPU-enabled dev-lab cluster
+# Chart: https://github.com/NVIDIA/k8s-device-plugin (version pinned in devlab.py)
+
+# nvkind adds the nvidia runtime to containerd on GPU nodes but does not make it
+# the default, so the plugin must request it to see the GPUs.
+runtimeClassName: nvidia
+
+# The chart's default node affinity matches the nvidia.com/gpu.present=true
+# label that nvkind-config-template.yaml puts on GPU workers.
+
+# GPU time slicing: each physical GPU is advertised as `replicas` schedulable
+# nvidia.com/gpu, so that many pods share it. Time slicing shares compute only:
+# there is no memory or fault isolation between pods on the same GPU, so every
+# pod must limit its own GPU memory (see config/dask for an example).
+#
+# - Change the share count: edit `replicas` below (must be >= 2), then run
+#   ./devlab gpu-plugin
+# - Turn off for the whole cluster: set `default: exclusive`, then run
+#   ./devlab gpu-plugin
+# - Turn off for one node (no reinstall):
+#   ./devlab kubectl -- label node <node> nvidia.com/device-plugin.config=exclusive --overwrite
+config:
+  default: time-sliced
+  map:
+    time-sliced: |-
+      version: v1
+      sharing:
+        timeSlicing:
+          # Keep the resource name nvidia.com/gpu (not nvidia.com/gpu.shared)
+          renameByDefault: false
+          # A pod asking for 2+ shares would not get more GPU time, so reject it
+          failRequestsGreaterThanOne: true
+          resources:
+            - name: nvidia.com/gpu
+              replicas: 4
+    # One pod per physical GPU (no sharing)
+    exclusive: |-
+      version: v1

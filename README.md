@@ -15,6 +15,7 @@ A comprehensive local development environment with **dual deployment options**: 
 - **Ingress Controller**: NGINX ingress for local service exposure
 - **Metrics Server**: For cluster autoscaling and resource monitoring
 - **Container-based Tools**: All Kubernetes tools run in containers (no local installation needed)
+- **GPU-Enabled Option**: `./devlab bootstrap --gpu` builds the same cluster with [nvkind](https://github.com/NVIDIA/nvkind) and NVIDIA GPUs on the workers
 
 ## Quick Start
 
@@ -29,6 +30,9 @@ python3 python/setup.py
 
 # Bootstrap the cluster
 ./devlab bootstrap
+
+# OR bootstrap a GPU-enabled cluster (Linux + NVIDIA GPU, see below)
+./devlab bootstrap --gpu
 
 # Deploy using traditional method
 ./devlab deploy-traditional
@@ -76,6 +80,154 @@ kubectl get nodes
 kubectl -n monitoring get pods
 curl -s http://localhost:5000/v2/_catalog
 ```
+
+## GPU-Enabled Cluster (nvkind)
+
+`./devlab bootstrap --gpu` creates the same `dev-lab` cluster (same name, ports, registry and labels) with [nvkind](https://github.com/NVIDIA/nvkind) instead of plain KinD, then installs the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) so pods can request `nvidia.com/gpu`. Each physical GPU is [time-sliced](#gpu-time-slicing) into 4 shares by default. Everything after bootstrap (`deploy-traditional`, `deploy-gitops`, `status`, `cleanup`) works the same.
+
+### Host Requirements
+
+nvkind needs the host GPU driver, and it runs `kind` and `kubectl` itself. So unlike the default bootstrap, `--gpu` needs these on the host:
+
+- Linux (or WSL2) with an NVIDIA GPU and driver: `nvidia-smi -L` lists your GPUs
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+- `kind` and `kubectl` on `PATH`
+- `nvkind` on `PATH`:
+
+  ```bash
+  go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
+  # or, without a local Go toolchain:
+  docker run --rm -v $PWD/bin/:/go/bin/ golang:1.23 go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
+  ```
+
+Configure Docker so nvkind can inject GPUs into the KinD node containers (one-time):
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
+sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
+sudo systemctl restart docker
+
+# Verify: this must list your GPUs
+docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L
+```
+
+`./devlab bootstrap --gpu` runs these checks first and stops with these setup steps if one fails.
+
+### vGPU Guests (e.g. A10-24Q)
+
+The same requirements and checks apply inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the vGPU profile, e.g. `GPU 0: NVIDIA A10-24Q (UUID: GPU-...)`. Differences from a bare-metal GPU:
+
+- **Guest driver**: install the NVIDIA vGPU guest driver from the NVIDIA Licensing Portal. It must match the vGPU software release of the hypervisor's vGPU manager. The public data center driver does not work in a vGPU guest. The NVIDIA Container Toolkit and nvkind work the same on top of it.
+- **Licensing**: an unlicensed vGPU runs at full capability for 20 minutes. After that NVIDIA degrades its performance, and degrades it further after 24 hours. The exact effect on CUDA depends on the vGPU release; see the [licensing guide](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/intro-to-grid-licensing.html). To license the VM ([NVIDIA docs](https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/configuring-nls-licensed-client.html)):
+
+  ```bash
+  # Client configuration token from the NVIDIA Licensing Portal (or your DLS)
+  sudo cp client_configuration_token_*.tok /etc/nvidia/ClientConfigToken/
+  sudo chmod 744 /etc/nvidia/ClientConfigToken/client_configuration_token_*.tok
+  # FeatureType=1 for a vGPU (license type follows the vGPU profile)
+  sudo cp -n /etc/nvidia/gridd.conf.template /etc/nvidia/gridd.conf
+  echo 'FeatureType=1' | sudo tee -a /etc/nvidia/gridd.conf
+  sudo systemctl restart nvidia-gridd
+
+  # Verify: License Status : Licensed (Expiry: ...)
+  nvidia-smi -q | grep -i 'license status'
+  ```
+
+  `./devlab bootstrap --gpu` warns, but continues, when `nvidia-smi -q` reports the vGPU as unlicensed.
+- **CUDA version**: container images must support the guest driver. CUDA 12 images run on any vGPU 16 (R535) or newer guest driver. CUDA 13 images need an R580+ driver. Check the driver's CUDA version in the `nvidia-smi` header.
+- **No MIG on A10**: an A10 cannot be partitioned with MIG, so time slicing is the only way to share it between pods.
+- **Unified memory**: CUDA unified (managed) memory is off by default on vGPUs. Your hypervisor admin must turn it on per vGPU, and NVIDIA documents it only for some profiles. Don't rely on managed memory (e.g. RMM managed memory) unless you have checked it is enabled.
+- **Full-GPU profile**: A10-24Q uses the whole 24 GB A10, so no other VM shares the physical GPU. `nvidia-smi` in the guest reports slightly less than 24 GB total because of vGPU-reserved memory.
+
+### What Bootstrap Does
+
+1. Renders `cluster/nvkind-config-template.yaml` with `cluster/nvkind-values.yaml`. Then it creates the cluster with `nvkind cluster create`.
+2. nvkind installs the NVIDIA Container Toolkit in each GPU worker and adds an `nvidia` containerd runtime. It also registers the `nvidia` RuntimeClass.
+3. Installs the `nvidia-device-plugin` Helm chart in the `nvidia` namespace with `config/gpu/nvidia-device-plugin-values.yaml`. This config turns on time slicing.
+4. Waits until a node advertises allocatable `nvidia.com/gpu` (4 per physical GPU by default). Then it installs Linkerd as usual.
+
+`nvkind cluster create` can exit with an error from harmless unmount failures after the cluster is up. Bootstrap continues when the cluster exists. The GPU capacity check catches a real failure.
+
+### GPU Placement
+
+By default the first worker gets every host GPU and the second worker is CPU-only. Edit `cluster/nvkind-values.yaml` to change this. Each `workers` entry is one worker node, and `devices` takes a GPU index, a list of indexes, or `all`:
+
+```yaml
+# One GPU per worker on a 2-GPU host
+workers:
+- devices: 0
+- devices: 1
+```
+
+GPU workers get the `nvidia.com/gpu.present=true` label. The device plugin DaemonSet only runs on nodes with that label. Re-run `./devlab bootstrap --gpu` and recreate the cluster to apply changes.
+
+### GPU Time Slicing
+
+The device plugin [time-slices](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) each physical GPU into 4 shares. A node with one GPU advertises `nvidia.com/gpu: 4`, so 4 pods that each request `nvidia.com/gpu: 1` run on the same GPU at once. The GPU switches between their CUDA contexts.
+
+**Time slicing gives no memory or fault isolation.** Every pod sees the whole GPU and its full memory. Kubernetes cannot limit how much GPU memory a pod uses. One pod can use all the memory and make the others fail with out-of-memory errors. Each workload must limit its own GPU memory. For example, `config/dask/workers.yaml` gives each Dask worker a fixed 4.5 GiB RMM pool on a 24 GB GPU. A crash or GPU fault in one pod can also affect the others.
+
+Other effects:
+
+- A share is not a fixed fraction of compute. A pod alone on the GPU gets all of it, and 4 busy pods take turns.
+- A pod that requests more than 1 `nvidia.com/gpu` is rejected with `UnexpectedAdmissionError`. Two shares of one GPU would not give it more GPU time (`failRequestsGreaterThanOne: true`).
+- The resource name stays `nvidia.com/gpu`, so existing manifests work unchanged.
+
+The config is in `config/gpu/nvidia-device-plugin-values.yaml`:
+
+```bash
+# Change the number of shares per GPU: edit `replicas` (must be >= 2), then
+./devlab gpu-plugin
+
+# Turn time slicing off for the whole cluster: set `config.default: exclusive`, then
+./devlab gpu-plugin
+
+# Turn it off on one node only (no reinstall; the plugin picks up the label change itself)
+./devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config=exclusive --overwrite
+# ...and back on
+./devlab kubectl -- label node dev-lab-worker nvidia.com/device-plugin.config-
+```
+
+`./devlab gpu-plugin` re-runs the device plugin Helm install and waits for the new capacity. Pods already running on a share keep running, so delete them first if you reduce the share count.
+
+For a worked example with 4 Dask workers sharing one A10, see [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md).
+
+### Running GPU Workloads
+
+GPU pods must request `nvidia.com/gpu` and set `runtimeClassName: nvidia`. The nvidia runtime is not the containerd default on the nodes:
+
+```yaml
+spec:
+  runtimeClassName: nvidia
+  containers:
+    - name: app
+      image: my-gpu-app:latest
+      resources:
+        limits:
+          nvidia.com/gpu: 1
+```
+
+Smoke test:
+
+```bash
+./devlab kubectl -- apply -f config/gpu/gpu-test-pod.yaml
+./devlab kubectl -- logs gpu-test     # GPU 0: NVIDIA ... (UUID: GPU-...)
+./devlab kubectl -- delete pod gpu-test
+
+# Allocatable GPU shares per node (GPUs column: 4 per physical GPU)
+./devlab status
+```
+
+### GPU Troubleshooting
+
+- **No node advertised nvidia.com/gpu capacity**: check the plugin logs with `./devlab kubectl -- logs -n nvidia -l app.kubernetes.io/name=nvidia-device-plugin -c nvidia-device-plugin-ctr`. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `./devlab cleanup && ./devlab bootstrap --gpu`.
+- **Pod stuck in Pending**: all GPU shares are in use (4 per GPU by default). Check with `./devlab status`.
+- **Pod fails with `UnexpectedAdmissionError`**: it requests more than 1 `nvidia.com/gpu` while time slicing is on.
+- **`CUDA_ERROR_OUT_OF_MEMORY` with time slicing**: another pod on the same GPU used the memory. Limit each workload's GPU memory (see [GPU Time Slicing](#gpu-time-slicing)).
+- **`requirement error: unsatisfied condition: cuda>=...`**: the image needs a newer driver than the host or vGPU guest has. Use an image built for an older CUDA version.
+- **GPU slows down after ~20 minutes in a VM**: the vGPU is not licensed (see [vGPU Guests](#vgpu-guests-eg-a10-24q)).
+- **`nvidia-smi: not found` in the pod**: the pod is missing `runtimeClassName: nvidia`.
+- **GPU details per node**: run `kind export kubeconfig --name dev-lab`, then `nvkind cluster print-gpus --name dev-lab`. nvkind reads the cluster through your host kubeconfig. The `./devlab` kubeconfig in `.kube/config` uses an address that only resolves inside the `kind` Docker network.
 
 ## Image Workflow
 
@@ -438,7 +590,12 @@ dev-lab/
 │           ├── linkerd-canary.sh         # Linkerd native canary management
 │           └── test-suite.sh             # Comprehensive testing framework
 ├── cluster/
-│   └── kind-config.yaml         # KinD cluster configuration
+│   ├── kind-config.yaml         # KinD cluster configuration
+│   ├── nvkind-config-template.yaml # GPU cluster config template (bootstrap --gpu)
+│   └── nvkind-values.yaml       # GPU placement per worker node
+├── config/
+│   ├── dask/                    # Dask scheduler + time-sliced GPU workers (DASK-GPU-RUNBOOK.md)
+│   └── gpu/                     # NVIDIA RuntimeClass, device plugin values (time slicing), GPU smoke test pod
 ├── monitoring/
 │   ├── prometheus-values-lightweight.yaml    # Prometheus stack values
 │   └── custom-monitoring.yaml  # Additional monitoring resources

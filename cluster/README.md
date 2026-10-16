@@ -15,3 +15,12 @@ Container runtime uses `containerd` with registry mirrors configured to point to
 
 - **`Cluster/`** (manifest)
 <!-- docgen:end id=cluster:reference -->
+
+## GPU-Enabled Variant (nvkind)
+
+`./devlab bootstrap --gpu` creates the cluster with [nvkind](https://github.com/NVIDIA/nvkind) instead of `kind-config.yaml`:
+
+- `nvkind-config-template.yaml`: the same cluster as `kind-config.yaml`, with worker nodes generated from the values file. nvkind renders it as a Go template with [sprig](https://masterminds.github.io/sprig/) functions.
+- `nvkind-values.yaml`: one `workers` entry per worker node. `devices` assigns host GPUs to that worker by index, list of indexes, or `all`. Omit it for a CPU-only worker.
+
+Keep the shared parts of both files in sync. `python/tests/test_gpu.py` fails when they drift. See the GPU section of the top-level README for host setup.

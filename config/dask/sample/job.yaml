@@ -1,0 +1,31 @@
+# Dask client that runs gpu_concurrency.py against the dask-scheduler Service.
+# It requests no GPU itself; the GPU work runs on the dask-cuda-worker pods.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-concurrency
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: client
+          image: rapidsai/base:26.08-cuda12-py3.12
+          args: ["python", "/scripts/gpu_concurrency.py"]
+          env:
+            - name: DASK_SCHEDULER_ADDRESS
+              value: tcp://dask-scheduler:8786
+            - name: EXPECTED_WORKERS
+              value: "4"
+            - name: TASK_SECONDS
+              value: "30"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: gpu-concurrency-script
