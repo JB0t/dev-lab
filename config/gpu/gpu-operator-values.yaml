@@ -16,6 +16,14 @@ operator:
   # Operand pods need the nvidia runtime; it is not the containerd default
   runtimeClass: nvidia
 
+# GPUs reach containers through the nvidia runtime's legacy mode, where
+# bootstrap --gpu turns off CUDA forward compatibility (see python/devlab.py,
+# CONFIGURE_RUNTIME_SCRIPT). With CDI, the device plugin's CDI spec would load
+# forward-compat libraries from images, which fail on GPUs without forward
+# compatibility support.
+cdi:
+  enabled: false
+
 # Nodes labelled nvidia.com/gpu.deploy.operands=false (the control plane and
 # CPU-only workers, see cluster/gpu-workers.yaml) get no operands, although
 # NFD sees the host's GPUs from every kind node.
