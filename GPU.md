@@ -168,6 +168,30 @@ To launch the same kind of work from a UI, enable Dagster. Then open **http://da
 devlab addon enable dagster
 ```
 
+**Headless server**: open the dashboards from your own machine through an SSH tunnel to the server's port 80, where Traefik serves every `*.localhost` site. Browsers send `*.localhost` to your own machine, so the tunnel carries the requests to the server and Traefik picks the site by its name:
+
+```bash
+# On your machine; leave it running. 8080 because ports below 1024 need root
+ssh -N -L 8080:localhost:80 user@gpu-server
+```
+
+Then browse to http://dagster.localhost:8080, and likewise http://grafana.localhost:8080 or http://prometheus.localhost:8080. To keep the tunnel in your SSH config, so a plain `ssh gpu-server` opens it:
+
+```text
+# ~/.ssh/config on your machine
+Host gpu-server
+    HostName <server address>
+    User <user>
+    LocalForward 8080 localhost:80
+```
+
+With `LocalForward 80 localhost:80` (and `sudo ssh ...`, since port 80 needs root on your machine) the URLs work without `:8080`. VS Code Remote-SSH can forward the port too: Ports panel > Forward a Port > `80`.
+
+kind publishes port 80 on every interface of the server, so anyone who can reach the server can open these dashboards. The Dagster UI has no login and can launch runs. A `ufw` rule does not stop this, because Docker's published ports bypass `ufw`. To allow access only through SSH:
+1. Add `listenAddress: 127.0.0.1` to the port 80 and 443 entries under `extraPortMappings` in `cluster/kind-config.yaml`. Bootstrap `--gpu` builds its config from this file.
+2. Recreate the cluster: `devlab cleanup && devlab bootstrap --gpu`.
+3. From another machine, check that `curl -H 'Host: dagster.localhost' http://<server address>/` no longer connects.
+
 ### 8. Clean Up
 
 ```bash
