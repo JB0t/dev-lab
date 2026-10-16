@@ -162,6 +162,12 @@ devlab kubectl apply -k config/dask/sample
 devlab kubectl -n dask logs -f job/gpu-concurrency                    # expect: PASS
 ```
 
+For existing code that connects with `Client("tcp://<address>:8786")`, run a standing cluster instead and point the client at `tcp://localhost:8786` (`tcp://dev-lab-control-plane:30786` from a container on the `kind` network). See "Connect Existing Clients By Address" in the runbook:
+
+```bash
+python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-memory-gib 5 | devlab kubectl apply -n dask -f -
+```
+
 To launch the same kind of work from a UI, enable Dagster. Then open **http://dagster.localhost**, go to Jobs, then `gpu_concurrency_job`, then Launchpad, and Launch Run. Each run creates its own time-sliced GPU Dask cluster and runs every op on its workers (see "Run From Dagster" in the runbook):
 
 ```bash

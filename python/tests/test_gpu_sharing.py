@@ -150,6 +150,41 @@ class DaskClusterSpecTests(unittest.TestCase):
                          for item in spec["spec"]["scheduler"]["spec"]["containers"][0]["env"]}
         self.assertEqual(scheduler_env["DASK_DISTRIBUTED__SCHEDULER__UNKNOWN_TASK_DURATION"], "5m")
 
+    def test_standing_cluster_has_a_fixed_scheduler_address_and_scales_from_zero(self):
+        import contextlib
+        import io
+        import json
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.helper.main(["gpu", "--workers", "3", "--gpu-memory-gib", "2"]), 0)
+        manifests = json.loads(out.getvalue())
+        self.assertEqual(manifests["kind"], "List")
+        cluster, autoscaler, ingress = manifests["items"]
+        self.assertEqual(cluster["kind"], "DaskCluster")
+        self.assertEqual(cluster["spec"]["worker"]["replicas"], 0)
+        self.assertEqual(autoscaler["spec"], {"cluster": "gpu", "minimum": 0, "maximum": 3})
+        service = cluster["spec"]["scheduler"]["service"]
+        self.assertEqual(service["type"], "NodePort")
+        self.assertEqual(service["ports"][0]["nodePort"], self.helper.STANDING_SCHEDULER_NODE_PORT)
+        env = {item["name"]: item["value"] for item in cluster["spec"]["scheduler"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["DASK_DISTRIBUTED__SCHEDULER__UNKNOWN_TASK_DURATION"], "1m")
+        worker_args = cluster["spec"]["worker"]["spec"]["containers"][0]["args"]
+        self.assertFalse([arg for arg in worker_args if arg.startswith("--rmm")])
+        backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]
+        self.assertEqual(backend, {"name": "gpu-scheduler", "port": {"number": self.helper.DASHBOARD_PORT}})
+        self.assertEqual(ingress["spec"]["rules"][0]["host"], "gpu.dask.localhost")
+
+    def test_kind_maps_the_standing_scheduler_to_host_loopback(self):
+        sys.path.insert(0, str(Path(__file__).parents[1]))
+        import devlab
+        config = yaml.safe_load((REPO_ROOT / "cluster" / "kind-config.yaml").read_text())
+        gpu_config, _ = devlab.gpu_kind_config(config, [{"devices": 0}, {}])
+        for kind_config in (config, gpu_config):
+            mappings = kind_config["nodes"][0]["extraPortMappings"]
+            mapping = [m for m in mappings if m["containerPort"] == self.helper.STANDING_SCHEDULER_NODE_PORT]
+            self.assertEqual(mapping, [{"containerPort": self.helper.STANDING_SCHEDULER_NODE_PORT,
+                                        "hostPort": 8786, "listenAddress": "127.0.0.1", "protocol": "TCP"}])
+
     def test_rmm_pool_can_be_turned_off(self):
         spec = self.helper.gpu_cluster_spec("xgb", gpu_memory_gib=5, rmm_pool=False)
         container = spec["spec"]["worker"]["spec"]["containers"][0]
@@ -272,16 +307,17 @@ class DagsterAddonTests(unittest.TestCase):
 class AdaptiveScaleFromZeroTests(unittest.TestCase):
     """The scheduler logic the DaskAutoscaler relies on, with a real Dask scheduler."""
 
-    def adaptive_target(self, task_durations):
+    def adaptive_target(self, task_durations, unknown_task_duration="500ms", resources={"GPU": 1}):
         import asyncio
         import dask
         from distributed import Client, Scheduler
 
         async def target():
-            with dask.config.set({"distributed.scheduler.default-task-durations": task_durations}):
+            with dask.config.set({"distributed.scheduler.default-task-durations": task_durations,
+                                  "distributed.scheduler.unknown-task-duration": unknown_task_duration}):
                 async with Scheduler(dashboard_address=None, port=0) as scheduler:
                     async with Client(scheduler.address, asynchronous=True) as client:
-                        futures = [client.submit(gpu_task, i, resources={"GPU": 1}) for i in range(4)]
+                        futures = [client.submit(gpu_task, i, resources=resources) for i in range(4)]
                         while len(scheduler.unrunnable) + len(scheduler.queued) < 4:
                             await asyncio.sleep(0.05)
                         result = scheduler.adaptive_target()
@@ -296,6 +332,10 @@ class AdaptiveScaleFromZeroTests(unittest.TestCase):
 
     def test_without_durations_starts_with_one_worker(self):
         self.assertEqual(self.adaptive_target({}), 1)
+
+    def test_standing_cluster_task_duration_scales_unknown_tasks_from_zero(self):
+        # Clients of a standing cluster send tasks the scheduler knows nothing about
+        self.assertEqual(self.adaptive_target({}, unknown_task_duration="1m", resources=None), 4)
 
 
 def gpu_task(i):

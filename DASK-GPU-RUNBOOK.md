@@ -134,6 +134,54 @@ Clusters with different sizes can run side by side, e.g. `gpu_cluster("a", n_wor
 
 **From your machine**: install the same versions (`pip install -r config/dask/image/requirements.txt -c config/dask/image/constraints.txt`, or at least the same Python, `dask`, `distributed` and `dask-kubernetes`), put `config/dask` on `PYTHONPATH`, and point `KUBECONFIG` at the dev-lab cluster. `KubeCluster` reaches the scheduler through a port-forward. Mismatched Dask versions between client and cluster cause errors.
 
+## Connect Existing Clients By Address
+
+For code that already does `Client("tcp://<address>:8786")` and submits work: run one standing cluster whose scheduler stays up on the CPU node at a fixed address. Its GPU workers scale from 0 for whatever any client submits, and back to 0 when idle. The client changes only the address.
+
+```bash
+# Scheduler + DaskAutoscaler (0 to 4 workers, 5 GiB GPU each) + dashboard ingress
+python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-memory-gib 5 | devlab kubectl apply -n dask -f -
+devlab kubectl -n dask get daskcluster,pods        # scheduler Running, no workers yet
+```
+
+| Client runs | Address |
+|-------------|---------|
+| On the server (host) | `tcp://localhost:8786` |
+| In a Docker container with `--network kind` | `tcp://dev-lab-control-plane:30786` |
+| In a Docker container with `--network host` | `tcp://localhost:8786` |
+| In a pod | `tcp://gpu-scheduler.dask:8786` |
+
+The dashboard is at http://gpu.dask.localhost; on a headless server, go through the SSH tunnel and open http://gpu.dask.localhost:8080.
+
+**What the client needs**:
+- **No Dask settings.** GPU memory, scaling and task duration belong to the cluster (the options below).
+- **The same Python and Dask versions** as the cluster: Python 3.12 and dask/distributed 2026.1.1, plus whatever its tasks import. The easiest way is to build the client image `FROM localhost:5000/devlab-dask-gpu:2026.1.1`, or run the client in that image, e.g. `docker run --rm --network kind -v $PWD:/app -w /app localhost:5000/devlab-dask-gpu:2026.1.1 python workload.py`.
+- **Code and data the workers can reach.** Functions defined in the script the client runs are sent with the tasks. Functions imported from the client's own modules must also exist on the workers: install them in the image, or call `client.upload_file("mymodule.py")`. Workers cannot read files in the client's container; pass the data, or read it from somewhere both can reach.
+
+Results come back through the scheduler, so very large results are slow; reduce them on the workers first. Each worker runs one task at a time (`--nthreads 1`).
+
+Options (`python3 config/dask/devlab_dask.py --help`):
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--workers` | 4 | Most GPU workers at once |
+| `--gpu-memory-gib` | 5 | GPU memory per worker (nvidia.com/gpu shares); 2 on an 11 GB card |
+| `--task-duration` | `1m` | How long the scheduler assumes a task takes until it has measured it. Anything over a few seconds starts one worker per queued task right away |
+| `--rmm-pool` | off | Fixed RMM pool per worker, for code that allocates through RMM (not XGBoost) |
+| `--resources` | none | Worker resources, e.g. `GPU=1`, for tasks submitted with `resources={"GPU": 1}` |
+| `--node-port` | 30786 | Scheduler NodePort. Only 30786 is mapped to the host, so only one standing cluster can be reached from outside; others take `--node-port 0` and are reachable from pods only |
+
+To change the cluster, delete it and apply it again with new options; running clients lose their connection:
+
+```bash
+devlab kubectl -n dask delete daskcluster gpu      # also removes its autoscaler and workers
+devlab kubectl -n dask delete ingress gpu-dashboard
+```
+
+The host port needs `cluster/kind-config.yaml` from this version: a cluster created before it has no `127.0.0.1:8786` mapping (`devlab cleanup && devlab bootstrap --gpu`). Without recreating, a client in a container on the `kind` network can still use `tcp://dev-lab-control-plane:30786`.
+
+**Security:** anyone who can connect to a Dask scheduler can run any code on its workers. The host port is bound to 127.0.0.1 for that reason. Don't publish it on the network; use an SSH tunnel (`ssh -L 8786:localhost:8786 ...`) for remote clients.
+
 ## Run From Dagster
 
 `devlab addon enable dagster` installs Dagster (Helm chart `dagster/dagster`, pinned in `python/devlab.py`) in the `dask` namespace and publishes its UI through Traefik at **http://dagster.localhost**. It needs the image from Setup step 1, which includes Dagster.
@@ -220,6 +268,8 @@ devlab kubectl delete -k config/dask
 | `module 'numba.cuda.types' has no attribute 'NPDatetime'` | `numba.cuda` does not work with the pinned versions; see Versions |
 | `CUDA-capable device(s) is/are busy or unavailable` | GPU compute mode is not Default (see GPU.md, step 3) |
 | Client `ModuleNotFoundError: devlab_dask` | Mount the `devlab-dask` ConfigMap and set `PYTHONPATH`, as in `config/dask/sample/job.yaml` |
+| Client `OSError: Timed out trying to connect to tcp://localhost:8786` | The standing cluster is not running (`devlab kubectl -n dask get daskcluster`), the client container is not on the `kind` or `host` network, or the cluster predates the 8786 host mapping (see "Connect Existing Clients By Address") |
+| Client warns about mismatched versions | Run the client with the same Python and Dask versions, e.g. in the cluster image |
 | Dagster code location `devlab-dask` not loading | `devlab kubectl -n dask logs deploy/dagster-dagster-user-deployments-devlab-dask`. `ErrImagePull`: run Setup step 1. `No module named 'dagster'`: the image predates the Dagster addon; rebuild it |
 | Dagster ops never start, or the run pod logs `Dask Cluster resource not actioned` | Is the Dask operator running (`devlab addon enable dask-operator`)? Then see "Workers never start" above |
 | Dagster op `No stored output ...` | The upstream op's output is missing from PostgreSQL, e.g. after `devlab addon disable dagster`; re-run the whole job |

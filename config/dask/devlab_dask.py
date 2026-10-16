@@ -23,10 +23,26 @@ own CUDA allocator (e.g. XGBoost) are not limited and should run with
 Placement: workers tolerate the GPU node taint and run only on GPU nodes
 (``devlab.io/gpu=true``); the scheduler runs on a CPU node
 (``devlab.io/gpu=false``).
+
+Standing cluster: for existing code that connects with
+``Client("tcp://<scheduler>:8786")``, run this file to create a long-lived
+cluster whose scheduler keeps a fixed address and whose GPU workers scale
+from 0 for whatever its clients submit::
+
+    python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-memory-gib 5 \\
+        | devlab kubectl apply -n dask -f -
+
+    Client("tcp://localhost:8786")               # on the Docker host
+    Client("tcp://dev-lab-control-plane:30786")  # in a container on the kind network
+    Client("tcp://gpu-scheduler.dask:8786")      # in a pod
+    # dashboard: http://gpu.dask.localhost
 """
 
+import argparse
 import asyncio
+import json
 import math
+import sys
 import time
 from typing import Dict, List, Optional
 
@@ -39,6 +55,9 @@ IMAGE = "localhost:5000/devlab-dask-gpu:2026.1.1"
 CUDA_CONTEXT_GIB = 0.5
 
 SCHEDULER_PORT = 8786
+# NodePort of the standing cluster's scheduler; kind maps it to
+# 127.0.0.1:8786 on the Docker host (cluster/kind-config.yaml)
+STANDING_SCHEDULER_NODE_PORT = 30786
 DASHBOARD_PORT = 8787
 WORKER_DASHBOARD_PORT = 8788
 
@@ -88,6 +107,7 @@ def gpu_cluster_spec(
     worker_volumes: Optional[List[dict]] = None,
     worker_volume_mounts: Optional[List[dict]] = None,
     idle_timeout: Optional[int] = None,
+    scheduler_node_port: Optional[int] = None,
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
@@ -104,6 +124,8 @@ def gpu_cluster_spec(
     to the worker pods (Kubernetes env, volumes and volumeMounts).
     ``idle_timeout`` (seconds) has the operator delete the cluster when its
     scheduler has been idle that long, e.g. after its client was killed.
+    ``scheduler_node_port`` makes the scheduler Service a NodePort with this
+    port for the scheduler (TCP 8786), reachable on every node.
     """
     memory = worker_memory(gpu_memory_gib)
     worker_args = [
@@ -192,10 +214,11 @@ def gpu_cluster_spec(
                     }],
                 },
                 "service": {
-                    "type": "ClusterIP",
+                    "type": "NodePort" if scheduler_node_port else "ClusterIP",
                     "selector": labels,
                     "ports": [
-                        {"name": "tcp-comm", "protocol": "TCP", "port": SCHEDULER_PORT, "targetPort": "tcp-comm"},
+                        {"name": "tcp-comm", "protocol": "TCP", "port": SCHEDULER_PORT, "targetPort": "tcp-comm",
+                         **({"nodePort": scheduler_node_port} if scheduler_node_port else {})},
                         {"name": "http-dashboard", "protocol": "TCP", "port": DASHBOARD_PORT,
                          "targetPort": "http-dashboard"},
                     ],
@@ -280,3 +303,91 @@ def gpu_cluster(name: str, n_workers: int, gpu_memory_gib: int, namespace: Optio
     )
     cluster.adapt(minimum=0, maximum=n_workers)
     return cluster
+
+
+def standing_cluster_manifests(
+    name: str,
+    n_workers: int,
+    gpu_memory_gib: int,
+    dashboard_host: Optional[str] = None,
+    **spec_options,
+) -> List[dict]:
+    """A long-lived GPU Dask cluster that clients reach by address.
+
+    Returns the DaskCluster, a DaskAutoscaler that keeps its GPU workers
+    between 0 and ``n_workers`` (the scheduler asks for workers as clients
+    submit tasks, and idle ones are removed), and an Ingress for the
+    scheduler dashboard at ``dashboard_host`` (default
+    ``<name>.dask.localhost``). The scheduler is the Service
+    ``<name>-scheduler``, port 8786; with ``scheduler_node_port`` also that
+    port on every node. See ``gpu_cluster_spec`` for ``spec_options``.
+    """
+    cluster = gpu_cluster_spec(name, gpu_memory_gib, **spec_options)
+    labels = {"dask.org/cluster-name": name}
+    autoscaler = {
+        "apiVersion": "kubernetes.dask.org/v1",
+        "kind": "DaskAutoscaler",
+        "metadata": {"name": name, "labels": labels},
+        "spec": {"cluster": name, "minimum": 0, "maximum": n_workers},
+    }
+    ingress = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {"name": f"{name}-dashboard", "labels": labels},
+        "spec": {
+            "ingressClassName": "traefik",
+            "rules": [{
+                "host": dashboard_host or f"{name}.dask.localhost",
+                "http": {"paths": [{
+                    "path": "/",
+                    "pathType": "Prefix",
+                    "backend": {"service": {"name": f"{name}-scheduler", "port": {"number": DASHBOARD_PORT}}},
+                }]},
+            }],
+        },
+    }
+    return [cluster, autoscaler, ingress]
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Print the manifests of a standing GPU Dask cluster as a Kubernetes List (JSON)."""
+    parser = argparse.ArgumentParser(
+        description="Print a standing GPU Dask cluster for `devlab kubectl apply -n dask -f -`. "
+                    "Clients connect to tcp://localhost:8786 on the Docker host, "
+                    "tcp://dev-lab-control-plane:30786 on the kind network, or "
+                    "tcp://NAME-scheduler.dask:8786 in the cluster.")
+    parser.add_argument("name", help="cluster name; the scheduler Service is NAME-scheduler")
+    parser.add_argument("--workers", type=int, default=4, help="most GPU workers at once (default 4)")
+    parser.add_argument("--gpu-memory-gib", type=int, default=5,
+                        help="GPU memory per worker = nvidia.com/gpu shares (default 5)")
+    parser.add_argument("--task-duration", default="1m",
+                        help="how long the scheduler assumes a task takes until it has measured it; anything "
+                             "over a few seconds starts one worker per queued task (default 1m)")
+    parser.add_argument("--rmm-pool", action="store_true",
+                        help="fixed RMM pool per worker, for code that allocates through RMM (not XGBoost)")
+    parser.add_argument("--host-memory", default="8Gi", help="host memory limit per worker (default 8Gi)")
+    parser.add_argument("--resources", default="",
+                        help="Dask worker resources, e.g. GPU=1, for tasks submitted with resources={...}")
+    parser.add_argument("--node-port", type=int, default=STANDING_SCHEDULER_NODE_PORT,
+                        help=f"scheduler NodePort; {STANDING_SCHEDULER_NODE_PORT} (default) is mapped to "
+                             "127.0.0.1:8786 on the Docker host. Only one cluster can use a port; "
+                             "0 for none (in-cluster clients only)")
+    parser.add_argument("--image", default=IMAGE)
+    args = parser.parse_args(argv)
+
+    worker_resources = dict(
+        (key, float(value)) for key, value in (item.split("=", 1) for item in args.resources.split(",") if item)
+    )
+    items = standing_cluster_manifests(
+        args.name, args.workers, args.gpu_memory_gib,
+        image=args.image, host_memory=args.host_memory, rmm_pool=args.rmm_pool,
+        unknown_task_duration=args.task_duration, worker_resources=worker_resources or None,
+        scheduler_node_port=args.node_port or None,
+    )
+    json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout, indent=2)
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
