@@ -115,6 +115,19 @@ class AddonTests(unittest.TestCase):
             self.assertTrue(callable(getattr(DevLabManager, spec["enable"])))
             self.assertTrue(callable(getattr(DevLabManager, spec["disable"])))
 
+    def test_dagster_addon_applies_config_relative_to_the_mounted_project(self):
+        # kubectl runs in a container that mounts only `workdir` at /workspace
+        from unittest import mock
+        from devlab import DevLabManager, PROJECT_ROOT
+        manager = DevLabManager.__new__(DevLabManager)
+        manager.tools = mock.Mock()
+        manager.tools.kubectl.return_value = mock.Mock(returncode=1)
+        self.assertFalse(manager._enable_dagster())
+        args, kwargs = manager.tools.kubectl.call_args
+        self.assertEqual(args[0], ["apply", "-k", "config/dask"])
+        self.assertEqual(kwargs["workdir"], PROJECT_ROOT)
+        self.assertTrue((PROJECT_ROOT / args[0][2] / "kustomization.yaml").exists())
+
     def test_kwok_templates_are_valid_yaml_after_substitution(self):
         import yaml
         text = (CONFIG_DIR / "addons" / "node-autoscaler" / "kwok-provider.yaml").read_text()
