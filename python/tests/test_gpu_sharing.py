@@ -376,7 +376,7 @@ class ConcurrencyCheckTests(unittest.TestCase):
         from distributed import Client, LocalCluster
         with LocalCluster(n_workers=4, threads_per_worker=1, processes=False, resources={"GPU": 1},
                           dashboard_address=None) as cluster, Client(cluster) as client:
-            results = self.module.run(client, 4, sleep_task, 1.0)
+            results = self.module.run(client, 4, sleep_task, 1.0, resources={"GPU": 1})
         ok, message = self.module.check_concurrent(results, 4)
         self.assertTrue(ok, message)
 

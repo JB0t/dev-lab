@@ -152,6 +152,19 @@ devlab kubectl -n dask get daskcluster,pods        # scheduler Running, no worke
 | In a Docker container with `--network host` | `tcp://localhost:8786` |
 | In a pod | `tcp://gpu-scheduler.dask:8786` |
 
+**Check it from the client machine** with the GPU sample in address mode. The client needs only Python 3.12 with dask and distributed 2026.1.1; the GPU work runs on the workers:
+
+```bash
+docker run --rm -e SCHEDULER_ADDRESS=tcp://<server IP>:8786 -e N_WORKERS=4 \
+  -v "$PWD/config/dask/sample:/s:ro" python:3.12.12-slim-bookworm sh -c \
+  'pip install -q dask==2026.1.1 distributed==2026.1.1 && python /s/gpu_concurrency.py'
+# Scheduler has 0 workers; submitting 4 GPU tasks...
+# ... 4 workers, 1 GPU UUID ...
+# PASS: all 4 tasks were running at the same time for ...
+```
+
+`N_WORKERS` must not exceed the cluster's `--workers`. Use `TASK_SECONDS` to make the tasks longer or shorter.
+
 The dashboard is at http://gpu.dask.localhost; on a headless server, go through the SSH tunnel and open http://gpu.dask.localhost:8080.
 
 **What the client needs**:
