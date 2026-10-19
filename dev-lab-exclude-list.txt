@@ -1,0 +1,12 @@
+.claude
+.git
+.gitignore
+.helm
+.krew
+.kube
+*.md
+Session.vim
+python/.helm
+python/__pycache__
+python/venv
+python/devlab
