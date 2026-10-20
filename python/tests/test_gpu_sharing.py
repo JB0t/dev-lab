@@ -134,17 +134,21 @@ class DaskClusterSpecTests(unittest.TestCase):
 
     def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
         self.assertNotIn("volumes", self.worker["spec"])
+        self.assertNotIn("envFrom", self.worker["spec"]["containers"][0])
         self.assertNotIn("idleTimeout", self.spec["spec"])
         volumes = [{"name": "code", "configMap": {"name": "code"}}]
         mounts = [{"name": "code", "mountPath": "/code"}]
         env = [{"name": "PYTHONPATH", "value": "/code"}]
-        spec = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2, worker_env=env, worker_volumes=volumes,
+        env_from = [{"configMapRef": {"name": "worker-env"}}]
+        spec = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2, worker_env=env, worker_env_from=env_from,
+                                            worker_volumes=volumes,
                                             worker_volume_mounts=mounts, unknown_task_duration="5m",
                                             idle_timeout=600)
         worker = spec["spec"]["worker"]["spec"]
         self.assertEqual(worker["volumes"], volumes)
         self.assertEqual(worker["containers"][0]["volumeMounts"], mounts)
         self.assertEqual(worker["containers"][0]["env"], env)
+        self.assertEqual(worker["containers"][0]["envFrom"], env_from)
         self.assertEqual(spec["spec"]["idleTimeout"], 600)
         scheduler_env = {item["name"]: item["value"]
                          for item in spec["spec"]["scheduler"]["spec"]["containers"][0]["env"]}
