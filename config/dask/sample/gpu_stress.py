@@ -9,6 +9,12 @@ overhead. The throughput to compare is the total rounds/s:
     N_WORKERS=1 ... python gpu_stress.py      # one fit at a time: the GPU alone
     N_WORKERS=4 ... python gpu_stress.py      # four at once
 
+Like a grid search, the fits share DATASETS datasets (1 by default). A worker
+keeps the dataset of its last fit on the GPU, so a fit on the same data skips
+building it (the quantile sketch and the copy to the GPU: the "build" column)
+and uses the worker's GPU memory to hold data instead of leaving it idle.
+DATASETS=FITS gives every fit its own data, built every time.
+
 Time slicing: four workers share one worker's rounds/s. MPS: the total
 grows until the GPU is full. Watch the GPU on the host meanwhile with
 `nvidia-smi dmon -s um`.
@@ -22,6 +28,7 @@ Environment:
     N_WORKERS        workers to use (4); with SCHEDULER_ADDRESS at most the
                      cluster's --workers
     FITS             models to fit (8); each worker fits FITS / N_WORKERS
+    DATASETS         datasets the fits share (1); fit i uses dataset i % DATASETS
     ROWS, COLUMNS    training data per fit (2000000 x 64 float32, 512 MB)
     MAX_DEPTH        tree depth (10)
     ROUNDS           boosting rounds per fit (200)
@@ -66,19 +73,52 @@ def make_data(index, rows, columns):
     return features, target
 
 
-def fit(index, rows, columns, max_depth, rounds, library="xgboost", device="cuda"):
-    """Train one model on this worker's GPU share and report how it went"""
-    from distributed import get_worker
-
-    grid = GRID[index % len(GRID)]
-    features, target = make_data(index, rows, columns)
+def build(library, device, dataset, rows, columns):
+    """The library's train and valid sets for a dataset, ready for any number of fits"""
+    features, target = make_data(dataset, rows, columns)
     split = int(rows * 0.8)
-    start = time.time()
     if library == "xgboost":
         import xgboost as xgb
 
         train = xgb.QuantileDMatrix(features[:split], target[:split])
         valid = xgb.QuantileDMatrix(features[split:], target[split:], ref=train)
+    elif library == "lightgbm":
+        import lightgbm as lgb
+
+        params = {"device_type": device if device == "cuda" else "cpu", "verbose": -1}
+        train = lgb.Dataset(features[:split], target[:split], params=params, free_raw_data=False)
+        valid = lgb.Dataset(features[split:], target[split:], reference=train, free_raw_data=False)
+        train.construct()
+        valid.construct()
+    else:
+        raise ValueError(f"LIBRARY must be xgboost or lightgbm, not {library!r}")
+    return train, valid
+
+
+def cached_data(worker, key, make):
+    """The worker's one cached dataset: built by make() when the key is new, else as it is"""
+    cache = worker.__dict__.setdefault("gpu_stress_data", {})
+    if cache.get("key") != key:
+        cache.clear()  # free the old dataset's GPU memory before building the new one
+        cache["key"], cache["data"] = key, make()
+        return cache["data"], False
+    return cache["data"], True
+
+
+def fit(index, datasets, rows, columns, max_depth, rounds, library="xgboost", device="cuda"):
+    """Train one model on this worker's GPU share and report how it went"""
+    from distributed import get_worker
+
+    worker = get_worker()
+    grid = GRID[index % len(GRID)]
+    dataset = index % datasets
+    start = time.time()
+    (train, valid), cached = cached_data(worker, (library, device, dataset, rows, columns),
+                                         lambda: build(library, device, dataset, rows, columns))
+    built = time.time()
+    if library == "xgboost":
+        import xgboost as xgb
+
         params = {"device": device, "tree_method": "hist", "objective": "reg:squarederror",
                   "max_depth": max_depth, "learning_rate": grid["learning_rate"],
                   "colsample_bytree": grid["colsample"], "subsample": 0.8}
@@ -87,11 +127,9 @@ def fit(index, rows, columns, max_depth, rounds, library="xgboost", device="cuda
                             evals_result=history, verbose_eval=False)
         trained = booster.num_boosted_rounds()
         rmse = history["valid"]["rmse"][-1]
-    elif library == "lightgbm":
+    else:
         import lightgbm as lgb
 
-        train = lgb.Dataset(features[:split], target[:split])
-        valid = lgb.Dataset(features[split:], target[split:], reference=train)
         params = {"device_type": device if device == "cuda" else "cpu", "objective": "regression",
                   "max_depth": max_depth, "num_leaves": min(2 ** max_depth, 255),
                   "learning_rate": grid["learning_rate"], "feature_fraction": grid["colsample"],
@@ -101,14 +139,15 @@ def fit(index, rows, columns, max_depth, rounds, library="xgboost", device="cuda
                             callbacks=[lgb.record_evaluation(history)])
         trained = booster.current_iteration()
         rmse = history["valid_0"]["l2"][-1] ** 0.5
-    else:
-        raise ValueError(f"LIBRARY must be xgboost or lightgbm, not {library!r}")
     end = time.time()
     return {
         "fit": index,
-        "worker": get_worker().name,
+        "dataset": dataset,
+        "worker": worker.name,
         "gpu": os.environ.get("NVIDIA_VISIBLE_DEVICES", "?"),
         "start": start,
+        "built": built,
+        "cached": cached,
         "end": end,
         "rounds": trained,
         "rmse": rmse,
@@ -118,15 +157,21 @@ def fit(index, rows, columns, max_depth, rounds, library="xgboost", device="cuda
 
 def summary(results, submitted):
     """Per-fit table, then the throughput and how many fits ran at once"""
-    lines = [f"{'fit':>3} {'worker':<40} {'start':>7} {'end':>7} {'rounds':>6} {'rounds/s':>8} {'rmse':>7}  params"]
+    lines = [f"{'fit':>3} {'data':>4} {'worker':<40} {'start':>7} {'build':>6} {'end':>7} {'rounds':>6} {'rounds/s':>8} "
+             f"{'rmse':>7}  params"]
     for result in sorted(results, key=lambda r: r["start"]):
-        seconds = result["end"] - result["start"]
-        lines.append(f"{result['fit']:>3} {result['worker']:<40} {result['start'] - submitted:>6.1f}s "
+        build_seconds = result["built"] - result["start"]
+        seconds = result["end"] - result["built"]
+        lines.append(f"{result['fit']:>3} {result['dataset']:>4} {result['worker']:<40} {result['start'] - submitted:>6.1f}s "
+                     f"{'cached' if result['cached'] else f'{build_seconds:5.1f}s':>6} "
                      f"{result['end'] - submitted:>6.1f}s {result['rounds']:>6} {result['rounds'] / seconds:>8.1f} "
                      f"{result['rmse']:>7.3f}  lr={result['learning_rate']} colsample={result['colsample']}")
     total_rounds = sum(result["rounds"] for result in results)
     wall = max(result["end"] for result in results) - min(result["start"] for result in results)
+    built = [result for result in results if not result["cached"]]
     lines.append(f"GPU(s): {', '.join(sorted({result['gpu'] for result in results}))}")
+    lines.append(f"Data: built {len(built)} times, {sum(r['built'] - r['start'] for r in built):.1f}s in all; "
+                 f"cached for {len(results) - len(built)} fits")
     lines.append(f"Workers: {len({result['worker'] for result in results})}, "
                  f"at most {peak_concurrency(results)} fits at once")
     lines.append(f"Throughput: {total_rounds} rounds in {wall:.1f}s = {total_rounds / wall:.1f} rounds/s")
@@ -144,7 +189,11 @@ def peak_concurrency(results):
 
 
 def run(client, fits, *task_args):
-    """Submit the fits; each worker takes one at a time (--nthreads 1)"""
+    """Submit the fits; each worker takes one at a time (--nthreads 1)
+
+    Fits are not grouped by dataset: a worker builds a dataset again when a fit on
+    another one came between, as a plain grid search over several datasets would.
+    """
     futures = [client.submit(fit, index, *task_args, pure=False) for index in range(fits)]
     return client.gather(futures)
 
@@ -154,6 +203,7 @@ def main():
 
     n_workers = int(os.environ.get("N_WORKERS", "4"))
     fits = int(os.environ.get("FITS", "8"))
+    datasets = int(os.environ.get("DATASETS", "1"))
     rows = int(os.environ.get("ROWS", "2000000"))
     columns = int(os.environ.get("COLUMNS", "64"))
     max_depth = int(os.environ.get("MAX_DEPTH", "10"))
@@ -164,8 +214,8 @@ def main():
     gpu_shares = int(os.environ["GPU_SHARES"]) if os.environ.get("GPU_SHARES") else None
     name = os.environ.get("CLUSTER_NAME", "gpu-stress")
     address = os.environ.get("SCHEDULER_ADDRESS")
-    task_args = (rows, columns, max_depth, rounds, library, device)
-    print(f"{fits} {library} fits of {rounds} rounds, depth {max_depth}, on {rows} x {columns}; "
+    task_args = (datasets, rows, columns, max_depth, rounds, library, device)
+    print(f"{fits} {library} fits of {rounds} rounds, depth {max_depth}, on {datasets} dataset(s) of {rows} x {columns}; "
           f"{n_workers} workers", flush=True)
 
     if address:
