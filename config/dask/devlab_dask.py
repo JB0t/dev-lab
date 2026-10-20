@@ -107,6 +107,7 @@ def gpu_cluster_spec(
     rmm_pool: bool = True,
     unknown_task_duration: Optional[str] = None,
     worker_env: Optional[List[dict]] = None,
+    worker_env_from: Optional[List[dict]] = None,
     worker_volumes: Optional[List[dict]] = None,
     worker_volume_mounts: Optional[List[dict]] = None,
     idle_timeout: Optional[int] = None,
@@ -124,8 +125,10 @@ def gpu_cluster_spec(
     does not allocate through RMM. ``unknown_task_duration`` is how long the
     scheduler assumes any task without a known duration takes (Dask's default
     is 0.5s); e.g. "5m" makes it ask for one worker per queued task.
-    ``worker_env``, ``worker_volumes`` and ``worker_volume_mounts`` are added
-    to the worker pods (Kubernetes env, volumes and volumeMounts).
+    ``worker_env``, ``worker_env_from``, ``worker_volumes`` and
+    ``worker_volume_mounts`` are added to the worker pods (Kubernetes env,
+    envFrom, volumes and volumeMounts), e.g. ``worker_env_from=[{"configMapRef":
+    {"name": "worker-env"}}]`` for every key of a ConfigMap as a variable.
     ``idle_timeout`` (seconds) has the operator delete the cluster when its
     scheduler has been idle that long, e.g. after its client was killed.
     ``scheduler_node_port`` makes the scheduler Service a NodePort with this
@@ -175,6 +178,8 @@ def gpu_cluster_spec(
     }
     if worker_env:
         worker_container["env"] = list(worker_env)
+    if worker_env_from:
+        worker_container["envFrom"] = list(worker_env_from)
     if worker_volume_mounts:
         worker_container["volumeMounts"] = list(worker_volume_mounts)
     worker_pod = {

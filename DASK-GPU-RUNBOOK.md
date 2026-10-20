@@ -127,6 +127,7 @@ with gpu_cluster("training", n_workers=4, gpu_memory_gib=5, rmm_pool=False,
 | `worker_resources` | Dask worker resources, e.g. `{"GPU": 1}`; tasks submitted with `resources={"GPU": 1}` then run one per worker |
 | `host_memory` | Host memory limit per worker pod (default `8Gi`) |
 | `namespace` | Kubernetes namespace (default: the current one) |
+| `worker_env`, `worker_env_from`, `worker_volumes`, `worker_volume_mounts` | Environment variables and files for the workers; see [Worker Environment](#worker-environment) |
 
 Clusters with different sizes can run side by side, e.g. `gpu_cluster("a", n_workers=2, gpu_memory_gib=8)` and `gpu_cluster("b", n_workers=3, gpu_memory_gib=2)` share 22 shares on an A10-24Q. Workers that do not fit wait in `Pending` until shares free up.
 
@@ -203,6 +204,70 @@ sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8786 ! -s 10.10
 ```
 
 The rule does not survive a reboot unless you save it (e.g. `iptables-persistent`). To keep the scheduler on this server only, set `listenAddress: 127.0.0.1` on the 30786 mapping in `cluster/kind-config.yaml` and recreate the cluster; remote clients then use an SSH tunnel (`ssh -L 8786:localhost:8786 ...`).
+
+## Worker Environment
+
+Workers get files and environment variables from Kubernetes objects in the `dask` namespace, not from the host: a Secret for files such as credentials (the equivalent of a compose bind mount like `/etc/secret:/etc/secret`), a ConfigMap for environment variables. Both `gpu_cluster` and the standing cluster take them as `gpu_cluster_spec` options:
+
+| Option | Kubernetes field on the worker | Example |
+|--------|--------------------------------|---------|
+| `worker_volumes` | `volumes` | `[{"name": "host-secret", "secret": {"secretName": "host-secret"}}]` |
+| `worker_volume_mounts` | `volumeMounts` | `[{"name": "host-secret", "mountPath": "/etc/secret", "readOnly": True}]` |
+| `worker_env_from` | `envFrom` (every key as a variable) | `[{"configMapRef": {"name": "worker-env"}}]` |
+| `worker_env` | `env` (single variables) | `[{"name": "LOG_LEVEL", "value": "info"}]` |
+
+**A host folder as files on every worker.** `devlab kubectl` runs in a container that cannot see `/etc`, so build the Secret on the host and pipe it in. Each file directly in the folder becomes one key; run it again after the folder changes:
+
+```bash
+sudo python3 - /etc/secret <<'PY' | devlab kubectl -n dask apply -f -
+import base64, json, os, sys
+root = sys.argv[1]
+data = {}
+for name in sorted(os.listdir(root)):
+    path = os.path.join(root, name)
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            data[name] = base64.b64encode(f.read()).decode()
+json.dump({"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+           "metadata": {"name": "host-secret"}, "data": data}, sys.stdout)
+PY
+```
+
+Subfolders are skipped, file names may contain only letters, digits, `-`, `_` and `.`, and a Secret holds at most 1 MiB. Mounted without `subPath`, the files appear under `/etc/secret/` and running workers see changes within about a minute.
+
+**Environment variables from a ConfigMap.** Write them as `KEY=value` lines (an env file, like compose's `env_file`) and create or update the ConfigMap:
+
+```bash
+devlab kubectl -n dask create configmap worker-env --from-env-file=/dev/stdin \
+    --dry-run=client -o yaml < worker.env | devlab kubectl apply -n dask -f -
+```
+
+Variables are read when a worker starts, so after a change only new workers have them; idle workers scale to 0, or delete the worker pods to restart them now. Use a Secret with `{"secretRef": {"name": ...}}` in `worker_env_from` for values that are secret.
+
+**Standing cluster with both.** The command line has no options for these, so generate its manifests from Python (from the repo root; delete the old cluster first, see above):
+
+```bash
+python3 - <<'PY' | devlab kubectl apply -n dask -f -
+import json, sys
+sys.path.insert(0, "config/dask")
+from devlab_dask import standing_cluster_manifests, STANDING_SCHEDULER_NODE_PORT, STANDING_DASHBOARD_NODE_PORT
+items = standing_cluster_manifests(
+    "gpu", 4, 5,                         # --workers, --gpu-memory-gib
+    rmm_pool=False,                      # the command line's defaults
+    unknown_task_duration="1m",
+    scheduler_node_port=STANDING_SCHEDULER_NODE_PORT,
+    dashboard_node_port=STANDING_DASHBOARD_NODE_PORT,
+    worker_volumes=[{"name": "host-secret", "secret": {"secretName": "host-secret"}}],
+    worker_volume_mounts=[{"name": "host-secret", "mountPath": "/etc/secret", "readOnly": True}],
+    worker_env_from=[{"configMapRef": {"name": "worker-env"}}],
+)
+json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout)
+PY
+```
+
+Add `image="localhost:5000/<image>"` for another image. With `gpu_cluster`, pass the same `worker_*` arguments. Workers do not start while a Secret or ConfigMap they use is missing (`CreateContainerConfigError`). Check a worker with `devlab kubectl -n dask exec <worker pod> -- sh -c 'ls -l /etc/secret; env | sort'`.
+
+Anyone who can submit tasks to the scheduler can read these files and variables on the workers; see the security note above.
 
 ## Run From Dagster
 
