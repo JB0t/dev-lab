@@ -1169,7 +1169,11 @@ class DevLabManager:
         if not gib:
             console.print("[red]Could not read the GPU memory size for the time-slicing shares[/red]")
             return None
-        console.print(f"[blue]Time slicing: {gib} nvidia.com/gpu shares per GPU (1 per GiB)[/blue]")
+        if sharing and sharing != "time-sliced":
+            console.print(f"[blue]GPU sharing: {sharing} (the time-sliced config keeps {gib} shares per GPU, "
+                          "1 per GiB, for switching back)[/blue]")
+        else:
+            console.print(f"[blue]Time slicing: {gib} nvidia.com/gpu shares per GPU (1 per GiB)[/blue]")
         return values.replace(GPU_MEMORY_PLACEHOLDER, str(gib))
 
     def _host_gpu_count(self) -> int:
