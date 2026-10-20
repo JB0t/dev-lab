@@ -18,7 +18,10 @@ Environment:
     SCHEDULER_ADDRESS  existing scheduler to use instead of creating a cluster
     N_WORKERS        workers to scale up to and tasks to run (4); with
                      SCHEDULER_ADDRESS at most the cluster's --workers
-    GPU_MEMORY_GIB   GPU memory per worker = nvidia.com/gpu shares (5)
+    GPU_MEMORY_GIB   GPU memory per worker in GiB (5); with time slicing
+                     also its nvidia.com/gpu shares
+    GPU_SHARES       nvidia.com/gpu shares per worker when not one per GiB,
+                     e.g. 1 with MPS (GPU.md)
     TASK_SECONDS     how long each task keeps its GPU busy (30)
     CLUSTER_NAME     name of the DaskCluster to create (gpu-concurrency)
     DEVICE           XGBoost device (cuda); cpu runs the check without a GPU
@@ -128,6 +131,7 @@ def main():
 
     n_workers = int(os.environ.get("N_WORKERS", "4"))
     gpu_memory_gib = int(os.environ.get("GPU_MEMORY_GIB", "5"))
+    gpu_shares = int(os.environ["GPU_SHARES"]) if os.environ.get("GPU_SHARES") else None
     seconds = float(os.environ.get("TASK_SECONDS", "30"))
     name = os.environ.get("CLUSTER_NAME", "gpu-concurrency")
     device = os.environ.get("DEVICE", "cuda")
@@ -148,7 +152,7 @@ def main():
 
     print(f"Creating Dask cluster {name}: 0 to {n_workers} GPU workers, {gpu_memory_gib} GiB GPU memory each",
           flush=True)
-    with gpu_cluster(name, n_workers=n_workers, gpu_memory_gib=gpu_memory_gib,
+    with gpu_cluster(name, n_workers=n_workers, gpu_memory_gib=gpu_memory_gib, gpu_shares=gpu_shares,
                      task_durations={TASK_NAME: f"{seconds:g}s"},
                      worker_resources={"GPU": 1},
                      # XGBoost allocates GPU memory itself, not through RMM

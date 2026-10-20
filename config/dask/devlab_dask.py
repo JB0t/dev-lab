@@ -105,6 +105,7 @@ def worker_memory(gpu_memory_gib: int) -> Dict[str, str]:
 def gpu_cluster_spec(
     name: str,
     gpu_memory_gib: int,
+    gpu_shares: Optional[int] = None,
     image: str = IMAGE,
     host_memory: str = "8Gi",
     task_durations: Optional[Dict[str, str]] = None,
@@ -121,6 +122,10 @@ def gpu_cluster_spec(
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
+    ``gpu_shares`` is how many ``nvidia.com/gpu`` the worker requests: with
+    time slicing one per GiB, so it defaults to ``gpu_memory_gib``; with MPS
+    (GPU.md) a share is a fixed slice of the GPU, so pass ``gpu_shares=1`` and
+    the slice's memory as ``gpu_memory_gib``.
     ``task_durations`` tells the scheduler how long tasks of a given name
     (the function name) take, e.g. ``{"train": "2m"}``, so it asks for enough
     workers right away instead of starting with one. ``worker_resources``
@@ -142,6 +147,10 @@ def gpu_cluster_spec(
     ``dashboard_node_port`` the port for its dashboard (HTTP 8787).
     """
     memory = worker_memory(gpu_memory_gib)
+    if gpu_shares is None:
+        gpu_shares = gpu_memory_gib
+    if gpu_shares < 1:
+        raise ValueError("gpu_shares must be at least 1")
     worker_args = [
         "dask", "cuda", "worker", "$(DASK_SCHEDULER_ADDRESS)",
         "--name", "$(DASK_WORKER_NAME)",
@@ -177,9 +186,8 @@ def gpu_cluster_spec(
         "resources": {
             "requests": {"cpu": "500m", "memory": "2Gi"},
             "limits": {
-                # One share per GiB of GPU memory. The DaskCluster
-                # CRD only accepts quantities as strings
-                "nvidia.com/gpu": str(gpu_memory_gib),
+                # The DaskCluster CRD only accepts quantities as strings
+                "nvidia.com/gpu": str(gpu_shares),
                 "memory": host_memory,
             },
         },
@@ -380,7 +388,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("name", help="cluster name; the scheduler Service is NAME-scheduler")
     parser.add_argument("--workers", type=int, default=4, help="most GPU workers at once (default 4)")
     parser.add_argument("--gpu-memory-gib", type=int, default=5,
-                        help="GPU memory per worker = nvidia.com/gpu shares (default 5)")
+                        help="GPU memory per worker in GiB (default 5); with time slicing also its nvidia.com/gpu shares")
+    parser.add_argument("--gpu-shares", type=int, default=None,
+                        help="nvidia.com/gpu shares per worker when not one per GiB, e.g. 1 with MPS (see GPU.md)")
     parser.add_argument("--task-duration", default="1m",
                         help="how long the scheduler assumes a task takes until it has measured it; anything "
                              "over a few seconds starts one worker per queued task (default 1m)")
@@ -406,7 +416,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     items = standing_cluster_manifests(
         args.name, args.workers, args.gpu_memory_gib,
-        image=args.image, host_memory=args.host_memory, rmm_pool=args.rmm_pool,
+        gpu_shares=args.gpu_shares, image=args.image, host_memory=args.host_memory, rmm_pool=args.rmm_pool,
         unknown_task_duration=args.task_duration, worker_resources=worker_resources,
         scheduler_node_port=args.node_port or None,
         dashboard_node_port=args.dashboard_node_port or None,

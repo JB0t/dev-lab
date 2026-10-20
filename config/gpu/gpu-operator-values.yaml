@@ -44,6 +44,8 @@ devicePlugin:
   #   ./devlab gpu-operator
   # - Turn off for one node (no reinstall):
   #   ./devlab kubectl label node <node> nvidia.com/device-plugin.config=exclusive --overwrite
+  # - MPS instead of time slicing on one node (experimental, see GPU.md):
+  #   ./devlab kubectl label node <node> nvidia.com/device-plugin.config=mps --overwrite
   config:
     create: true
     name: time-slicing-config
@@ -63,6 +65,23 @@ devicePlugin:
       # One pod per physical GPU (no sharing)
       exclusive: |-
         version: v1
+      # CUDA MPS: kernels of several pods run on the GPU at the same time
+      # instead of taking turns. The plugin runs an MPS control daemon on the
+      # node, which limits every client to an equal slice: 1/replicas of the
+      # GPU memory and of its SMs. A share is one slice, so a pod requests 1
+      # (more is refused) and keeps its GPU memory under memory/replicas.
+      # Experimental: less isolation than time slicing (one pod's GPU fault
+      # can stop the others), and the daemon puts the GPU in the
+      # Exclusive_Process compute mode while it runs.
+      mps: |-
+        version: v1
+        sharing:
+          mps:
+            renameByDefault: false
+            failRequestsGreaterThanOne: true
+            resources:
+              - name: nvidia.com/gpu
+                replicas: 4
 
 validator:
   # The validator's CUDA sample loads CUDA forward-compatibility libraries

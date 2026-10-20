@@ -20,6 +20,7 @@ The cluster shape is the executor config in the Launchpad (defaults below):
           kube:
             n_workers: 4
             gpu_memory_gib: 5
+            # gpu_shares: 1   # with MPS (GPU.md): 1 share, a fixed slice of the GPU
 
 This file, postgres_io_manager.py, devlab_dask.py and the sample's
 gpu_concurrency.py are mounted from ConfigMaps (config/dask/kustomization.yaml)
@@ -30,7 +31,7 @@ in the UI (Deployment > devlab-dask > Reload) once the pods see the new files.
 
 import re
 import secrets
-from typing import List
+from typing import List, Optional
 
 import dagster as dg
 import dask_kubernetes
@@ -67,7 +68,8 @@ def cluster_name(job_name: str) -> str:
 
 
 def gpu_kube_cluster(name: str, n_workers: int = DEFAULT_CLUSTER["n_workers"],
-                     gpu_memory_gib: int = DEFAULT_CLUSTER["gpu_memory_gib"], rmm_pool: bool = False,
+                     gpu_memory_gib: int = DEFAULT_CLUSTER["gpu_memory_gib"], gpu_shares: Optional[int] = None,
+                     rmm_pool: bool = False,
                      host_memory: str = "8Gi", op_duration: str = "5m", idle_timeout: int = 600):
     """The ``kube`` cluster of dask_executor: a time-sliced GPU Dask cluster for one run.
 
@@ -82,6 +84,7 @@ def gpu_kube_cluster(name: str, n_workers: int = DEFAULT_CLUSTER["n_workers"],
         cluster_name(name),
         n_workers=n_workers,
         gpu_memory_gib=gpu_memory_gib,
+        gpu_shares=gpu_shares,
         rmm_pool=rmm_pool,
         host_memory=host_memory,
         unknown_task_duration=op_duration,

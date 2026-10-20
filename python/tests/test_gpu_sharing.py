@@ -67,6 +67,14 @@ class TimeSlicingTests(unittest.TestCase):
         self.assertFalse(time_slicing["renameByDefault"])
         self.assertFalse(time_slicing["failRequestsGreaterThanOne"])
 
+    def test_mps_config_shares_the_gpu_in_equal_slices(self):
+        mps = yaml.safe_load(self.config["data"]["mps"])["sharing"]["mps"]
+        self.assertFalse(mps["renameByDefault"])
+        # A share is a fixed slice (1/replicas of memory and SMs): a pod takes exactly one
+        self.assertTrue(mps["failRequestsGreaterThanOne"])
+        self.assertEqual(mps["resources"], [{"name": "nvidia.com/gpu", "replicas": 4}])
+        self.assertEqual(self.config["default"], "time-sliced")
+
     def test_exclusive_config_disables_sharing(self):
         config = yaml.safe_load(self.config["data"]["exclusive"])
         self.assertEqual(config, {"version": "v1"})
@@ -135,6 +143,17 @@ class DaskClusterSpecTests(unittest.TestCase):
             memory = self.helper.worker_memory(size)
             self.assertLessEqual(parse_gib(memory["pool"]) + self.helper.CUDA_CONTEXT_GIB, max(size, 1))
 
+    def test_gpu_shares_default_to_one_per_gib_or_a_fixed_slice(self):
+        limits = self.worker_container["resources"]["limits"]
+        self.assertEqual(limits["nvidia.com/gpu"], "5")
+        # MPS: one share of the GPU, with the slice's memory for the RMM pool
+        spec = self.helper.gpu_cluster_spec("mps", gpu_memory_gib=5, gpu_shares=1)
+        container = spec["spec"]["worker"]["spec"]["containers"][0]
+        self.assertEqual(container["resources"]["limits"]["nvidia.com/gpu"], "1")
+        self.assertEqual(flag_value(container["args"], "--rmm-pool-size"), self.helper.worker_memory(5)["pool"])
+        with self.assertRaises(ValueError):
+            self.helper.gpu_cluster_spec("mps", gpu_memory_gib=5, gpu_shares=0)
+
     def test_workers_declare_gpu_resource_by_default(self):
         args = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2)["spec"]["worker"]["spec"]["containers"][0]["args"]
         self.assertEqual(flag_value(args, "--resources"), "GPU=1")
@@ -151,6 +170,16 @@ class DaskClusterSpecTests(unittest.TestCase):
         self.assertEqual(flag_value(worker_args(), "--resources"), "GPU=1")
         self.assertEqual(flag_value(worker_args("--resources", "GPU=1,MEM=2.5"), "--resources"), "GPU=1 MEM=2.5")
         self.assertNotIn("--resources", worker_args("--resources", "none"))
+
+    def test_standing_cluster_command_line_gpu_shares(self):
+        def gpu_limit(*argv):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(self.helper.main(["gpu", *argv]), 0)
+            cluster = json.loads(out.getvalue())["items"][0]
+            return cluster["spec"]["worker"]["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"]
+        self.assertEqual(gpu_limit("--gpu-memory-gib", "3"), "3")
+        self.assertEqual(gpu_limit("--gpu-memory-gib", "5", "--gpu-shares", "1"), "1")
 
     def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
         self.assertNotIn("volumes", self.worker["spec"])
