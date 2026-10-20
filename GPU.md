@@ -293,7 +293,7 @@ python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-shares 1 --gpu-memory-g
 
 `gpu_cluster(...)` takes the same `gpu_shares=1`; the sample job reads it from `GPU_SHARES` (`config/dask/sample/job.yaml`), Dagster from `gpu_shares` in the Launchpad config.
 
-**Compare** with the GPU sample in address mode (see DASK-GPU-RUNBOOK.md): run it with `N_WORKERS=1` and `N_WORKERS=4` under time slicing, then under MPS, and compare the `rounds` column. Time slicing: four workers together get about one worker's rounds. MPS working: each of the four gets a good part of what one gets alone, and `nvidia-smi` on the host shows one `nvidia-cuda-mps-server` process instead of four workers. MPS not helping: the same numbers as time slicing, or workers failing to start (see Troubleshooting).
+**Compare** with the GPU sample in address mode (see DASK-GPU-RUNBOOK.md): run it with `N_WORKERS=1` and `N_WORKERS=4` under time slicing, then under MPS, and compare the `rounds` column. For a load like a real model-fitting job, the stress test in the same place (`gpu_stress.py`, "Stress Test: A Grid Of Fits") reports the total rounds/s of a grid of big fits. Time slicing: four workers together get about one worker's rounds. MPS working: each of the four gets a good part of what one gets alone, and `nvidia-smi` on the host shows one `nvidia-cuda-mps-server` process instead of four workers. MPS not helping: the same numbers as time slicing, or workers failing to start (see Troubleshooting).
 
 **Back to time slicing:**
 

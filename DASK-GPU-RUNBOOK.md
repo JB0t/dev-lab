@@ -104,6 +104,24 @@ devlab kubectl -n dask delete job gpu-concurrency
 devlab kubectl apply -k config/dask/sample
 ```
 
+## Stress Test: A Grid Of Fits
+
+`config/dask/sample/gpu_stress.py` is the GPU sample's heavier sibling, shaped like a model-fitting job: `FITS` XGBoost models with different hyper-parameters (a small grid) are trained on synthetic data, one per worker at a time, each with a validation set. The data (`ROWS` x `COLUMNS`, 2 M x 64 by default) and trees (`MAX_DEPTH` 10, `ROUNDS` 200) are big enough that a fit keeps its GPU share busy with long kernels. The result to compare is the total **rounds/s**:
+
+```bash
+# Against the standing cluster, from the server or any client machine; the client needs only dask and distributed
+run() { docker run --rm -e SCHEDULER_ADDRESS=tcp://<server IP>:8786 "$@" \
+  -v "$PWD/config/dask/sample:/s:ro" python:3.12.12-slim-bookworm sh -c \
+  'pip install -q dask==2026.1.1 distributed==2026.1.1 && python /s/gpu_stress.py'; }
+run -e N_WORKERS=1 -e FITS=2     # the GPU alone: one fit at a time
+run -e N_WORKERS=4 -e FITS=8     # four at once
+nvidia-smi dmon -s um            # on the server meanwhile: GPU utilisation and memory
+```
+
+With time slicing the four-worker run's rounds/s stays about the one-worker run's (the workers take turns). With MPS it grows until the GPU is full; on an A10-24Q the small sample scaled 3.7x (GPU.md, "MPS Instead of Time Slicing"), and this one shows how far the heavy fits get. `N_WORKERS` is a hint for the standing cluster (it has its own `--workers`); with four workers, `FITS=8` gives each two fits in a row. Bigger `ROWS` or `MAX_DEPTH` make each fit heavier; `GPU_MEMORY_GIB` must hold the data (the default fits 5 GiB). `LIBRARY=lightgbm` needs an image with LightGBM built with CUDA (the pip wheel is CPU-only).
+
+In the cluster instead: `devlab kubectl apply -k config/dask/sample` (the ConfigMap with both scripts), then `devlab kubectl apply -f config/dask/sample/stress-job.yaml` and `devlab kubectl -n dask logs -f job/gpu-stress`. It creates its own cluster unless `SCHEDULER_ADDRESS` is set in the manifest; re-runs need `devlab kubectl -n dask delete job gpu-stress` first.
+
 ## Use It From Your Own Code
 
 ```python
