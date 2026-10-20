@@ -320,7 +320,12 @@ class GpuBootstrapTests(unittest.TestCase):
         with patch.object(DevLabManager, "_setup_gpu_operator", return_value=True) as setup:
             result = CliRunner().invoke(cli, ["gpu-operator"])
         self.assertEqual(result.exit_code, 0, result.output)
-        setup.assert_called_once_with()
+        setup.assert_called_once_with(None)
+
+        with patch.object(DevLabManager, "_setup_gpu_operator", return_value=True) as setup:
+            result = CliRunner().invoke(cli, ["gpu-operator", "--sharing", "mps"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        setup.assert_called_once_with("mps")
 
 
 if __name__ == "__main__":

@@ -250,6 +250,18 @@ def gpu_kind_config(config: dict, workers: list) -> Tuple[dict, Dict[str, List[s
     return config, gpu_nodes
 
 
+def set_default_sharing(values: str, sharing: str) -> str:
+    """gpu-operator-values.yaml text with ``sharing`` as the device plugin's default config."""
+    config = yaml.safe_load(values)["devicePlugin"]["config"]
+    if sharing not in config["data"]:
+        raise DevLabError(f"no device plugin config {sharing!r} in gpu-operator-values.yaml "
+                          f"(have: {', '.join(config['data'])})")
+    updated, count = re.subn(r"^(\s*default:\s*)\S+", rf"\g<1>{sharing}", values, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise DevLabError("no `default:` line under devicePlugin.config in gpu-operator-values.yaml")
+    return updated
+
+
 # Container states that will not recover by waiting
 BROKEN_POD_REASONS = {
     "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "InvalidImageName",
@@ -1142,9 +1154,15 @@ class DevLabManager:
             return None
         return min(sizes) // 1024
 
-    def _gpu_operator_values(self) -> Optional[str]:
-        """gpu-operator-values.yaml with the time-slicing replicas set to the GPU memory in GiB."""
+    def _gpu_operator_values(self, sharing: Optional[str] = None) -> Optional[str]:
+        """gpu-operator-values.yaml with the time-slicing replicas set to the GPU memory in GiB.
+
+        ``sharing`` names the device plugin config to make the default for every
+        GPU node (time-sliced, mps, exclusive) instead of the file's default.
+        """
         values = (CONFIG_DIR / "gpu" / "gpu-operator-values.yaml").read_text()
+        if sharing:
+            values = set_default_sharing(values, sharing)
         if GPU_MEMORY_PLACEHOLDER not in values:
             return values
         gib = self._gpu_memory_gib()
@@ -1258,7 +1276,7 @@ class DevLabManager:
                       "'forward compatibility was attempted on non supported HW' means the driver is too old "
                       "for this GPU (see GPU.md, step 1)[/yellow]")
 
-    def _setup_gpu_operator(self) -> bool:
+    def _setup_gpu_operator(self, sharing: Optional[str] = None) -> bool:
         """Install the NVIDIA GPU Operator and wait until GPUs are allocatable."""
         console.print("[blue]Setting up NVIDIA GPU Operator...[/blue]")
         if not self._apply_manifest(CONFIG_DIR / "gpu" / "nvidia-runtimeclass.yaml"):
@@ -1276,7 +1294,7 @@ class DevLabManager:
         extra_args = []
         if not self._has_service_monitor_crd():
             extra_args += ["--set", "dcgmExporter.serviceMonitor.enabled=false"]
-        values = self._gpu_operator_values()
+        values = self._gpu_operator_values(sharing)
         if values is None:
             return False
         if not self._helm_release(
@@ -2324,10 +2342,13 @@ def bootstrap(monitoring, krew, gpu):
     sys.exit(0 if success else 1)
 
 @cli.command(name='gpu-operator')
-def gpu_operator():
-    """Install or update the NVIDIA GPU Operator (applies time-slicing changes)"""
+@click.option("--sharing", type=click.Choice(["time-sliced", "mps", "exclusive"]), default=None,
+              help="GPU sharing config for every GPU node (default: the file's default, time-sliced); "
+                   "mps is experimental, see GPU.md")
+def gpu_operator(sharing):
+    """Install or update the NVIDIA GPU Operator (applies GPU sharing changes)"""
     manager = DevLabManager()
-    sys.exit(0 if manager._setup_gpu_operator() else 1)
+    sys.exit(0 if manager._setup_gpu_operator(sharing) else 1)
 
 @cli.command(name='deploy-gitops')
 def deploy_gitops():
