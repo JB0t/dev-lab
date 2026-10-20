@@ -124,7 +124,7 @@ with gpu_cluster("training", n_workers=4, gpu_memory_gib=5, rmm_pool=False,
 | `gpu_memory_gib` | GPU memory per worker: its `nvidia.com/gpu` shares and RMM pool |
 | `rmm_pool` | Give each worker a fixed RMM pool of its GPU memory (default `True`). Use `False` for XGBoost and other code that does not allocate through RMM |
 | `task_durations` | How long tasks of a function take, e.g. `{"train_model": "2m"}`. Dask's adaptive target assumes unknown tasks take 0.5 s, so without this it first asks for 1 worker and adds more once tasks have finished and their real duration is known. With it, the scheduler asks for enough workers at once. |
-| `worker_resources` | Dask worker resources, e.g. `{"GPU": 1}`; tasks submitted with `resources={"GPU": 1}` then run one per worker |
+| `worker_resources` | Dask worker resources (default `{"GPU": 1}`; `{}` for none). Tasks submitted with `resources={"GPU": 1}` run only on workers that declare it, one per worker |
 | `host_memory` | Host memory limit per worker pod (default `8Gi`) |
 | `namespace` | Kubernetes namespace (default: the current one) |
 | `worker_env`, `worker_env_from`, `worker_volumes`, `worker_volume_mounts` | Environment variables and files for the workers; see [Worker Environment](#worker-environment) |
@@ -184,7 +184,7 @@ Options (`python3 config/dask/devlab_dask.py --help`):
 | `--gpu-memory-gib` | 5 | GPU memory per worker (nvidia.com/gpu shares); 2 on an 11 GB card |
 | `--task-duration` | `1m` | How long the scheduler assumes a task takes until it has measured it. Anything over a few seconds starts one worker per queued task right away |
 | `--rmm-pool` | off | Fixed RMM pool per worker, for code that allocates through RMM (not XGBoost) |
-| `--resources` | none | Worker resources, e.g. `GPU=1`, for tasks submitted with `resources={"GPU": 1}` |
+| `--resources` | `GPU=1` | Worker resources for tasks submitted with `resources={"GPU": 1}`, comma-separated `NAME=AMOUNT`; `none` for none. A task that asks for a resource no worker declares never runs, so the names must match the client's (case-sensitive). Workers still scale from 0: they declare the resources when they start |
 | `--node-port` | 30786 | Scheduler NodePort. Only 30786 is mapped to the host (port 8786), so only one standing cluster can be reached from outside; others take `--node-port 0` and are reachable from pods only |
 | `--dashboard-node-port` | 30787 | Dashboard NodePort, mapped to host port 8787 |
 

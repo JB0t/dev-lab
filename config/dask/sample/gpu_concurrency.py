@@ -139,8 +139,8 @@ def main():
             print(f"Scheduler has {len(client.scheduler_info()['workers'])} workers; "
                   f"submitting {n_workers} GPU tasks...", flush=True)
             submitted = time.time()
-            # Each worker runs one task at a time (--nthreads 1); the standing
-            # cluster has no GPU worker resource unless created with --resources
+            # Each worker runs one task at a time (--nthreads 1); no resources,
+            # so this also works on a standing cluster made with --resources none
             results = run(client, n_workers, gpu_task, seconds, n_workers, device)
         return report(results, submitted, n_workers)
 
