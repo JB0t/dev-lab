@@ -11,3 +11,5 @@ configMapGenerator:
   - name: gpu-concurrency-script
     files:
       - gpu_concurrency.py
+      # GPU stress test (a grid of fits); run with stress-job.yaml
+      - gpu_stress.py

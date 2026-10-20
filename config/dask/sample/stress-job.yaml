@@ -1,0 +1,54 @@
+# Dask client that runs gpu_stress.py in the cluster: a grid of XGBoost fits
+# on big synthetic data, one per GPU worker at a time, reporting the total
+# rounds/s. Needs the ConfigMaps of `devlab kubectl apply -k config/dask/sample`.
+# Apply: ./devlab kubectl -- apply -f config/dask/sample/stress-job.yaml
+# Re-run: ./devlab kubectl -- delete job -n dask gpu-stress, then apply again
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-stress
+  namespace: dask
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: dask-client
+      restartPolicy: Never
+      # CPU node, like the scheduler; only the workers use GPU nodes
+      nodeSelector:
+        devlab.io/gpu: "false"
+      containers:
+        - name: client
+          image: localhost:5000/devlab-dask-gpu:2026.1.1
+          command: ["python", "/scripts/gpu_stress.py"]
+          env:
+            - name: PYTHONPATH
+              value: /devlab
+            # Set to the standing cluster's scheduler to use it instead of
+            # creating a cluster (N_WORKERS at most its --workers)
+            # - name: SCHEDULER_ADDRESS
+            #   value: tcp://gpu-scheduler.dask:8786
+            - name: N_WORKERS
+              value: "4"
+            - name: FITS
+              value: "8"
+            # Per fit: ROWS x COLUMNS float32, MAX_DEPTH, ROUNDS (see gpu_stress.py)
+            - name: ROWS
+              value: "2000000"
+            - name: GPU_MEMORY_GIB
+              value: "5"
+            # With MPS (GPU.md) a worker takes 1 share, a fixed slice of the GPU
+            # - name: GPU_SHARES
+            #   value: "1"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: devlab-dask
+              mountPath: /devlab
+      volumes:
+        - name: script
+          configMap:
+            name: gpu-concurrency-script
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask

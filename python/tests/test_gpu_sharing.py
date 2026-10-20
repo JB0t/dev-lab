@@ -450,3 +450,41 @@ class ConcurrencyCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StressTestTests(unittest.TestCase):
+    def setUp(self):
+        self.module = load_module("gpu_stress", DASK_DIR / "sample" / "gpu_stress.py")
+
+    def result(self, index, worker, start, end, rounds=200):
+        return {"fit": index, "worker": worker, "gpu": "GPU-1", "start": start, "end": end, "rounds": rounds,
+                "rmse": 0.5, "learning_rate": 0.1, "colsample": 0.8}
+
+    def test_summary_reports_throughput_and_concurrency(self):
+        results = [self.result(0, "w1", 10.0, 40.0), self.result(1, "w2", 11.0, 41.0),
+                   self.result(2, "w1", 40.0, 70.0), self.result(3, "w2", 41.0, 71.0)]
+        text = self.module.summary(results, 10.0)
+        self.assertIn("Workers: 2, at most 2 fits at once", text)
+        # 800 rounds over 61 s
+        self.assertIn("Throughput: 800 rounds in 61.0s = 13.1 rounds/s", text)
+        self.assertEqual(self.module.peak_concurrency(results[:1] + results[2:3]), 1)
+
+    def test_data_differs_per_fit(self):
+        import numpy as np
+        a, target_a = self.module.make_data(0, 100, 4)
+        b, _ = self.module.make_data(1, 100, 4)
+        self.assertEqual((a.shape, a.dtype, target_a.shape, target_a.dtype), ((100, 4), np.float32, (100,), np.float32))
+        self.assertFalse(np.array_equal(a, b))
+
+    @unittest.skipUnless(importlib.util.find_spec("distributed") and importlib.util.find_spec("xgboost"),
+                         "dask distributed and xgboost not installed")
+    def test_fits_run_one_per_worker_on_cpu(self):
+        from distributed import Client, LocalCluster
+        with LocalCluster(n_workers=2, threads_per_worker=1, processes=False, dashboard_address=None) as cluster, \
+                Client(cluster) as client:
+            results = self.module.run(client, 4, 2000, 8, 3, 5, "xgboost", "cpu")
+        self.assertEqual(sorted(result["fit"] for result in results), [0, 1, 2, 3])
+        self.assertEqual({result["rounds"] for result in results}, {5})
+        self.assertEqual(len({result["worker"] for result in results}), 2)
+        self.assertLessEqual(self.module.peak_concurrency(results), 2)
+        self.assertEqual(self.module.report(results, 0.0, 4), 0)
