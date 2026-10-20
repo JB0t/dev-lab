@@ -55,6 +55,11 @@ IMAGE = "localhost:5000/devlab-dask-gpu:2026.1.1"
 # GPU memory a worker uses outside its RMM pool (CUDA context, libraries)
 CUDA_CONTEXT_GIB = 0.5
 
+# Dask worker resources every GPU worker declares unless told otherwise, so
+# tasks submitted with resources={"GPU": 1} find a worker. Each worker runs one
+# task at a time (--nthreads 1), so this limits nothing else.
+DEFAULT_WORKER_RESOURCES = {"GPU": 1}
+
 SCHEDULER_PORT = 8786
 # NodePort of the standing cluster's scheduler; kind publishes it as port
 # 8786 on every interface of the Docker host (cluster/kind-config.yaml)
@@ -119,8 +124,9 @@ def gpu_cluster_spec(
     ``task_durations`` tells the scheduler how long tasks of a given name
     (the function name) take, e.g. ``{"train": "2m"}``, so it asks for enough
     workers right away instead of starting with one. ``worker_resources``
-    become Dask worker resources, e.g. ``{"GPU": 1}``, which tasks can require
-    with ``client.submit(..., resources={"GPU": 1})``. ``rmm_pool`` gives
+    become Dask worker resources, which tasks can require with
+    ``client.submit(..., resources={"GPU": 1})``; the default is
+    ``DEFAULT_WORKER_RESOURCES`` (``{"GPU": 1}``) and ``{}`` declares none. ``rmm_pool`` gives
     the worker a fixed RMM pool of its GPU memory; turn it off for code that
     does not allocate through RMM. ``unknown_task_duration`` is how long the
     scheduler assumes any task without a known duration takes (Dask's default
@@ -145,8 +151,10 @@ def gpu_cluster_spec(
     ]
     if rmm_pool:
         worker_args += ["--rmm-pool-size", memory["pool"], "--rmm-maximum-pool-size", memory["pool"]]
+    if worker_resources is None:
+        worker_resources = DEFAULT_WORKER_RESOURCES
     if worker_resources:
-        worker_args += ["--resources", " ".join(f"{key}={value}" for key, value in worker_resources.items())]
+        worker_args += ["--resources", " ".join(f"{key}={value:g}" for key, value in worker_resources.items())]
 
     scheduler_env = [{"name": "DASK_DISTRIBUTED__SCHEDULER__HTTP__ROUTES", "value": repr(SCHEDULER_HTTP_ROUTES)}]
     if task_durations:
@@ -379,8 +387,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--rmm-pool", action="store_true",
                         help="fixed RMM pool per worker, for code that allocates through RMM (not XGBoost)")
     parser.add_argument("--host-memory", default="8Gi", help="host memory limit per worker (default 8Gi)")
-    parser.add_argument("--resources", default="",
-                        help="Dask worker resources, e.g. GPU=1, for tasks submitted with resources={...}")
+    parser.add_argument("--resources", default="GPU=1",
+                        help="Dask worker resources for tasks submitted with resources={...}, "
+                             "comma-separated NAME=AMOUNT (default GPU=1); none for no resources")
     parser.add_argument("--node-port", type=int, default=STANDING_SCHEDULER_NODE_PORT,
                         help=f"scheduler NodePort; {STANDING_SCHEDULER_NODE_PORT} (default) is published "
                              "as port 8786 of the Docker host. Only one cluster can use a port; "
@@ -392,13 +401,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--image", default=IMAGE)
     args = parser.parse_args(argv)
 
-    worker_resources = dict(
-        (key, float(value)) for key, value in (item.split("=", 1) for item in args.resources.split(",") if item)
+    worker_resources = {} if args.resources.strip().lower() in ("", "none") else dict(
+        (key.strip(), float(value)) for key, value in (item.split("=", 1) for item in args.resources.split(",") if item)
     )
     items = standing_cluster_manifests(
         args.name, args.workers, args.gpu_memory_gib,
         image=args.image, host_memory=args.host_memory, rmm_pool=args.rmm_pool,
-        unknown_task_duration=args.task_duration, worker_resources=worker_resources or None,
+        unknown_task_duration=args.task_duration, worker_resources=worker_resources,
         scheduler_node_port=args.node_port or None,
         dashboard_node_port=args.dashboard_node_port or None,
     )

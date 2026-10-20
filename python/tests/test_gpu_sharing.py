@@ -1,4 +1,7 @@
+import contextlib
 import importlib.util
+import io
+import json
 import os
 import sys
 import time
@@ -131,6 +134,23 @@ class DaskClusterSpecTests(unittest.TestCase):
         for size in range(1, 25):
             memory = self.helper.worker_memory(size)
             self.assertLessEqual(parse_gib(memory["pool"]) + self.helper.CUDA_CONTEXT_GIB, max(size, 1))
+
+    def test_workers_declare_gpu_resource_by_default(self):
+        args = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2)["spec"]["worker"]["spec"]["containers"][0]["args"]
+        self.assertEqual(flag_value(args, "--resources"), "GPU=1")
+        args = self.helper.gpu_cluster_spec("run", gpu_memory_gib=2, worker_resources={})["spec"]["worker"]["spec"]["containers"][0]["args"]
+        self.assertNotIn("--resources", args)
+
+    def test_standing_cluster_command_line_resources(self):
+        def worker_args(*argv):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(self.helper.main(["gpu", *argv]), 0)
+            cluster = json.loads(out.getvalue())["items"][0]
+            return cluster["spec"]["worker"]["spec"]["containers"][0]["args"]
+        self.assertEqual(flag_value(worker_args(), "--resources"), "GPU=1")
+        self.assertEqual(flag_value(worker_args("--resources", "GPU=1,MEM=2.5"), "--resources"), "GPU=1 MEM=2.5")
+        self.assertNotIn("--resources", worker_args("--resources", "none"))
 
     def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
         self.assertNotIn("volumes", self.worker["spec"])
