@@ -261,6 +261,47 @@ devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config-
 
 For Dask clusters whose GPU workers scale from 0, with a GPU memory size chosen by the client, see [DASK-GPU-RUNBOOK.md](./DASK-GPU-RUNBOOK.md).
 
+## MPS Instead of Time Slicing (Experimental)
+
+Time slicing runs one pod's CUDA context at a time and switches between them, so the GPU's total utilisation cannot exceed what one pod reaches alone. Workloads that launch many short kernels with CPU work in between (XGBoost `hist`, for one) leave it mostly idle, and four time-sliced pods still do. [CUDA MPS](https://docs.nvidia.com/deploy/mps/latest/index.html) runs kernels of several processes on the GPU at the same time. The device plugin supports it as another sharing config (`mps` in `config/gpu/gpu-operator-values.yaml`): it runs an MPS control daemon on the node, and every pod on a share goes through it.
+
+What changes with MPS:
+
+- **Equal slices, not GiB shares.** The daemon limits each client to `1/replicas` of the GPU memory and of its SMs (`replicas: 4` on an A10-24Q: 5.5 GiB and 25% each). A pod takes exactly one share (`nvidia.com/gpu: 1`; more is refused), so with 4 replicas 4 pods run at once, whatever their memory needs. Pods of different sizes cannot pack as with GiB shares.
+- **Less isolation.** The memory limit is enforced in software, and a fatal GPU error in one client can stop the others.
+- **Compute mode.** The daemon sets the GPU to `Exclusive_Process` while it runs (on the host too: the kind node shares the host driver) and back to `Default` when it stops. `devlab bootstrap --gpu` refuses a GPU that is not in `Default` mode, so switch back before recreating the cluster, or set the mode by hand (step 3 of Setup).
+- **vGPU guests.** NVIDIA documents MPS for bare-metal GPUs; whether it gives real concurrency inside a Q-series vGPU is for the test below to show.
+
+**Switch the GPU node to MPS** (no reinstall; the device plugin picks the config up from the label, restarts and labels the node `nvidia.com/mps.capable=true`, where the operator then runs the daemon):
+
+```bash
+devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config=mps --overwrite
+# About a minute later:
+devlab kubectl get node dev-lab-worker -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'   # 4
+devlab kubectl -n gpu-operator get pods -o wide | grep -E 'device-plugin|mps'                       # plugin + mps-control-daemon Running on dev-lab-worker
+devlab kubectl -n gpu-operator logs ds/nvidia-device-plugin-mps-control-daemon --all-containers | grep -i -E 'limit|percentage'
+```
+
+Pods on time-sliced shares keep running until deleted; a Dask cluster made for GiB shares asks for 5 shares per worker, which MPS refuses, so recreate it with **1 share per worker** and the slice's memory as its limit:
+
+```bash
+devlab kubectl -n dask delete daskcluster gpu
+devlab kubectl -n dask delete ingress gpu-dashboard
+python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-shares 1 --gpu-memory-gib 5 | devlab kubectl apply -n dask -f -
+```
+
+`gpu_cluster(...)` takes the same `gpu_shares=1`; the sample job reads it from `GPU_SHARES` (`config/dask/sample/job.yaml`), Dagster from `gpu_shares` in the Launchpad config.
+
+**Compare** with the GPU sample in address mode (see DASK-GPU-RUNBOOK.md): run it with `N_WORKERS=1` and `N_WORKERS=4` under time slicing, then under MPS, and compare the `rounds` column. Time slicing: four workers together get about one worker's rounds. MPS working: each of the four gets a good part of what one gets alone, and `nvidia-smi` on the host shows one `nvidia-cuda-mps-server` process instead of four workers. MPS not helping: the same numbers as time slicing, or workers failing to start (see Troubleshooting).
+
+**Back to time slicing:**
+
+```bash
+devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config-
+# About a minute later the node advertises its GiB shares again (22 on an A10-24Q); then recreate the Dask cluster without --gpu-shares
+nvidia-smi -q | grep -i "compute mode"     # on the host: Default again; else sudo nvidia-smi -c DEFAULT
+```
+
 ## Running GPU Workloads
 
 GPU nodes are tainted `nvidia.com/gpu=present:NoSchedule`, so only GPU workloads run there and everything else, such as the Dask scheduler, stays on the CPU worker. GPU pods must:
@@ -319,6 +360,9 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 
 - **No node advertised nvidia.com/gpu capacity**: check the operator pods with `devlab kubectl get pods -n gpu-operator`; the validator and device plugin logs usually say why. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `devlab cleanup && devlab bootstrap --gpu`.
 - **`<node> has no GPUs: the existing cluster was not created with --gpu`**: same fix, recreate the cluster.
+- **MPS: node still advertises the GiB share count, or no `mps-control-daemon` pod**: `devlab kubectl -n gpu-operator logs ds/nvidia-device-plugin-daemonset --all-containers | tail -30` (the config-manager sidecar says which config it applied); check the node has `nvidia.com/mps.capable=true` (`devlab kubectl get node dev-lab-worker --show-labels`).
+- **MPS: workers stay `Pending` with `UnexpectedAdmissionError`**: they request more than one share; recreate the Dask cluster with `--gpu-shares 1`.
+- **MPS: workers fail with `CUDA_ERROR_...` at start, or the daemon logs `failed to start MPS server`**: MPS did not come up on this GPU (a vGPU guest may not allow it); switch back to time slicing.
 - **Failed installing the NVIDIA Container Toolkit**: the GPU node could not reach `nvidia.github.io` or the Ubuntu/Debian mirrors. Behind TLS inspection, put the CA certificate in `python/certs/` (see the README).
 - **Pod stuck in Pending**: not enough free GPU shares (GiB) on any GPU node, or the pod does not tolerate the `nvidia.com/gpu` taint. Check with `devlab status` and `devlab kubectl describe pod <pod>`.
 - **Pod fails with `UnexpectedAdmissionError`**: its shares could not be allocated on the node it was placed on; check the device plugin logs. With `default: exclusive`, pods get whole GPUs and requests above the GPU count fail.

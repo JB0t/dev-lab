@@ -97,7 +97,7 @@ PASS: all 4 tasks were running at the same time for 30.1s
 - **Overlapping start/end**: the tasks ran at once; each gets about a quarter of the GPU time.
 - **rounds**: XGBoost boosting rounds each task trained.
 
-The cluster is deleted when the job ends. Settings are env vars in `config/dask/sample/job.yaml`: `N_WORKERS` (4), `GPU_MEMORY_GIB` (5; use 2 on an 11 GB card), `TASK_SECONDS` (30). Jobs cannot be re-applied while the old one exists:
+The cluster is deleted when the job ends. Settings are env vars in `config/dask/sample/job.yaml`: `N_WORKERS` (4), `GPU_MEMORY_GIB` (5; use 2 on an 11 GB card), `GPU_SHARES` (unset: one per GiB; 1 with MPS), `TASK_SECONDS` (30). Jobs cannot be re-applied while the old one exists:
 
 ```bash
 devlab kubectl -n dask delete job gpu-concurrency
@@ -122,6 +122,7 @@ with gpu_cluster("training", n_workers=4, gpu_memory_gib=5, rmm_pool=False,
 | `name` | DaskCluster name, unique in the namespace |
 | `n_workers` | Most workers the scheduler may start (it starts from 0) |
 | `gpu_memory_gib` | GPU memory per worker: its `nvidia.com/gpu` shares and RMM pool |
+| `gpu_shares` | `nvidia.com/gpu` shares per worker when not one per GiB: `1` with MPS (GPU.md, "MPS Instead of Time Slicing") |
 | `rmm_pool` | Give each worker a fixed RMM pool of its GPU memory (default `True`). Use `False` for XGBoost and other code that does not allocate through RMM |
 | `task_durations` | How long tasks of a function take, e.g. `{"train_model": "2m"}`. Dask's adaptive target assumes unknown tasks take 0.5 s, so without this it first asks for 1 worker and adds more once tasks have finished and their real duration is known. With it, the scheduler asks for enough workers at once. |
 | `worker_resources` | Dask worker resources (default `{"GPU": 1}`; `{}` for none). Tasks submitted with `resources={"GPU": 1}` run only on workers that declare it, one per worker |
@@ -181,7 +182,8 @@ Options (`python3 config/dask/devlab_dask.py --help`):
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `--workers` | 4 | Most GPU workers at once |
-| `--gpu-memory-gib` | 5 | GPU memory per worker (nvidia.com/gpu shares); 2 on an 11 GB card |
+| `--gpu-memory-gib` | 5 | GPU memory per worker in GiB (with time slicing also its nvidia.com/gpu shares); 2 on an 11 GB card |
+| `--gpu-shares` | same as `--gpu-memory-gib` | nvidia.com/gpu shares per worker when not one per GiB: `1` with MPS (GPU.md, "MPS Instead of Time Slicing") |
 | `--task-duration` | `1m` | How long the scheduler assumes a task takes until it has measured it. Anything over a few seconds starts one worker per queued task right away |
 | `--rmm-pool` | off | Fixed RMM pool per worker, for code that allocates through RMM (not XGBoost) |
 | `--resources` | `GPU=1` | Worker resources for tasks submitted with `resources={"GPU": 1}`, comma-separated `NAME=AMOUNT`; `none` for none. A task that asks for a resource no worker declares never runs, so the names must match the client's (case-sensitive). Workers still scale from 0: they declare the resources when they start |

@@ -27,6 +27,9 @@ spec:
             # an A10-24Q (22 shares); use 2 on an 11 GB card
             - name: GPU_MEMORY_GIB
               value: "5"
+            # With MPS (GPU.md) a worker takes 1 share, a fixed slice of the GPU
+            # - name: GPU_SHARES
+            #   value: "1"
             - name: TASK_SECONDS
               value: "30"
           volumeMounts:
