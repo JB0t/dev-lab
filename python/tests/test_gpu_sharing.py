@@ -75,6 +75,17 @@ class TimeSlicingTests(unittest.TestCase):
         self.assertEqual(mps["resources"], [{"name": "nvidia.com/gpu", "replicas": 4}])
         self.assertEqual(self.config["default"], "time-sliced")
 
+    def test_default_sharing_can_be_switched(self):
+        sys.path.insert(0, str(Path(__file__).parents[1]))
+        import devlab
+        text = (GPU_DIR / "gpu-operator-values.yaml").read_text()
+        for sharing in ("mps", "exclusive", "time-sliced"):
+            switched = yaml.safe_load(devlab.set_default_sharing(text, sharing))["devicePlugin"]["config"]
+            self.assertEqual(switched["default"], sharing)
+            self.assertEqual(switched["data"], self.config["data"])
+        with self.assertRaises(devlab.DevLabError):
+            devlab.set_default_sharing(text, "mig")
+
     def test_exclusive_config_disables_sharing(self):
         config = yaml.safe_load(self.config["data"]["exclusive"])
         self.assertEqual(config, {"version": "v1"})

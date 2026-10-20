@@ -272,15 +272,16 @@ What changes with MPS:
 - **Compute mode.** The daemon sets the GPU to `Exclusive_Process` while it runs (on the host too: the kind node shares the host driver) and back to `Default` when it stops. `devlab bootstrap --gpu` refuses a GPU that is not in `Default` mode, so switch back before recreating the cluster, or set the mode by hand (step 3 of Setup).
 - **vGPU guests.** NVIDIA documents MPS for bare-metal GPUs; whether it gives real concurrency inside a Q-series vGPU is for the test below to show.
 
-**Switch the GPU node to MPS** (no reinstall; the device plugin picks the config up from the label, restarts and labels the node `nvidia.com/mps.capable=true`, where the operator then runs the daemon):
+**Switch to MPS** for every GPU node. This re-runs the operator install with `mps` as the device plugin's default config, so the plugin, GPU feature discovery and the MPS control daemon all use it (the daemon runs where the node is labelled `nvidia.com/mps.capable=true`):
 
 ```bash
-devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config=mps --overwrite
-# About a minute later:
+devlab gpu-operator --sharing mps
 devlab kubectl get node dev-lab-worker -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'   # 4
 devlab kubectl -n gpu-operator get pods -o wide | grep -E 'device-plugin|mps'                       # plugin + mps-control-daemon Running on dev-lab-worker
-devlab kubectl -n gpu-operator logs ds/nvidia-device-plugin-mps-control-daemon --all-containers | grep -i -E 'limit|percentage'
+devlab kubectl -n gpu-operator logs ds/nvidia-device-plugin-mps-control-daemon --all-containers | grep -i -E 'limit|percentage|strategy'
 ```
+
+The per-node label (`nvidia.com/device-plugin.config=mps`, as for `exclusive`) switches the plugin and feature discovery but not reliably the daemon, which then logs `Sharing strategy is not MPS` and the node advertises no shares; remove the label (`nvidia.com/device-plugin.config-`) when using `--sharing`.
 
 Pods on time-sliced shares keep running until deleted; a Dask cluster made for GiB shares asks for 5 shares per worker, which MPS refuses, so recreate it with **1 share per worker** and the slice's memory as its limit:
 
@@ -297,8 +298,8 @@ python3 config/dask/devlab_dask.py gpu --workers 4 --gpu-shares 1 --gpu-memory-g
 **Back to time slicing:**
 
 ```bash
-devlab kubectl label node dev-lab-worker nvidia.com/device-plugin.config-
-# About a minute later the node advertises its GiB shares again (22 on an A10-24Q); then recreate the Dask cluster without --gpu-shares
+devlab gpu-operator --sharing time-sliced
+# The node advertises its GiB shares again (22 on an A10-24Q); then recreate the Dask cluster without --gpu-shares
 nvidia-smi -q | grep -i "compute mode"     # on the host: Default again; else sudo nvidia-smi -c DEFAULT
 ```
 
@@ -361,6 +362,7 @@ The setup is the same inside a VM with an NVIDIA vGPU. `nvidia-smi -L` shows the
 - **No node advertised nvidia.com/gpu capacity**: check the operator pods with `devlab kubectl get pods -n gpu-operator`; the validator and device plugin logs usually say why. Did you keep an existing cluster that was created without `--gpu`? Then delete it and re-bootstrap: `devlab cleanup && devlab bootstrap --gpu`.
 - **`<node> has no GPUs: the existing cluster was not created with --gpu`**: same fix, recreate the cluster.
 - **MPS: node still advertises the GiB share count, or no `mps-control-daemon` pod**: `devlab kubectl -n gpu-operator logs ds/nvidia-device-plugin-daemonset --all-containers | tail -30` (the config-manager sidecar says which config it applied); check the node has `nvidia.com/mps.capable=true` (`devlab kubectl get node dev-lab-worker --show-labels`).
+- **MPS: node advertises 0 shares and the daemon logs `Sharing strategy is not MPS`**: the daemon runs with the time-sliced config; the plugin advertises nothing until the daemon is up. Switch with `devlab gpu-operator --sharing mps` rather than the node label, and remove the label.
 - **MPS: workers stay `Pending` with `UnexpectedAdmissionError`**: they request more than one share; recreate the Dask cluster with `--gpu-shares 1`.
 - **MPS: workers fail with `CUDA_ERROR_...` at start, or the daemon logs `failed to start MPS server`**: MPS did not come up on this GPU (a vGPU guest may not allow it); switch back to time slicing.
 - **Failed installing the NVIDIA Container Toolkit**: the GPU node could not reach `nvidia.github.io` or the Ubuntu/Debian mirrors. Behind TLS inspection, put the CA certificate in `python/certs/` (see the README).
