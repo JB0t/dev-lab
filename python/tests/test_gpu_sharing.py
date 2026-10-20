@@ -457,8 +457,8 @@ class StressTestTests(unittest.TestCase):
         self.module = load_module("gpu_stress", DASK_DIR / "sample" / "gpu_stress.py")
 
     def result(self, index, worker, start, end, rounds=200):
-        return {"fit": index, "worker": worker, "gpu": "GPU-1", "start": start, "end": end, "rounds": rounds,
-                "rmse": 0.5, "learning_rate": 0.1, "colsample": 0.8}
+        return {"fit": index, "dataset": 0, "worker": worker, "gpu": "GPU-1", "start": start, "built": start + 1.0,
+                "cached": index > 1, "end": end, "rounds": rounds, "rmse": 0.5, "learning_rate": 0.1, "colsample": 0.8}
 
     def test_summary_reports_throughput_and_concurrency(self):
         results = [self.result(0, "w1", 10.0, 40.0), self.result(1, "w2", 11.0, 41.0),
@@ -467,6 +467,10 @@ class StressTestTests(unittest.TestCase):
         self.assertIn("Workers: 2, at most 2 fits at once", text)
         # 800 rounds over 61 s
         self.assertIn("Throughput: 800 rounds in 61.0s = 13.1 rounds/s", text)
+        self.assertIn("Data: built 2 times, 2.0s in all; cached for 2 fits", text)
+        # rounds/s is the training only: 200 rounds in the 29 s after the 1 s build
+        self.assertIn("   0.0s   1.0s   30.0s    200      6.9", text)
+        self.assertIn("cached   60.0s    200      6.9", text)
         self.assertEqual(self.module.peak_concurrency(results[:1] + results[2:3]), 1)
 
     def test_data_differs_per_fit(self):
@@ -476,15 +480,29 @@ class StressTestTests(unittest.TestCase):
         self.assertEqual((a.shape, a.dtype, target_a.shape, target_a.dtype), ((100, 4), np.float32, (100,), np.float32))
         self.assertFalse(np.array_equal(a, b))
 
+    def test_worker_keeps_one_dataset(self):
+        class Worker:
+            pass
+
+        worker, builds = Worker(), []
+        make = lambda key: lambda: builds.append(key) or key  # noqa: E731
+        self.assertEqual(self.module.cached_data(worker, "a", make("a")), ("a", False))
+        self.assertEqual(self.module.cached_data(worker, "a", make("a")), ("a", True))
+        self.assertEqual(self.module.cached_data(worker, "b", make("b")), ("b", False))
+        self.assertEqual(self.module.cached_data(worker, "a", make("a")), ("a", False))
+        self.assertEqual(builds, ["a", "b", "a"])
+
     @unittest.skipUnless(importlib.util.find_spec("distributed") and importlib.util.find_spec("xgboost"),
                          "dask distributed and xgboost not installed")
     def test_fits_run_one_per_worker_on_cpu(self):
         from distributed import Client, LocalCluster
         with LocalCluster(n_workers=2, threads_per_worker=1, processes=False, dashboard_address=None) as cluster, \
                 Client(cluster) as client:
-            results = self.module.run(client, 4, 2000, 8, 3, 5, "xgboost", "cpu")
+            results = self.module.run(client, 4, 1, 2000, 8, 3, 5, "xgboost", "cpu")
         self.assertEqual(sorted(result["fit"] for result in results), [0, 1, 2, 3])
         self.assertEqual({result["rounds"] for result in results}, {5})
         self.assertEqual(len({result["worker"] for result in results}), 2)
+        # One dataset: each worker builds it once and reuses it for its second fit
+        self.assertEqual(sorted(result["cached"] for result in results), [False, False, True, True])
         self.assertLessEqual(self.module.peak_concurrency(results), 2)
         self.assertEqual(self.module.report(results, 0.0, 4), 0)
