@@ -354,7 +354,10 @@ The lab shares one GPU between workers because it has one GPU. A cloud pool of s
 kubectl config use-context my-aks
 helm repo add dask https://helm.dask.org && helm repo update
 helm upgrade --install dask-kubernetes-operator dask/dask-kubernetes-operator \
-  --version 2026.3.0 --namespace dask-operator --create-namespace --wait      # the version pinned in python/devlab.py
+  --version 2026.3.0 --namespace dask-operator --create-namespace --wait \   # the version pinned in python/devlab.py
+  --set-json 'tolerations=[{"operator":"Exists"}]' --set nodeSelector.agentpool=system
+                                  # on a cluster whose pools are all tainted the operator pod is Pending
+                                  # without a toleration; the chart's tolerations/nodeSelector values place it
 kubectl apply -k config/dask      # namespace dask, client RBAC, the devlab-dask ConfigMap. -k, not -f:
                                   # -f on the directory tries to apply kustomization.yaml as a resource
                                   # ("no matches for kind Kustomization in version kustomize.config.k8s.io/v1beta1")
