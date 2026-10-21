@@ -208,8 +208,11 @@ class DaskClusterSpecTests(unittest.TestCase):
                 "--worker-node-selector", "agentpool=gpu", "--worker-toleration", "sku=gpu:NoSchedule",
                 "--worker-toleration", "kubernetes.azure.com/scalesetpriority=spot:NoSchedule",
                 "--scheduler-node-selector", "agentpool=system", "--scheduler-toleration", "CriticalAddonsOnly:NoSchedule",
+                "--ingress-class", "none",
             ]), 0)
-        cluster = json.loads(out.getvalue())["items"][0]
+        items = json.loads(out.getvalue())["items"]
+        self.assertEqual([item["kind"] for item in items], ["DaskCluster", "DaskAutoscaler"])
+        cluster = items[0]
         worker = cluster["spec"]["worker"]["spec"]
         self.assertEqual(worker["nodeSelector"], {"agentpool": "gpu"})
         self.assertEqual(worker["tolerations"], [
