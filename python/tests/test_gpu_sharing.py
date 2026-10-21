@@ -192,6 +192,44 @@ class DaskClusterSpecTests(unittest.TestCase):
         self.assertEqual(gpu_limit("--gpu-memory-gib", "3"), "3")
         self.assertEqual(gpu_limit("--gpu-memory-gib", "5", "--gpu-shares", "1"), "1")
 
+    def test_placement_defaults_are_the_lab_nodes(self):
+        self.assertEqual(self.worker["spec"]["nodeSelector"], {"devlab.io/gpu": "true"})
+        self.assertEqual(self.worker["spec"]["runtimeClassName"], "nvidia")
+        self.assertNotIn("affinity", self.worker["spec"])
+        self.assertEqual(self.spec["spec"]["scheduler"]["spec"]["nodeSelector"], {"devlab.io/gpu": "false"})
+        self.assertNotIn("tolerations", self.spec["spec"]["scheduler"]["spec"])
+
+    def test_one_worker_per_gpu_node_on_another_cluster(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.helper.main([
+                "gpu", "--workers", "8", "--gpu-memory-gib", "15", "--gpu-shares", "1", "--host-memory", "20Gi",
+                "--worker-cpu", "3", "--one-worker-per-node", "--runtime-class", "none", "--node-port", "0",
+                "--worker-node-selector", "agentpool=gpu", "--worker-toleration", "sku=gpu:NoSchedule",
+                "--worker-toleration", "kubernetes.azure.com/scalesetpriority=spot:NoSchedule",
+                "--scheduler-node-selector", "agentpool=system", "--scheduler-toleration", "CriticalAddonsOnly:NoSchedule",
+            ]), 0)
+        cluster = json.loads(out.getvalue())["items"][0]
+        worker = cluster["spec"]["worker"]["spec"]
+        self.assertEqual(worker["nodeSelector"], {"agentpool": "gpu"})
+        self.assertEqual(worker["tolerations"], [
+            {"key": "sku", "operator": "Equal", "value": "gpu", "effect": "NoSchedule"},
+            {"key": "kubernetes.azure.com/scalesetpriority", "operator": "Equal", "value": "spot", "effect": "NoSchedule"},
+        ])
+        self.assertNotIn("runtimeClassName", worker)
+        anti = worker["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+        self.assertEqual(anti["topologyKey"], "kubernetes.io/hostname")
+        self.assertEqual(anti["labelSelector"]["matchLabels"], {"dask.org/cluster-name": "gpu", "dask.org/component": "worker"})
+        container = worker["containers"][0]
+        self.assertEqual(container["resources"]["limits"]["nvidia.com/gpu"], "1")
+        self.assertEqual(container["resources"]["requests"]["cpu"], "3")
+        self.assertEqual(container["resources"]["limits"]["memory"], "20Gi")
+        scheduler = cluster["spec"]["scheduler"]["spec"]
+        self.assertEqual(scheduler["nodeSelector"], {"agentpool": "system"})
+        self.assertEqual(scheduler["tolerations"], [{"key": "CriticalAddonsOnly", "operator": "Exists", "effect": "NoSchedule"}])
+        self.assertEqual(self.helper.parse_tolerations(["none"]), [])
+        self.assertIsNone(self.helper.parse_selector(None))
+
     def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
         self.assertNotIn("volumes", self.worker["spec"])
         self.assertNotIn("envFrom", self.worker["spec"]["containers"][0])
@@ -473,6 +511,7 @@ class StressTestTests(unittest.TestCase):
         self.assertIn("cached   60.0s    200      6.9", text)
         self.assertEqual(self.module.peak_concurrency(results[:1] + results[2:3]), 1)
 
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "numpy not installed")
     def test_data_differs_per_fit(self):
         import numpy as np
         a, target_a = self.module.make_data(0, 100, 4)

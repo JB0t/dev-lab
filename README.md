@@ -172,7 +172,8 @@ ingress are wired.
 To test the same images in another cluster you are cluster-admin on (AKS, EKS,
 on-prem) without publishing them, `scripts/cluster-registry.sh` installs a
 throwaway registry there that nodes pull from as `localhost:5000/...`, so the
-manifests need no change, and can build images in that cluster (`build`): see
+manifests need no change, and can build images in that cluster (`build`, with a
+GPU for `RUN` steps that need one): see
 [CLUSTER-REGISTRY-RUNBOOK.md](./CLUSTER-REGISTRY-RUNBOOK.md).
 
 ## kubectl Plugins (krew)

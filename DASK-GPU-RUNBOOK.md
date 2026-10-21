@@ -344,6 +344,41 @@ Ops run on GPU workers in the Dask image, so they can use the pinned packages. O
 
 The chart's bundled Bitnami PostgreSQL image is no longer published, so the addon runs the official `postgres` image as its own StatefulSet.
 
+## On Another Cluster: One Worker Per GPU Node (AKS, EKS)
+
+The lab shares one GPU between workers because it has one GPU. A cloud pool of single-GPU nodes (Azure `Standard_NC4as_T4_v3`: one T4 16 GB, 4 vCPUs, 28 GB; AWS `g4dn.xlarge` the same card) wants the opposite: no sharing, one worker per node, each holding the whole card, and the node count following the queue. The manifests are the same, with the placement options:
+
+```bash
+python3 config/dask/devlab_dask.py gpu --workers 8 \
+  --gpu-memory-gib 15 --gpu-shares 1 --rmm-pool \
+  --host-memory 20Gi --worker-cpu 3 --one-worker-per-node --runtime-class none --node-port 0 \
+  --worker-node-selector agentpool=t4 --worker-toleration sku=gpu:NoSchedule \
+  --scheduler-node-selector agentpool=system --scheduler-toleration CriticalAddonsOnly:NoSchedule \
+  --image myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1 \
+  | kubectl apply -n dask -f -
+```
+
+| Option | Why here |
+|---|---|
+| `--gpu-shares 1 --gpu-memory-gib 15` | A whole T4 per worker (`nvidia.com/gpu: 1`; no sharing config on the node), 15 GiB of its 16 for the worker's spill limit and RMM pool |
+| `--one-worker-per-node` | A required anti-affinity between the cluster's workers. With one GPU per node the GPU request already enforces it; the affinity keeps it true on nodes with several, and keeps two clusters from sharing a node |
+| `--host-memory 20Gi --worker-cpu 3` | Most of the node: 28 GB and 4 vCPUs, with room for the kubelet and the device plugin |
+| `--runtime-class none` | AKS and EKS GPU nodes run the NVIDIA runtime by default; the `nvidia` RuntimeClass exists only with the GPU Operator |
+| `--worker-node-selector`, `--worker-toleration` | The pool's label (AKS: `agentpool=<name>`; EKS: `eks.amazonaws.com/nodegroup=<name>`) and its taint (set when creating the pool, e.g. `sku=gpu:NoSchedule`); a Spot pool adds `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` |
+| `--scheduler-node-selector`, `--scheduler-toleration` | The scheduler on the system or a CPU pool |
+| `--node-port 0` | No NodePort: clients in the cluster use `gpu-scheduler.dask:8786`, from outside use `kubectl port-forward` |
+| `--rmm-pool` | On for RAPIDS/cuDF work; off for XGBoost, which allocates its own memory (the default) |
+
+The same options exist on `gpu_cluster_spec`/`gpu_cluster` (`worker_node_selector`, `worker_tolerations`, `scheduler_node_selector`, `scheduler_tolerations`, `runtime_class`, `one_worker_per_node`, `worker_cpu`) for clusters created from code and from Dagster.
+
+**The pool.** What made the lab's throughput plateau was the GPU's compute, so the pool is arranged for one fit per GPU and as many GPUs as the queue needs:
+
+- `NC4as_T4_v3` with the cluster autoscaler, `--min-count 0 --max-count N`, Spot if the fits are restartable (Dask reruns a task whose worker is lost; an evicted node costs one fit). Taint it (`--node-taints sku=gpu:NoSchedule`) so only the workers land there, label it (`--labels agentpool` is automatic).
+- One fit saturates a T4 (a third of an A10), so there is nothing to gain from MPS or time slicing here; the throughput is the node count. `--workers N` equals the pool's max count, and the DaskAutoscaler plus the cluster autoscaler scale nodes 0..N with the queue: a new node takes 3 to 5 minutes plus the image pull, so for a steady stream set the autoscaler's `minimum` to 1 or 2 during working hours, or `--task-duration` long enough that the scheduler asks for all the workers at once.
+- The image: push it to ACR or ECR in the region (`devlab build` locally, then `docker push` to ACR; or the cluster registry of CLUSTER-REGISTRY-RUNBOOK.md for tests). A 2.5 GB pull per new node is part of the scale-up time; a bigger VM with several GPUs (`NC64as_T4_v3`, 4 T4s, one worker per GPU with `--gpu-shares 1` and without `--one-worker-per-node`) pulls once for four workers.
+- GPU drivers and the device plugin: AKS installs the driver on GPU pools; install the NVIDIA device plugin DaemonSet (or the GPU Operator with the driver disabled) so `nvidia.com/gpu` is allocatable. EKS GPU AMIs include both.
+- 4 vCPUs is the limit for the CPU side (data loading, the DMatrix build), which is why `--worker-cpu 3` and one worker. Bigger data per fit wants `NC8as_T4_v3` (8 vCPUs, 56 GB, same T4).
+
 ## Sizing
 
 Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each worker also needs about 0.5 GiB for its CUDA context, which comes out of its own shares.

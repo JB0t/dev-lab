@@ -30,6 +30,8 @@ export REG_BUILD_STORAGE_CLASS=          # a disk class for the cache (empty: RE
 export REG_BUILD_NODE_SELECTOR='{}'      # where it runs, e.g. '{"devlab.io/gpu":"true"}' or '{"agentpool":"gpu"}'
 export REG_BUILD_TOLERATIONS=            # same values as REG_TOLERATIONS (empty: REG_TOLERATIONS)
 export REG_BUILD_EXCLUDE=.git            # comma-separated tar patterns left out of the build context
+export REG_BUILD_GPU=0                   # GPUs for the build pod, with the GPU builder image (step 4c)
+export REG_BUILD_RUNTIME_CLASS=          # the build pod's RuntimeClass where the GPU runtime is not the node default
 cd ~/gh/jbotstevens/dev-lab          # or wherever the repo is; the script is scripts/cluster-registry.sh
 ```
 
@@ -162,10 +164,43 @@ Anything docker can do works in the build file: `-f`, `--target`, several builds
 
 - The first `build` creates the pod (`<REG_NAME>-builder`, privileged, as dockerd needs; the namespace already allows it) and a PVC of `REG_BUILD_SIZE` for its layer cache, so rebuilds reuse layers. Without a StorageClass the cache is an emptyDir and goes with the pod. The cache must be on a block disk (ext4/xfs): dockerd's overlay2 cannot run on Azure Files, EFS or NFS, so where such a class is the default, set `REG_BUILD_STORAGE_CLASS` to a disk class (`managed-csi` on AKS, `gp3` on EKS) or `none`. `check` warns when the class looks like a file share.
 - `REG_BUILD_NODE_SELECTOR` and `REG_BUILD_TOLERATIONS` place it: on a GPU node, e.g. `'{"devlab.io/gpu":"true"}'`, or on whatever pool has the disk. Pulling a multi-GB base image happens on the node's network, not yours.
-- `RUN` steps in a Dockerfile do not see the node's GPU, with Docker-in-Docker as with any builder; `nvcc` compiles without one. A GPU node is useful for its resources and its CPU architecture, not for running CUDA at build time.
+- `RUN` steps do not see a GPU with the default builder (BuildKit runs them with plain runc), even on a GPU node; `nvcc` compiles without one. For a Dockerfile that needs the GPU at build time, see step 4c.
 - The context is sent as a tar each time (`REG_BUILD_EXCLUDE` leaves `.git` out; add build outputs there). A `.dockerignore` in the context still applies to the build itself.
 - The dev-lab image: `scripts/cluster-registry.sh build config/dask/image` runs `config/dask/image/cluster-build.sh`, one `docker buildx build -t "$REG/devlab-dask-gpu:2026.1.1" --push .`.
 - `scripts/cluster-registry.sh builder-down` removes the pod and its cache and keeps the registry; `down` removes both.
+
+## 4c. Build with a GPU
+
+For a Dockerfile whose `RUN` steps need the GPU (a self-test, a JIT cache, a build that probes the device). BuildKit cannot do it: `docker buildx build` runs `RUN` steps with plain runc, with no devices and no driver. The legacy builder can, because its `RUN` steps are ordinary containers of the inner daemon, and with the NVIDIA Container Toolkit as that daemon's default runtime they get the pod's GPU. Verified: inside the GPU builder image a `RUN nvidia-smi -L` step lists the GPU under `DOCKER_BUILDKIT=0 docker build`, and fails with `nvidia-smi: not found` under `docker buildx build`.
+
+Three things, once:
+
+```bash
+# 1. The GPU builder image: Docker-in-Docker on Ubuntu with the NVIDIA Container Toolkit. No GPU needed to build it.
+docker build -t gpu-builder:1 config/cluster-registry/gpu-builder
+scripts/cluster-registry.sh push gpu-builder:1
+# 2. The build pod from it, with a GPU (the nvidia.com/gpu limit also lands it on a GPU node)
+scripts/cluster-registry.sh builder-down            # if a build pod exists already
+export REG_BUILD_IMAGE=localhost:5000/gpu-builder:1 REG_BUILD_GPU=1
+# 3. Where the GPU runtime is not the nodes' default (a GPU Operator install without it), the RuntimeClass:
+export REG_BUILD_RUNTIME_CLASS=nvidia
+```
+
+Then in the Dockerfile, the GPU steps need the NVIDIA variables set before them, and the build file uses the legacy builder and a separate push:
+
+```dockerfile
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04
+ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
+RUN nvidia-smi -L                       # sees the pod's GPU
+```
+
+```bash
+# cluster-build.sh: DOCKER_BUILDKIT=0 is set for you when REG_BUILD_GPU is not 0
+docker build -t "$REG/team/gpu-app:dev" .
+docker push "$REG/team/gpu-app:dev"
+```
+
+The legacy builder has no `--push`, `--mount`, `--platform` or multi-stage parallelism, and Docker prints a deprecation notice for it; `docker buildx build` in the same file still works for steps that need no GPU. The GPU is shared with nothing else while the build pod holds it; `builder-down` frees it. On AKS and EKS GPU nodes the NVIDIA runtime is the nodes' default, so `REG_BUILD_RUNTIME_CLASS` stays empty.
 
 ## 5. Point manifests and charts at it
 
@@ -218,5 +253,7 @@ To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, d
 | Registry pod `Pending`, `node(s) had untolerated taint(s)` or `didn't match Pod's node affinity/selector` | Every node is tainted or none matches the selector: set `REG_REGISTRY_TOLERATIONS` (default `all` tolerates everything) or `REG_REGISTRY_NODE_SELECTOR`, run `up` again |
 | `build`: pod not ready, `privileged` refused | Pod Security or Gatekeeper forbids privileged pods even in this namespace: no Docker-in-Docker there; build elsewhere and `push` |
 | `build`: pod never ready, dockerd log ends in `error initializing graphdriver` (after `aufs is not supported` lines, which are harmless on their own) | The cache PVC is on a file share (Azure Files, EFS, NFS), where overlay2 cannot run: `builder-down`, set `REG_BUILD_STORAGE_CLASS` to a disk class or `none`, build again |
+| `build` with `REG_BUILD_GPU`: `RUN` step says `nvidia-smi: not found` or `libcuda.so.1` missing | The step ran under BuildKit: use `docker build` (the legacy builder; `DOCKER_BUILDKIT=0` is set) not `docker buildx build`, and `ENV NVIDIA_VISIBLE_DEVICES=all` before the step |
+| `build` with `REG_BUILD_GPU`: pod `Pending`, `Insufficient nvidia.com/gpu` | No free GPU, or a Dask worker holds them all: scale the workers down, or `REG_BUILD_NODE_SELECTOR` onto another pool |
 | `build`: `failed to solve: ... connection refused` or `http: server gave HTTP response` on push | The registry Service is not reachable from the build pod (NetworkPolicy?), or the `--insecure-registry` flag was lost: `kubectl -n $REG_NAMESPACE get deployment $REG_NAME-builder -o yaml | grep insecure` |
 | Registry pod `Pending` with the PVC `Pending` | The StorageClass cannot provision (EKS without the EBS CSI add-on): `REG_STORAGE_CLASS=none` for an emptyDir, or install the driver |
