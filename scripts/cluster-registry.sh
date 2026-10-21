@@ -33,15 +33,26 @@ REG_TEST_IMAGE="${REG_TEST_IMAGE:-alpine:3.20}"     # pulled locally by "test"
 # tainted node gets a proxy), "none", or a JSON array used as it is, e.g.
 # '[{"key":"nvidia.com/gpu","operator":"Exists"}]'
 REG_TOLERATIONS="${REG_TOLERATIONS:-all}"
+# The registry pod's own tolerations (same values; default: REG_TOLERATIONS) and node
+# selector, a JSON object merged with kubernetes.io/os=linux, e.g. '{"agentpool":"system"}'.
+# On a cluster where every node is tainted the pod stays Pending without a toleration.
+REG_REGISTRY_TOLERATIONS="${REG_REGISTRY_TOLERATIONS:-$REG_TOLERATIONS}"
+REG_REGISTRY_NODE_SELECTOR="${REG_REGISTRY_NODE_SELECTOR:-{\}}"
 
-# tolerations prints the configured tolerations as a JSON array.
+# tolerations prints a tolerations setting (all, none or a JSON array) as a JSON array.
 tolerations() {
-    case "$REG_TOLERATIONS" in
+    case "$1" in
         all) echo '[{"operator":"Exists"}]' ;;
         none) echo '[]' ;;
-        *) printf '%s' "$REG_TOLERATIONS" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, list); print(json.dumps(v))' 2>/dev/null \
-               || die "REG_TOLERATIONS must be all, none or a JSON array of tolerations" ;;
+        *) printf '%s' "$1" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, list); print(json.dumps(v))' 2>/dev/null \
+               || die "REG_TOLERATIONS and REG_REGISTRY_TOLERATIONS must be all, none or a JSON array of tolerations" ;;
     esac
+}
+
+# registry_node_selector prints the registry pod's node selector as a JSON object.
+registry_node_selector() {
+    printf '%s' "$REG_REGISTRY_NODE_SELECTOR" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, dict); v.setdefault("kubernetes.io/os", "linux"); print(json.dumps(v))' 2>/dev/null \
+        || die "REG_REGISTRY_NODE_SELECTOR must be a JSON object of node labels"
 }
 
 kubectl() { command kubectl ${REG_CONTEXT:+--context "$REG_CONTEXT"} "$@"; }
@@ -118,7 +129,8 @@ cmd_check() {
         esac
     fi
     say "Registry:  namespace $REG_NAMESPACE, name $REG_NAME, nodes pull localhost:$REG_NODE_PORT/<image>, push via localhost:$REG_LOCAL_PORT"
-    say "Proxy tolerations: $(tolerations)$([ "$REG_TOLERATIONS" = all ] || echo '  (tainted nodes without a matching toleration get no proxy and cannot pull)')"
+    say "Proxy tolerations: $(tolerations "$REG_TOLERATIONS")$([ "$REG_TOLERATIONS" = all ] || echo '  (tainted nodes without a matching toleration get no proxy and cannot pull)')"
+    say "Registry pod: tolerations $(tolerations "$REG_REGISTRY_TOLERATIONS"), node selector $(registry_node_selector)"
     if kn get deployment "$REG_NAME" >/dev/null 2>&1; then
         say "Installed: yes ($(kn get pods -l app="$REG_NAME-proxy" --no-headers 2>/dev/null | grep -c Running) proxy pods running)"
     else
@@ -174,8 +186,8 @@ spec:
       labels:
         app: $REG_NAME
     spec:
-      nodeSelector:
-        kubernetes.io/os: linux
+      nodeSelector: $(registry_node_selector)
+      tolerations: $(tolerations "$REG_REGISTRY_TOLERATIONS")
       containers:
         - name: registry
           image: $REG_IMAGE
@@ -242,7 +254,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         kubernetes.io/os: linux
-      tolerations: $(tolerations)
+      tolerations: $(tolerations "$REG_TOLERATIONS")
       containers:
         - name: proxy
           image: $REG_PROXY_IMAGE
@@ -264,10 +276,16 @@ cmd_up() {
     need kubectl
     local sc
     sc="$(storage_class)"
-    tolerations >/dev/null
+    tolerations "$REG_TOLERATIONS" >/dev/null; tolerations "$REG_REGISTRY_TOLERATIONS" >/dev/null; registry_node_selector >/dev/null
     say "Installing registry $REG_NAME in $REG_NAMESPACE on $(kubectl config current-context) ($(platform)); storage: ${sc:-emptyDir}"
     manifests "$sc" | kubectl apply -f -
-    kn rollout status deployment "$REG_NAME" --timeout=180s
+    kn rollout status deployment "$REG_NAME" --timeout=180s || {
+        say "Registry pod not ready. If it is Pending with 'untolerated taint' or no node matches, set REG_REGISTRY_TOLERATIONS"
+        say "or REG_REGISTRY_NODE_SELECTOR and run up again; if its PVC is Pending, see REG_STORAGE_CLASS. Pod state:"
+        kn get pods -l app="$REG_NAME" -o wide
+        kn describe pods -l app="$REG_NAME" | grep -A3 '^Events' | tail -3
+        exit 1
+    }
     kn rollout status daemonset "$REG_NAME-proxy" --timeout=180s || {
         say "Proxy pods not ready. A node may already use port $REG_NODE_PORT: pick another REG_NODE_PORT. Pod state:"
         kn get pods -l app="$REG_NAME-proxy" -o wide
@@ -349,7 +367,7 @@ cmd_test() {
     say "Running localhost:$REG_NODE_PORT/$path in the cluster"
     kn delete pod "$REG_NAME-test" --ignore-not-found >/dev/null
     kn run "$REG_NAME-test" --image="localhost:$REG_NODE_PORT/$path" --image-pull-policy=Always --restart=Never \
-        --overrides="{\"spec\":{\"tolerations\":$(tolerations)}}" -- sh -c 'echo pulled from the cluster registry' >/dev/null
+        --overrides="{\"spec\":{\"tolerations\":$(tolerations "$REG_TOLERATIONS")}}" -- sh -c 'echo pulled from the cluster registry' >/dev/null
     local phase="" tries=0
     while [ "$phase" != Succeeded ] && [ $tries -lt 60 ]; do
         sleep 2
