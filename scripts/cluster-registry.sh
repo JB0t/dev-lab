@@ -6,8 +6,11 @@
 #   cluster-registry.sh up             install the registry and the node proxies
 #   cluster-registry.sh test           push a small image and run it in the cluster
 #   cluster-registry.sh push IMAGE...  push local Docker images; prints their in-cluster names
+#   cluster-registry.sh build DIR [FILE]  build in the cluster: ship DIR to a Docker-in-Docker
+#                                      pod and run the docker commands in FILE (DIR/cluster-build.sh)
 #   cluster-registry.sh list           images in the registry
 #   cluster-registry.sh forward        port-forward the registry to localhost (foreground)
+#   cluster-registry.sh builder-down   remove the build pod and its cache, keep the registry
 #   cluster-registry.sh down [--yes]   delete it all
 #
 # How it works: a registry Deployment behind a ClusterIP Service, and a DaemonSet that
@@ -16,6 +19,12 @@
 # localhost without any node configuration. You push through a kubectl port-forward on
 # localhost:$REG_LOCAL_PORT, which Docker also treats as insecure without configuration.
 # The registry has no authentication: it is reachable only from pods and node loopback.
+#
+# "build" is for images you cannot build locally (another CPU architecture, a GPU node's
+# disk and cores, no local Docker): a privileged Docker-in-Docker pod in the namespace
+# receives the build context over kubectl exec and runs your build file with docker,
+# pushing to the registry at $REG (its in-cluster address). Its layer cache lives on a
+# PVC when the cluster has a StorageClass.
 set -euo pipefail
 
 # Variables: set them in the environment before running, or take the defaults.
@@ -38,6 +47,14 @@ REG_TOLERATIONS="${REG_TOLERATIONS:-all}"
 # On a cluster where every node is tainted the pod stays Pending without a toleration.
 REG_REGISTRY_TOLERATIONS="${REG_REGISTRY_TOLERATIONS:-$REG_TOLERATIONS}"
 REG_REGISTRY_NODE_SELECTOR="${REG_REGISTRY_NODE_SELECTOR:-{\}}"
+# The build pod: image, cache size (PVC, else emptyDir), where it runs (a JSON node
+# selector, e.g. '{"devlab.io/gpu":"true"}' for a GPU node, and tolerations as above),
+# and what the context tar leaves out (comma-separated tar patterns).
+REG_BUILD_IMAGE="${REG_BUILD_IMAGE:-docker:28.3-dind}"
+REG_BUILD_SIZE="${REG_BUILD_SIZE:-50Gi}"
+REG_BUILD_NODE_SELECTOR="${REG_BUILD_NODE_SELECTOR:-{\}}"
+REG_BUILD_TOLERATIONS="${REG_BUILD_TOLERATIONS:-$REG_TOLERATIONS}"
+REG_BUILD_EXCLUDE="${REG_BUILD_EXCLUDE:-.git}"
 
 # tolerations prints a tolerations setting (all, none or a JSON array) as a JSON array.
 tolerations() {
@@ -45,15 +62,20 @@ tolerations() {
         all) echo '[{"operator":"Exists"}]' ;;
         none) echo '[]' ;;
         *) printf '%s' "$1" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, list); print(json.dumps(v))' 2>/dev/null \
-               || die "REG_TOLERATIONS and REG_REGISTRY_TOLERATIONS must be all, none or a JSON array of tolerations" ;;
+               || die "REG_TOLERATIONS, REG_REGISTRY_TOLERATIONS and REG_BUILD_TOLERATIONS must be all, none or a JSON array of tolerations" ;;
     esac
 }
 
-# registry_node_selector prints the registry pod's node selector as a JSON object.
-registry_node_selector() {
-    printf '%s' "$REG_REGISTRY_NODE_SELECTOR" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, dict); v.setdefault("kubernetes.io/os", "linux"); print(json.dumps(v))' 2>/dev/null \
-        || die "REG_REGISTRY_NODE_SELECTOR must be a JSON object of node labels"
+# node_selector prints a JSON node selector setting merged with kubernetes.io/os=linux.
+node_selector() {
+    printf '%s' "$2" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, dict); v.setdefault("kubernetes.io/os", "linux"); print(json.dumps(v))' 2>/dev/null \
+        || die "$1 must be a JSON object of node labels"
 }
+registry_node_selector() { node_selector REG_REGISTRY_NODE_SELECTOR "$REG_REGISTRY_NODE_SELECTOR"; }
+build_node_selector() { node_selector REG_BUILD_NODE_SELECTOR "$REG_BUILD_NODE_SELECTOR"; }
+
+# registry_host is the registry's address inside the cluster, for pushes from pods.
+registry_host() { echo "$REG_NAME.$REG_NAMESPACE.svc.cluster.local:5000"; }
 
 kubectl() { command kubectl ${REG_CONTEXT:+--context "$REG_CONTEXT"} "$@"; }
 kn() { kubectl -n "$REG_NAMESPACE" "$@"; }
@@ -131,11 +153,140 @@ cmd_check() {
     say "Registry:  namespace $REG_NAMESPACE, name $REG_NAME, nodes pull localhost:$REG_NODE_PORT/<image>, push via localhost:$REG_LOCAL_PORT"
     say "Proxy tolerations: $(tolerations "$REG_TOLERATIONS")$([ "$REG_TOLERATIONS" = all ] || echo '  (tainted nodes without a matching toleration get no proxy and cannot pull)')"
     say "Registry pod: tolerations $(tolerations "$REG_REGISTRY_TOLERATIONS"), node selector $(registry_node_selector)"
+    say "Build pod: tolerations $(tolerations "$REG_BUILD_TOLERATIONS"), node selector $(build_node_selector), cache $REG_BUILD_SIZE"
     if kn get deployment "$REG_NAME" >/dev/null 2>&1; then
         say "Installed: yes ($(kn get pods -l app="$REG_NAME-proxy" --no-headers 2>/dev/null | grep -c Running) proxy pods running)"
     else
         say "Installed: no"
     fi
+    if kn get deployment "$REG_NAME-builder" >/dev/null 2>&1; then
+        say "Build pod: installed ($(kn get pods -l app="$REG_NAME-builder" --no-headers 2>/dev/null | awk '{print $3}' | head -1))"
+    fi
+}
+
+# builder_manifests prints the Docker-in-Docker build pod and its cache volume.
+builder_manifests() {
+    local sc="$1"
+    if [ -n "$sc" ]; then
+        cat <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $REG_NAME-builder
+  namespace: $REG_NAMESPACE
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: $sc
+  resources:
+    requests:
+      storage: $REG_BUILD_SIZE
+---
+EOF
+    fi
+    cat <<EOF
+# Docker-in-Docker for "build": privileged, as dockerd needs; the build context arrives
+# over kubectl exec and the images are pushed to the registry Service over plain HTTP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $REG_NAME-builder
+  namespace: $REG_NAMESPACE
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: $REG_NAME-builder
+  template:
+    metadata:
+      labels:
+        app: $REG_NAME-builder
+    spec:
+      nodeSelector: $(build_node_selector)
+      tolerations: $(tolerations "$REG_BUILD_TOLERATIONS")
+      containers:
+        - name: docker
+          image: $REG_BUILD_IMAGE
+          args:
+            - --insecure-registry=$(registry_host)
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          securityContext:
+            privileged: true
+          readinessProbe:
+            exec:
+              command: [docker, info]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: cache
+              mountPath: /var/lib/docker
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: cache
+EOF
+    if [ -n "$sc" ]; then
+        cat <<EOF
+          persistentVolumeClaim:
+            claimName: $REG_NAME-builder
+EOF
+    else
+        cat <<EOF
+          emptyDir: {}
+EOF
+    fi
+}
+
+# builder_pod makes sure the build pod runs and prints its name.
+builder_pod() {
+    kn get service "$REG_NAME" >/dev/null || die "registry not installed: run $0 up"
+    if ! kn get deployment "$REG_NAME-builder" >/dev/null 2>&1; then
+        say "Creating the build pod (Docker-in-Docker) in $REG_NAMESPACE" >&2
+        builder_manifests "$(storage_class)" | kubectl apply -f - >&2
+    fi
+    kn rollout status deployment "$REG_NAME-builder" --timeout=300s >&2 || {
+        say "Build pod not ready (privileged pods refused? no node matches REG_BUILD_NODE_SELECTOR? the PVC?). Pod state:" >&2
+        kn get pods -l app="$REG_NAME-builder" -o wide >&2
+        kn describe pods -l app="$REG_NAME-builder" | grep -A3 '^Events' | tail -3 >&2
+        exit 1
+    }
+    kn get pods -l app="$REG_NAME-builder" --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}'
+}
+
+cmd_build() {
+    need kubectl; need tar
+    local dir="${1:-}" file="${2:-}"
+    [ -n "$dir" ] && [ -d "$dir" ] || die "usage: $0 build DIR [FILE]   (FILE defaults to DIR/cluster-build.sh)"
+    [ -n "$file" ] || file="$dir/cluster-build.sh"
+    [ -f "$file" ] || die "no build file $file: a shell script of docker commands, run in the context directory with \$REG set"
+    local pod pattern patterns excludes=()
+    IFS=, read -ra patterns <<<"$REG_BUILD_EXCLUDE"
+    for pattern in "${patterns[@]}"; do [ -n "$pattern" ] && excludes+=(--exclude "$pattern"); done
+    pod="$(builder_pod)"
+    say "Sending $dir to $pod ($(du -sh "$dir" | cut -f1) before excludes)"
+    # A fresh context directory in the pod each time, so deleted files do not linger
+    kn exec "$pod" -- sh -c 'rm -rf /work/context && mkdir -p /work/context'
+    tar czf - -C "$dir" "${excludes[@]}" . | kn exec -i "$pod" -- tar xzf - -C /work/context
+    kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
+    say "Running $file in the cluster; push images as \$REG/<name>, pull them as localhost:$REG_NODE_PORT/<name>"
+    kn exec "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' sh -e /work/cluster-build.sh" || die "the build failed"
+    say "Built. Images the build file tagged with \$REG/ are in the registry as:"
+    grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed "s|^\\\$REG/|localhost:$REG_NODE_PORT/|;s|^\\\${REG}/|localhost:$REG_NODE_PORT/|" | sort -u | sed 's/^/  /'
+}
+
+cmd_builder_down() {
+    need kubectl
+    kn delete deployment "$REG_NAME-builder" --ignore-not-found
+    kn delete pvc "$REG_NAME-builder" --ignore-not-found
+    say "Build pod and its cache removed; the registry stays."
 }
 
 # manifests prints everything "up" applies.
@@ -405,9 +556,11 @@ case "${1:-}" in
     up) cmd_up ;;
     test) cmd_test ;;
     push) shift; cmd_push "$@" ;;
+    build) shift; cmd_build "$@" ;;
     list) cmd_list ;;
     forward) cmd_forward ;;
+    builder-down) cmd_builder_down ;;
     down) shift; cmd_down "$@" ;;
-    manifests) manifests "$(storage_class)" ;;
-    *) sed -n '2,12p' "$0"; exit 1 ;;
+    manifests) manifests "$(storage_class)"; echo ---; builder_manifests "$(storage_class)" ;;
+    *) sed -n '2,15p' "$0"; exit 1 ;;
 esac

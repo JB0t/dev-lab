@@ -24,6 +24,11 @@ export REG_TEST_IMAGE=alpine:3.20    # a small public image "test" pushes and ru
 export REG_TOLERATIONS=all           # proxy DaemonSet and test pod tolerations: all (operator Exists), none, or a JSON array
 export REG_REGISTRY_TOLERATIONS=      # the registry pod's tolerations, same values (empty: REG_TOLERATIONS)
 export REG_REGISTRY_NODE_SELECTOR='{}' # node labels for the registry pod, e.g. '{"agentpool":"system"}'
+export REG_BUILD_IMAGE=docker:28.3-dind  # the in-cluster build pod (step 4b)
+export REG_BUILD_SIZE=50Gi               # its layer cache (PVC when there is a StorageClass)
+export REG_BUILD_NODE_SELECTOR='{}'      # where it runs, e.g. '{"devlab.io/gpu":"true"}' or '{"agentpool":"gpu"}'
+export REG_BUILD_TOLERATIONS=            # same values as REG_TOLERATIONS (empty: REG_TOLERATIONS)
+export REG_BUILD_EXCLUDE=.git            # comma-separated tar patterns left out of the build context
 cd ~/gh/jbotstevens/dev-lab          # or wherever the repo is; the script is scripts/cluster-registry.sh
 ```
 
@@ -76,6 +81,25 @@ Each image is tagged for the port-forward, pushed, and its in-cluster name print
 - Docker Desktop (Mac/Windows) runs the daemon in a VM that cannot reach the port-forward on the host's `localhost`. Use `crane` instead: `scripts/cluster-registry.sh forward` in one terminal, `crane copy myapp:dev localhost:5050/myapp:dev` in another.
 - `scripts/cluster-registry.sh list` shows every repository and tag in the registry.
 
+## 4b. Build in the cluster
+
+For an image you cannot build on this machine: another CPU architecture, a build that needs a GPU node's disk, cores or memory, or no local Docker at all. The build runs in a Docker-in-Docker pod in the registry's namespace; the context directory is shipped to it over `kubectl exec` and a file of docker commands is run there.
+
+```bash
+# config/dask/image/cluster-build.sh:
+#   docker buildx build -t "$REG/devlab-dask-gpu:2026.1.1" --push .
+scripts/cluster-registry.sh build config/dask/image                   # runs DIR/cluster-build.sh
+scripts/cluster-registry.sh build path/to/context path/to/build.sh    # or any file
+```
+
+The build file is a shell script (`sh -e`) run in the context directory on the pod, with `docker` and `docker buildx` available and two variables set: `REG`, the registry's in-cluster address to push to (`registry.cluster-registry.svc.cluster.local:5000`), and `REG_PULL`, the name pods use (`localhost:5000`). Tag images as `$REG/<name>:<tag>` and push them (`--push`, or `docker push`); the script lists them afterwards by their `localhost:5000/...` names. Anything docker can do works: `--build-arg`, `-f`, `--target`, several builds, `docker run` for a smoke test.
+
+- The first `build` creates the pod (`<REG_NAME>-builder`, privileged, as dockerd needs; the namespace already allows it) and a PVC of `REG_BUILD_SIZE` for its layer cache, so rebuilds reuse layers. Without a StorageClass the cache is an emptyDir and goes with the pod.
+- `REG_BUILD_NODE_SELECTOR` and `REG_BUILD_TOLERATIONS` place it: on a GPU node, e.g. `'{"devlab.io/gpu":"true"}'`, or on whatever pool has the disk. Pulling a multi-GB base image happens on the node's network, not yours.
+- `RUN` steps in a Dockerfile do not see the node's GPU, with Docker-in-Docker as with any builder; `nvcc` compiles without one. A GPU node is useful for its resources and its CPU architecture, not for running CUDA at build time.
+- The context is sent as a tar each time (`REG_BUILD_EXCLUDE` leaves `.git` out; add build outputs there). A `.dockerignore` in the context still applies to the build itself.
+- `scripts/cluster-registry.sh builder-down` removes the pod and its cache and keeps the registry; `down` removes both.
+
 ## 5. Point manifests and charts at it
 
 Images are `localhost:$REG_NODE_PORT/<repository>:<tag>`. With `imagePullPolicy: IfNotPresent` and a tag you re-push (`dev`, `latest`), a node that already has the tag keeps the old image: use `Always`, or a new tag per build.
@@ -110,7 +134,7 @@ scripts/cluster-registry.sh down          # asks first
 scripts/cluster-registry.sh down --yes
 ```
 
-Deletes the namespace, with the registry, its images and its volume. Workloads still referencing `localhost:5000/...` keep running (the image is in the node's containerd cache) until they are rescheduled to a node that never pulled it; redeploy them from their real registry first. Nothing else was changed in the cluster, so nothing else needs undoing.
+Deletes the namespace, with the registry, its images and its volume, and the build pod and its cache when they exist. Workloads still referencing `localhost:5000/...` keep running (the image is in the node's containerd cache) until they are rescheduled to a node that never pulled it; redeploy them from their real registry first. Nothing else was changed in the cluster, so nothing else needs undoing.
 
 To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, delete tags with the registry API (`DELETE /v2/<repo>/manifests/<digest>`, enabled), then `kubectl -n $REG_NAMESPACE exec deploy/$REG_NAME -- registry garbage-collect /etc/docker/registry/config.yml`.
 
@@ -125,4 +149,6 @@ To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, d
 | `docker push` to `localhost:5050` refused | Port-forward failed, likely the port is in use: change `REG_LOCAL_PORT` |
 | Pod keeps an old build of the same tag | `imagePullPolicy: Always` or a new tag |
 | Registry pod `Pending`, `node(s) had untolerated taint(s)` or `didn't match Pod's node affinity/selector` | Every node is tainted or none matches the selector: set `REG_REGISTRY_TOLERATIONS` (default `all` tolerates everything) or `REG_REGISTRY_NODE_SELECTOR`, run `up` again |
+| `build`: pod not ready, `privileged` refused | Pod Security or Gatekeeper forbids privileged pods even in this namespace: no Docker-in-Docker there; build elsewhere and `push` |
+| `build`: `failed to solve: ... connection refused` or `http: server gave HTTP response` on push | The registry Service is not reachable from the build pod (NetworkPolicy?), or the `--insecure-registry` flag was lost: `kubectl -n $REG_NAMESPACE get deployment $REG_NAME-builder -o yaml | grep insecure` |
 | Registry pod `Pending` with the PVC `Pending` | The StorageClass cannot provision (EKS without the EBS CSI add-on): `REG_STORAGE_CLASS=none` for an emptyDir, or install the driver |
