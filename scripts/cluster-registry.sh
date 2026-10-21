@@ -306,8 +306,9 @@ cmd_build() {
     # A fresh context directory in the pod each time, so deleted files do not linger
     kn exec "$pod" -- sh -c 'rm -rf /work/context && mkdir -p /work/context'
     tar czf - -C "$dir" "${excludes[@]}" . | kn exec -i "$pod" -- tar xzf - -C /work/context
-    kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
-    say "In the pod: context $(kn exec "$pod" -- sh -c 'du -sh /work/context | cut -f1'), build file $(kn exec "$pod" -- wc -c /work/cluster-build.sh | cut -d' ' -f1) bytes (local: $(wc -c <"$file"))"
+    # Carriage returns would break line continuations and arguments in the pod's sh
+    tr -d '\r' <"$file" | kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh'
+    say "In the pod: context $(kn exec "$pod" -- sh -c 'du -sh /work/context | cut -f1'), build file $(kn exec "$pod" -- wc -c /work/cluster-build.sh | cut -d' ' -f1) bytes (local: $(tr -d '\r' <"$file" | wc -c | tr -d ' '))"
     local log="$dir/.cluster-build.log"
     say "Registry before the build: $(registry_snapshot "$pod" | wc -l | tr -d ' ') tags"
     registry_snapshot "$pod" >"$log.before"
