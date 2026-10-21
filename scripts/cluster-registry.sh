@@ -80,6 +80,12 @@ build_node_selector() { node_selector REG_BUILD_NODE_SELECTOR "$REG_BUILD_NODE_S
 # registry_host is the registry's address inside the cluster, for pushes from pods.
 registry_host() { echo "$REG_NAME.$REG_NAMESPACE.svc.cluster.local:5000"; }
 
+# tag_digest prints the digest of repo:tag in the registry, asked from a pod; empty if absent.
+tag_digest() {
+    local pod="$1" repo="$2" tag="$3"
+    kn exec "$pod" -- sh -c "body=\$(wget -qO- --header 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json' 'http://$(registry_host)/v2/$repo/manifests/$tag' 2>/dev/null); [ -n \"\$body\" ] && printf %s \"\$body\" | sha256sum | cut -c1-12; exit 0"
+}
+
 kubectl() { command kubectl ${REG_CONTEXT:+--context "$REG_CONTEXT"} "$@"; }
 kn() { kubectl -n "$REG_NAMESPACE" "$@"; }
 say() { printf '%s\n' "$*"; }
@@ -298,27 +304,34 @@ cmd_build() {
     tar czf - -C "$dir" "${excludes[@]}" . | kn exec -i "$pod" -- tar xzf - -C /work/context
     kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
     say "In the pod: context $(kn exec "$pod" -- sh -c 'du -sh /work/context | cut -f1'), build file $(kn exec "$pod" -- wc -c /work/cluster-build.sh | cut -d' ' -f1) bytes (local: $(wc -c <"$file"))"
-    say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +):"
-    local started=$SECONDS
-    kn exec "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' sh -ex /work/cluster-build.sh" || die "the build failed after $((SECONDS - started))s"
-    say "The build file finished in $((SECONDS - started))s"
-    local names name repo tag found=0 missing=0
+    # The tags the file pushes as $REG/..., and what the registry holds for them now
+    local names name repo tag before=() after verdict updated=0 problems=0
     names="$(grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed 's|^\$REG/||;s|^\${REG}/||' | sort -u)"
-    if [ -z "$names" ]; then
-        say "The build file exited 0 but tags nothing with \$REG/: whatever it built stays in the build pod's docker"
-        say "(kubectl -n $REG_NAMESPACE exec deploy/$REG_NAME-builder -- docker images). Tag images \$REG/<name>:<tag> and push them."
-        return 1
-    fi
-    say "Checking the registry for the images the build file tags with \$REG/:"
+    [ -n "$names" ] || say "Note: the build file tags nothing with \$REG/, so nothing it builds reaches the registry (tag images \$REG/<name>:<tag> and push them)"
     for name in $names; do
         repo="${name%%:*}"; tag="${name#*:}"; [ "$tag" != "$name" ] || tag=latest
-        if kn exec "$pod" -- wget -qO- "http://$(registry_host)/v2/$repo/tags/list" 2>/dev/null | grep -q "\"$tag\""; then
-            say "  localhost:$REG_NODE_PORT/$repo:$tag"; found=$((found + 1))
-        else
-            say "  localhost:$REG_NODE_PORT/$repo:$tag  MISSING: not pushed (no --push, or --load, or a docker push that did not run?)"; missing=$((missing + 1))
-        fi
+        before+=("$repo:$tag=$(tag_digest "$pod" "$repo" "$tag")")
     done
-    [ $missing -eq 0 ] || die "$missing of $((found + missing)) images are not in the registry"
+    say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +):"
+    local started=$SECONDS tty=() progress=plain
+    if [ -t 0 ] && [ -t 1 ]; then tty=(-it); progress=auto; fi   # a terminal: buildx's live progress, as locally
+    kn exec "${tty[@]}" "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress sh -ex /work/cluster-build.sh" \
+        || die "the build failed after $((SECONDS - started))s"
+    say "The build file finished in $((SECONDS - started))s."
+    for name in "${before[@]}"; do
+        repo="${name%%:*}"; tag="${name#*:}"; tag="${tag%%=*}"
+        after="$(tag_digest "$pod" "$repo" "$tag")"
+        if [ -z "$after" ]; then
+            verdict="NOT PUSHED: localhost:$REG_NODE_PORT/$repo:$tag is not in the registry (no --push, or --load, or a docker push that did not run?)"; problems=$((problems + 1))
+        elif [ "$after" = "${name#*=}" ]; then
+            verdict="Pushed (same digest $after as before the build: nothing changed). In the cluster: localhost:$REG_NODE_PORT/$repo:$tag"; updated=$((updated + 1))
+        else
+            verdict="Pushed (new digest $after). In the cluster: localhost:$REG_NODE_PORT/$repo:$tag"; updated=$((updated + 1))
+        fi
+        say "$verdict"
+    done
+    [ $problems -eq 0 ] || die "$problems of $((updated + problems)) tags are not in the registry after this build"
+    [ -n "$names" ] || return 1
 }
 
 cmd_builder_down() {
