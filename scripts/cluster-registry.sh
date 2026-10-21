@@ -273,7 +273,12 @@ builder_pod() {
         kn logs -l app="$REG_NAME-builder" --tail=5 2>/dev/null | grep -v aufs >&2 || true
         exit 1
     }
-    kn get pods -l app="$REG_NAME-builder" --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}'
+    # The newest running pod that is not terminating (Recreate leaves the old one briefly)
+    kn get pods -l app="$REG_NAME-builder" --field-selector status.phase=Running -o json | python3 -c '
+import json, sys
+pods = [p for p in json.load(sys.stdin)["items"] if not p["metadata"].get("deletionTimestamp")]
+pods.sort(key=lambda p: p["metadata"]["creationTimestamp"], reverse=True)
+print(pods[0]["metadata"]["name"] if pods else "")'
 }
 
 cmd_build() {
@@ -286,13 +291,17 @@ cmd_build() {
     IFS=, read -ra patterns <<<"$REG_BUILD_EXCLUDE"
     for pattern in "${patterns[@]}"; do [ -n "$pattern" ] && excludes+=(--exclude "$pattern"); done
     pod="$(builder_pod)"
+    [ -n "$pod" ] || die "no running build pod found"
     say "Sending $dir to $pod ($(du -sh "$dir" | cut -f1) before excludes)"
     # A fresh context directory in the pod each time, so deleted files do not linger
     kn exec "$pod" -- sh -c 'rm -rf /work/context && mkdir -p /work/context'
     tar czf - -C "$dir" "${excludes[@]}" . | kn exec -i "$pod" -- tar xzf - -C /work/context
     kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
-    say "Running $file in the cluster; push images as \$REG/<name>, pull them as localhost:$REG_NODE_PORT/<name>"
-    kn exec "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' sh -e /work/cluster-build.sh" || die "the build failed"
+    say "In the pod: context $(kn exec "$pod" -- sh -c 'du -sh /work/context | cut -f1'), build file $(kn exec "$pod" -- wc -c /work/cluster-build.sh | cut -d' ' -f1) bytes (local: $(wc -c <"$file"))"
+    say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +):"
+    local started=$SECONDS
+    kn exec "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' sh -ex /work/cluster-build.sh" || die "the build failed after $((SECONDS - started))s"
+    say "The build file finished in $((SECONDS - started))s"
     local names name repo tag found=0 missing=0
     names="$(grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed 's|^\$REG/||;s|^\${REG}/||' | sort -u)"
     if [ -z "$names" ]; then
