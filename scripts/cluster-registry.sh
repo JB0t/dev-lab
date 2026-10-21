@@ -29,6 +29,20 @@ REG_STORAGE_CLASS="${REG_STORAGE_CLASS:-}"          # StorageClass (empty: the d
 REG_IMAGE="${REG_IMAGE:-registry:2.8.3}"
 REG_PROXY_IMAGE="${REG_PROXY_IMAGE:-alpine/socat:1.8.0.0}"
 REG_TEST_IMAGE="${REG_TEST_IMAGE:-alpine:3.20}"     # pulled locally by "test"
+# Tolerations of the proxy DaemonSet and the test pod: "all" (operator Exists, every
+# tainted node gets a proxy), "none", or a JSON array used as it is, e.g.
+# '[{"key":"nvidia.com/gpu","operator":"Exists"}]'
+REG_TOLERATIONS="${REG_TOLERATIONS:-all}"
+
+# tolerations prints the configured tolerations as a JSON array.
+tolerations() {
+    case "$REG_TOLERATIONS" in
+        all) echo '[{"operator":"Exists"}]' ;;
+        none) echo '[]' ;;
+        *) printf '%s' "$REG_TOLERATIONS" | python3 -c 'import json,sys; v=json.load(sys.stdin); assert isinstance(v, list); print(json.dumps(v))' 2>/dev/null \
+               || die "REG_TOLERATIONS must be all, none or a JSON array of tolerations" ;;
+    esac
+}
 
 kubectl() { command kubectl ${REG_CONTEXT:+--context "$REG_CONTEXT"} "$@"; }
 kn() { kubectl -n "$REG_NAMESPACE" "$@"; }
@@ -104,6 +118,7 @@ cmd_check() {
         esac
     fi
     say "Registry:  namespace $REG_NAMESPACE, name $REG_NAME, nodes pull localhost:$REG_NODE_PORT/<image>, push via localhost:$REG_LOCAL_PORT"
+    say "Proxy tolerations: $(tolerations)$([ "$REG_TOLERATIONS" = all ] || echo '  (tainted nodes without a matching toleration get no proxy and cannot pull)')"
     if kn get deployment "$REG_NAME" >/dev/null 2>&1; then
         say "Installed: yes ($(kn get pods -l app="$REG_NAME-proxy" --no-headers 2>/dev/null | grep -c Running) proxy pods running)"
     else
@@ -227,8 +242,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         kubernetes.io/os: linux
-      tolerations:
-        - operator: Exists
+      tolerations: $(tolerations)
       containers:
         - name: proxy
           image: $REG_PROXY_IMAGE
@@ -250,6 +264,7 @@ cmd_up() {
     need kubectl
     local sc
     sc="$(storage_class)"
+    tolerations >/dev/null
     say "Installing registry $REG_NAME in $REG_NAMESPACE on $(kubectl config current-context) ($(platform)); storage: ${sc:-emptyDir}"
     manifests "$sc" | kubectl apply -f -
     kn rollout status deployment "$REG_NAME" --timeout=180s
@@ -334,7 +349,7 @@ cmd_test() {
     say "Running localhost:$REG_NODE_PORT/$path in the cluster"
     kn delete pod "$REG_NAME-test" --ignore-not-found >/dev/null
     kn run "$REG_NAME-test" --image="localhost:$REG_NODE_PORT/$path" --image-pull-policy=Always --restart=Never \
-        --overrides='{"spec":{"tolerations":[{"operator":"Exists"}]}}' -- sh -c 'echo pulled from the cluster registry' >/dev/null
+        --overrides="{\"spec\":{\"tolerations\":$(tolerations)}}" -- sh -c 'echo pulled from the cluster registry' >/dev/null
     local phase="" tries=0
     while [ "$phase" != Succeeded ] && [ $tries -lt 60 ]; do
         sleep 2
