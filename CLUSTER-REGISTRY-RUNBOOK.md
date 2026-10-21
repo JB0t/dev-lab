@@ -135,13 +135,16 @@ scripts/cluster-registry.sh build app          # runs app/cluster-build.sh
 scripts/cluster-registry.sh build app other.sh # or any file
 ```
 
-What it prints, in order: the context and build file sizes as received in the pod; every command of the file echoed with a `+`; buildx's live progress (from a terminal, as a local build shows it; plain step output otherwise), including the `pushing layer` lines; and for each tag the file names as `$REG/...`, the result of looking it up in the registry:
+What it prints, in order: the context and build file sizes as received in the pod; every command of the file echoed with a `+`, variables expanded; everything the commands print, buildx's live progress included (from a terminal, as a local build shows it; plain step output otherwise); then a report built from that trace and from the registry's contents before and after, not from the file:
 
 ```
-Pushed (new digest 584ba587df32). In the cluster: localhost:5000/team/app:dev
+The build file finished after 212s. What it did, from its trace and the registry:
+  Docker commands that ran:
+   + docker buildx build --pull --build-arg BASE_IMAGE=registry.cluster-registry.svc.cluster.local:5000/team/base:1.0 -t registry.cluster-registry.svc.cluster.local:5000/team/app:dev --push .
+  Pushed (new, digest 717ed6e82934). In the cluster: localhost:5000/team/app:dev
 ```
 
-or `NOT PUSHED: localhost:5000/team/app:dev is not in the registry` with a non-zero exit, for a build that had no `--push` (or `--load`, or a `docker push` that did not run). A build whose result is byte-identical to what was there says `Pushed (same digest ... as before the build)`. The image then goes into a manifest as `localhost:5000/team/app:dev` (step 5).
+Every image a docker command tagged or pushed under `$REG/` is checked: `Pushed (new ...)`, `Pushed (updated, digest a -> b)`, `Pushed (same digest ... as before)`, or `NOT PUSHED` with the reason from the trace (no `--push` and no `docker push`, or the error lines docker printed) and what the registry holds for that repository, with a non-zero exit. A build file whose docker commands are silenced (`-q`, output redirected) still shows the commands that ran. The whole output is kept in `DIR/.cluster-build.log`. The image then goes into a manifest as `localhost:5000/team/app:dev` (step 5).
 
 The three ways a base image from the registry fails, and the fix:
 
