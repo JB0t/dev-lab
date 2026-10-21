@@ -317,7 +317,8 @@ cmd_build() {
     if [ -t 0 ] && [ -t 1 ]; then tty=(-it); progress="${BUILDKIT_PROGRESS:-auto}"; fi   # a terminal: buildx's live progress, as locally
     local legacy=""
     [ "$REG_BUILD_GPU" = 0 ] || legacy="DOCKER_BUILDKIT=0"   # docker build then uses the legacy builder, whose RUN steps get the GPU
-    kn exec "${tty[@]}" "$pod" -- sh -c "set -o pipefail; cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress $legacy sh -ex /work/cluster-build.sh 2>&1 | tee /work/build.log" \
+    # The build file's exit status survives the tee through a status file (dash has no pipefail)
+    kn exec "${tty[@]}" "$pod" -- sh -c "cd /work/context && { REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress $legacy sh -ex /work/cluster-build.sh 2>&1; echo \$? >/work/build.status; } | tee /work/build.log; exit \$(cat /work/build.status)" \
         || status=$?
     kn exec "$pod" -- cat /work/build.log | tr -d '\r' >"$log"
     registry_snapshot "$pod" >"$log.after"
