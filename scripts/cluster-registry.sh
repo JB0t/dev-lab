@@ -516,6 +516,8 @@ image_path() {
 push_images() {
     local image path
     for image in "$@"; do
+        docker image inspect "$image" >/dev/null 2>&1 \
+            || die "$image is not in the local Docker. An image in a registry only (the kind one at localhost:5000) needs: docker pull $image"
         path="$(image_path "$image")"
         [[ "$path" == *:* ]] || path="$path:latest"
         docker tag "$image" "localhost:$REG_LOCAL_PORT/$path"
