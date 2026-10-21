@@ -367,6 +367,7 @@ def standing_cluster_manifests(
     n_workers: int,
     gpu_memory_gib: int,
     dashboard_host: Optional[str] = None,
+    ingress_class: Optional[str] = "traefik",
     **spec_options,
 ) -> List[dict]:
     """A long-lived GPU Dask cluster that clients reach by address.
@@ -375,9 +376,10 @@ def standing_cluster_manifests(
     between 0 and ``n_workers`` (the scheduler asks for workers as clients
     submit tasks, and idle ones are removed), and an Ingress for the
     scheduler dashboard at ``dashboard_host`` (default
-    ``<name>.dask.localhost``). The scheduler is the Service
-    ``<name>-scheduler``, port 8786; with ``scheduler_node_port`` also that
-    port on every node. See ``gpu_cluster_spec`` for ``spec_options``.
+    ``<name>.dask.localhost``) through ``ingress_class`` (``traefik`` in the
+    lab; None for no Ingress, on clusters without one). The scheduler is the
+    Service ``<name>-scheduler``, port 8786; with ``scheduler_node_port`` also
+    that port on every node. See ``gpu_cluster_spec`` for ``spec_options``.
     """
     cluster = gpu_cluster_spec(name, gpu_memory_gib, **spec_options)
     labels = {"dask.org/cluster-name": name}
@@ -392,7 +394,7 @@ def standing_cluster_manifests(
         "kind": "Ingress",
         "metadata": {"name": f"{name}-dashboard", "labels": labels},
         "spec": {
-            "ingressClassName": "traefik",
+            "ingressClassName": ingress_class,
             "rules": [{
                 "host": dashboard_host or f"{name}.dask.localhost",
                 "http": {"paths": [{
@@ -403,7 +405,7 @@ def standing_cluster_manifests(
             }],
         },
     }
-    return [cluster, autoscaler, ingress]
+    return [cluster, autoscaler] + ([ingress] if ingress_class else [])
 
 
 def parse_selector(text: Optional[str]) -> Optional[Dict[str, str]]:
@@ -486,6 +488,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                            help="required anti-affinity between the workers: one per node, for pools "
                                 "with one GPU per node")
     placement.add_argument("--worker-cpu", default="500m", help="CPU request per worker (default 500m)")
+    placement.add_argument("--ingress-class", default="traefik",
+                           help="IngressClass of the dashboard Ingress (default traefik, the lab's); "
+                                "none for no Ingress")
     args = parser.parse_args(argv)
 
     worker_resources = {} if args.resources.strip().lower() in ("", "none") else dict(
@@ -504,6 +509,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         runtime_class=None if args.runtime_class.lower() == "none" else args.runtime_class,
         one_worker_per_node=args.one_worker_per_node,
         worker_cpu=args.worker_cpu,
+        ingress_class=None if args.ingress_class.lower() == "none" else args.ingress_class,
     )
     json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout, indent=2)
     print()

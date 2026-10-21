@@ -346,12 +346,26 @@ The chart's bundled Bitnami PostgreSQL image is no longer published, so the addo
 
 ## On Another Cluster: One Worker Per GPU Node (AKS, EKS)
 
-The lab shares one GPU between workers because it has one GPU. A cloud pool of single-GPU nodes (Azure `Standard_NC4as_T4_v3`: one T4 16 GB, 4 vCPUs, 28 GB; AWS `g4dn.xlarge` the same card) wants the opposite: no sharing, one worker per node, each holding the whole card, and the node count following the queue. The manifests are the same, with the placement options:
+The lab shares one GPU between workers because it has one GPU. A cloud pool of single-GPU nodes (Azure `Standard_NC4as_T4_v3`: one T4 16 GB, 4 vCPUs, 28 GB; AWS `g4dn.xlarge` the same card) wants the opposite: no sharing, one worker per node, each holding the whole card, and the node count following the queue.
+
+`devlab addon enable dask-operator` and `devlab kubectl` only ever talk to the lab's kind cluster (Helm and kubectl run in containers with its kubeconfig). On another cluster the same two steps are your own helm and kubectl against your context:
+
+```bash
+kubectl config use-context my-aks
+helm repo add dask https://helm.dask.org && helm repo update
+helm upgrade --install dask-kubernetes-operator dask/dask-kubernetes-operator \
+  --version 2026.3.0 --namespace dask-operator --create-namespace --wait      # the version pinned in python/devlab.py
+kubectl apply -k config/dask      # namespace dask, client RBAC, the devlab-dask ConfigMap. -k, not -f:
+                                  # -f on the directory tries to apply kustomization.yaml as a resource
+                                  # ("no matches for kind Kustomization in version kustomize.config.k8s.io/v1beta1")
+```
+
+Then the manifests, which are the same as the lab's with the placement options:
 
 ```bash
 python3 config/dask/devlab_dask.py gpu --workers 8 \
   --gpu-memory-gib 15 --gpu-shares 1 --rmm-pool \
-  --host-memory 20Gi --worker-cpu 3 --one-worker-per-node --runtime-class none --node-port 0 \
+  --host-memory 20Gi --worker-cpu 3 --one-worker-per-node --runtime-class none --node-port 0 --ingress-class none \
   --worker-node-selector agentpool=t4 --worker-toleration sku=gpu:NoSchedule \
   --scheduler-node-selector agentpool=system --scheduler-toleration CriticalAddonsOnly:NoSchedule \
   --image myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1 \
@@ -367,6 +381,7 @@ python3 config/dask/devlab_dask.py gpu --workers 8 \
 | `--worker-node-selector`, `--worker-toleration` | The pool's label (AKS: `agentpool=<name>`; EKS: `eks.amazonaws.com/nodegroup=<name>`) and its taint (set when creating the pool, e.g. `sku=gpu:NoSchedule`); a Spot pool adds `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` |
 | `--scheduler-node-selector`, `--scheduler-toleration` | The scheduler on the system or a CPU pool |
 | `--node-port 0` | No NodePort: clients in the cluster use `gpu-scheduler.dask:8786`, from outside use `kubectl port-forward` |
+| `--ingress-class none` | No dashboard Ingress (the lab's is for Traefik); `kubectl -n dask port-forward svc/gpu-scheduler 8787:8787` shows it. Or the cluster's class, e.g. `nginx` or `webapprouting.kubernetes.azure.com`, with the host in `standing_cluster_manifests(dashboard_host=...)` |
 | `--rmm-pool` | On for RAPIDS/cuDF work; off for XGBoost, which allocates its own memory (the default) |
 
 The same options exist on `gpu_cluster_spec`/`gpu_cluster` (`worker_node_selector`, `worker_tolerations`, `scheduler_node_selector`, `scheduler_tolerations`, `runtime_class`, `one_worker_per_node`, `worker_cpu`) for clusters created from code and from Dagster.
