@@ -169,6 +169,12 @@ Reference the image as `image: localhost:5000/my-app:1` in manifests.
 See [NETWORKING.md](./NETWORKING.md) for how the registry, port mappings, and
 ingress are wired.
 
+To test the same images in another cluster you are cluster-admin on (AKS, EKS,
+on-prem) without publishing them, `scripts/cluster-registry.sh` installs a
+throwaway registry there that nodes pull from as `localhost:5000/...`, so the
+manifests need no change: see
+[CLUSTER-REGISTRY-RUNBOOK.md](./CLUSTER-REGISTRY-RUNBOOK.md).
+
 ## kubectl Plugins (krew)
 
 `devlab kubectl` runs in a local `devlab-kubectl` image that includes
@@ -575,7 +581,7 @@ dev-lab/
 │       ├── registry.yaml        # Registry Deployment
 │       └── registry-ui.yaml     # Registry UI
 ├── python/                      # devlab CLI (devlab.py, setup.py, Dockerfiles)
-├── scripts/                     # Legacy Bash scripts
+├── scripts/                     # Legacy Bash scripts; cluster-registry.sh (CLUSTER-REGISTRY-RUNBOOK.md)
 ├── examples/
 │   └── gitops-linkerd/         # GitOps + Linkerd example (git submodule)
 └── README.md                   # This file
