@@ -333,10 +333,14 @@ registry_snapshot() {
     kn exec "$1" -- sh -c '
 H="'"$(registry_host)"'"
 A="Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json"
-for repo in $(wget -qO- "http://$H/v2/_catalog?n=1000" | tr "," "\n" | sed -n "s/.*\"\([^\"]*\)\".*/\1/p" | grep -v "^repositories$"); do
-    tags=$(wget -qO- "http://$H/v2/$repo/tags/list" | grep "\"tags\":\[" | sed "s/.*\"tags\":\[\([^]]*\)\].*/\1/" | tr "," "\n" | sed -n "s/\"\([^\"]*\)\"/\1/p")
+# curl (Ubuntu images) or BusyBox wget (Alpine docker:dind), whichever the build image has
+if command -v curl >/dev/null 2>&1; then get() { curl -fsS -H "$A" "$1" 2>/dev/null; }
+elif command -v wget >/dev/null 2>&1; then get() { wget -qO- --header "$A" "$1" 2>/dev/null; }
+else echo "neither curl nor wget in the build image: cannot read the registry" >&2; exit 0; fi
+for repo in $(get "http://$H/v2/_catalog?n=1000" | tr "," "\n" | sed -n "s/.*\"\([^\"]*\)\".*/\1/p" | grep -v "^repositories$"); do
+    tags=$(get "http://$H/v2/$repo/tags/list" | grep "\"tags\":\[" | sed "s/.*\"tags\":\[\([^]]*\)\].*/\1/" | tr "," "\n" | sed -n "s/\"\([^\"]*\)\"/\1/p")
     for tag in $tags; do
-        echo "$repo:$tag $(wget -qO- --header "$A" "http://$H/v2/$repo/manifests/$tag" | sha256sum | cut -c1-12)"
+        echo "$repo:$tag $(get "http://$H/v2/$repo/manifests/$tag" | sha256sum | cut -c1-12)"
     done
 done
 exit 0'
