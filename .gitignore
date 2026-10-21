@@ -15,4 +15,4 @@ devlab
 *.pub
 TODO.md
 .claude/settings.local.json
-Session.vim
+Session.vim.cluster-build.log

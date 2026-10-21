@@ -80,12 +80,6 @@ build_node_selector() { node_selector REG_BUILD_NODE_SELECTOR "$REG_BUILD_NODE_S
 # registry_host is the registry's address inside the cluster, for pushes from pods.
 registry_host() { echo "$REG_NAME.$REG_NAMESPACE.svc.cluster.local:5000"; }
 
-# tag_digest prints the digest of repo:tag in the registry, asked from a pod; empty if absent.
-tag_digest() {
-    local pod="$1" repo="$2" tag="$3"
-    kn exec "$pod" -- sh -c "body=\$(wget -qO- --header 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json' 'http://$(registry_host)/v2/$repo/manifests/$tag' 2>/dev/null); [ -n \"\$body\" ] && printf %s \"\$body\" | sha256sum | cut -c1-12; exit 0"
-}
-
 kubectl() { command kubectl ${REG_CONTEXT:+--context "$REG_CONTEXT"} "$@"; }
 kn() { kubectl -n "$REG_NAMESPACE" "$@"; }
 say() { printf '%s\n' "$*"; }
@@ -304,34 +298,120 @@ cmd_build() {
     tar czf - -C "$dir" "${excludes[@]}" . | kn exec -i "$pod" -- tar xzf - -C /work/context
     kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
     say "In the pod: context $(kn exec "$pod" -- sh -c 'du -sh /work/context | cut -f1'), build file $(kn exec "$pod" -- wc -c /work/cluster-build.sh | cut -d' ' -f1) bytes (local: $(wc -c <"$file"))"
-    # The tags the file pushes as $REG/..., and what the registry holds for them now
-    local names name repo tag before=() after verdict updated=0 problems=0
-    names="$(grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed 's|^\$REG/||;s|^\${REG}/||' | sort -u)"
-    [ -n "$names" ] || say "Note: the build file tags nothing with \$REG/, so nothing it builds reaches the registry (tag images \$REG/<name>:<tag> and push them)"
-    for name in $names; do
-        repo="${name%%:*}"; tag="${name#*:}"; [ "$tag" != "$name" ] || tag=latest
-        before+=("$repo:$tag=$(tag_digest "$pod" "$repo" "$tag")")
+    local log="$dir/.cluster-build.log"
+    say "Registry before the build: $(registry_snapshot "$pod" | wc -l | tr -d ' ') tags"
+    registry_snapshot "$pod" >"$log.before"
+    say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +; full log in $log):"
+    local started=$SECONDS tty=() progress="${BUILDKIT_PROGRESS:-plain}" status=0
+    if [ -t 0 ] && [ -t 1 ]; then tty=(-it); progress="${BUILDKIT_PROGRESS:-auto}"; fi   # a terminal: buildx's live progress, as locally
+    kn exec "${tty[@]}" "$pod" -- sh -c "set -o pipefail; cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress sh -ex /work/cluster-build.sh 2>&1 | tee /work/build.log" \
+        || status=$?
+    kn exec "$pod" -- cat /work/build.log | tr -d '\r' >"$log"
+    registry_snapshot "$pod" >"$log.after"
+    say ""
+    say "The build file $([ $status -eq 0 ] && echo finished || echo "FAILED with exit code $status") after $((SECONDS - started))s. What it did, from its trace and the registry:"
+    build_report "$log" || status=1
+    rm -f "$log.before" "$log.after"
+    [ $status -eq 0 ] || exit $status
+}
+
+# registry_snapshot prints "repo:tag digest" for every tag in the registry, asked from a pod.
+registry_snapshot() {
+    kn exec "$1" -- sh -c '
+H="'"$(registry_host)"'"
+A="Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json"
+for repo in $(wget -qO- "http://$H/v2/_catalog?n=1000" | tr "," "\n" | sed -n "s/.*\"\([^\"]*\)\".*/\1/p" | grep -v "^repositories$"); do
+    tags=$(wget -qO- "http://$H/v2/$repo/tags/list" | grep "\"tags\":\[" | sed "s/.*\"tags\":\[\([^]]*\)\].*/\1/" | tr "," "\n" | sed -n "s/\"\([^\"]*\)\"/\1/p")
+    for tag in $tags; do
+        echo "$repo:$tag $(wget -qO- --header "$A" "http://$H/v2/$repo/manifests/$tag" | sha256sum | cut -c1-12)"
     done
-    say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +):"
-    local started=$SECONDS tty=() progress=plain
-    if [ -t 0 ] && [ -t 1 ]; then tty=(-it); progress=auto; fi   # a terminal: buildx's live progress, as locally
-    kn exec "${tty[@]}" "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress sh -ex /work/cluster-build.sh" \
-        || die "the build failed after $((SECONDS - started))s"
-    say "The build file finished in $((SECONDS - started))s."
-    for name in "${before[@]}"; do
-        repo="${name%%:*}"; tag="${name#*:}"; tag="${tag%%=*}"
-        after="$(tag_digest "$pod" "$repo" "$tag")"
-        if [ -z "$after" ]; then
-            verdict="NOT PUSHED: localhost:$REG_NODE_PORT/$repo:$tag is not in the registry (no --push, or --load, or a docker push that did not run?)"; problems=$((problems + 1))
-        elif [ "$after" = "${name#*=}" ]; then
-            verdict="Pushed (same digest $after as before the build: nothing changed). In the cluster: localhost:$REG_NODE_PORT/$repo:$tag"; updated=$((updated + 1))
-        else
-            verdict="Pushed (new digest $after). In the cluster: localhost:$REG_NODE_PORT/$repo:$tag"; updated=$((updated + 1))
-        fi
-        say "$verdict"
-    done
-    [ $problems -eq 0 ] || die "$problems of $((updated + problems)) tags are not in the registry after this build"
-    [ -n "$names" ] || return 1
+done
+exit 0'
+}
+
+# build_report reads the build trace: every image the docker commands tagged or pushed under
+# the registry's address, and whether the registry has it now (new, same or missing).
+build_report() {
+    REG_HOST="$(registry_host)" REG_PULL_HOST="localhost:$REG_NODE_PORT" python3 - "$1" <<'PY'
+import os, re, shlex, sys
+log = sys.argv[1]
+host, pull = os.environ["REG_HOST"], os.environ["REG_PULL_HOST"]
+def snapshot(path):
+    out = {}
+    for line in open(path):
+        parts = line.split()
+        if len(parts) == 2:
+            out[parts[0]] = parts[1]
+    return out
+before, after = snapshot(log + ".before"), snapshot(log + ".after")
+lines = open(log, errors="replace").read().splitlines()
+traced = [l for l in lines if l.startswith("+ ")]
+docker = [l for l in traced if re.match(r"\+ (sudo )?docker\b", l)]
+wanted = []
+def want(name):
+    if name.startswith(host + "/"):
+        name = name[len(host) + 1:]
+        if ":" not in name.rsplit("/", 1)[-1]:
+            name += ":latest"
+        if name not in wanted:
+            wanted.append(name)
+for line in docker:
+    try:
+        words = shlex.split(line[2:])
+    except ValueError:
+        words = line[2:].split()
+    for i, word in enumerate(words):
+        if word in ("-t", "--tag") and i + 1 < len(words):
+            want(words[i + 1])
+        elif word.startswith(("-t=", "--tag=")):
+            want(word.split("=", 1)[1])
+        elif word.startswith("--output") or word.startswith("-o"):
+            value = word.split("=", 1)[1] if "=" in word else (words[i + 1] if i + 1 < len(words) else "")
+            m = re.search(r"name=([^,]+)", value)
+            if m:
+                want(m.group(1))
+    if len(words) >= 3 and words[1] == "push":
+        want(words[-1])
+    if len(words) >= 4 and words[1] == "tag":
+        want(words[-1])
+problems = 0
+if not docker:
+    print("  No docker command ran. The trace of the build file was:")
+    for l in traced or ["  (nothing: the file has no commands, or they are all comments)"]:
+        print("   " + l)
+    sys.exit(1)
+print("  Docker commands that ran:")
+for l in docker:
+    print("   " + (l if len(l) < 200 else l[:197] + "..."))
+if not wanted:
+    print(f"  None of them tagged or pushed an image under {host}/ ($REG). Nothing could reach the registry.")
+    print(f"  Tag the build -t \"$REG/<name>:<tag>\" and push it (--push, or docker push).")
+    problems += 1
+for name in wanted:
+    if name in after and name not in before:
+        print(f"  Pushed (new, digest {after[name]}). In the cluster: {pull}/{name}")
+    elif name in after and after[name] != before[name]:
+        print(f"  Pushed (updated, digest {before[name]} -> {after[name]}). In the cluster: {pull}/{name}")
+    elif name in after:
+        print(f"  Pushed (same digest {after[name]} as before: identical to what the registry had). In the cluster: {pull}/{name}")
+    else:
+        problems += 1
+        print(f"  NOT PUSHED: {pull}/{name} is not in the registry. Why, from the trace:")
+        cmds = [l for l in docker if host + "/" + name.rsplit(":", 1)[0] in l]
+        pushed = any("--push" in l or " push " in l for l in cmds)
+        if not pushed:
+            print(f"   - no command pushed it: the build has no --push and nothing ran 'docker push {host}/{name}' (a --load or a plain docker build only stores it in the build pod)")
+        errors = [l for l in lines if re.search(r"error|denied|refused|failed|unauthorized|no such host|HTTPS client", l, re.I) and not l.startswith("+ ")]
+        for l in errors[-5:]:
+            print("   - " + l.strip()[:200])
+        repo = name.rsplit(":", 1)[0]
+        tags = sorted(k.split(":", 1)[1] for k in after if k.rsplit(":", 1)[0] == repo)
+        print(f"   - the registry has for {repo}: {', '.join(tags) if tags else 'nothing'}")
+changed = {k: v for k, v in after.items() if before.get(k) != v and k not in wanted}
+for name, digest in sorted(changed.items()):
+    print(f"  Also changed in the registry during the build: {pull}/{name} (digest {digest})")
+sys.exit(1 if problems else 0)
+PY
 }
 
 cmd_builder_down() {
