@@ -202,7 +202,7 @@ docker build -t "$REG/team/gpu-app:dev" .
 docker push "$REG/team/gpu-app:dev"
 ```
 
-The legacy builder has no `--push`, `--mount`, `--platform` or multi-stage parallelism, and Docker prints a deprecation notice for it; `docker buildx build` in the same file still works for steps that need no GPU. The GPU is shared with nothing else while the build pod holds it; `builder-down` frees it. On AKS and EKS GPU nodes the NVIDIA runtime is the nodes' default, so `REG_BUILD_RUNTIME_CLASS` stays empty.
+The legacy builder has no `--push`, `--mount`, `--platform` or multi-stage parallelism, and Docker prints a deprecation notice for it; `docker buildx build` in the same file still works for steps that need no GPU. `ENV` is per stage: a stage from an outside image needs the NVIDIA variables again, one from an earlier stage of yours inherits them, and `ENV NVIDIA_VISIBLE_DEVICES=void` in a stage keeps the GPU out of its steps. With `REG_BUILD_GPU=0` the same image runs containers with plain runc, so it serves as the build pod for ordinary builds too (behind TLS inspection it is the one with your certificates). The GPU is shared with nothing else while the build pod holds it; `builder-down` frees it. On AKS and EKS GPU nodes the NVIDIA runtime is the nodes' default, so `REG_BUILD_RUNTIME_CLASS` stays empty.
 
 ## 5. Point manifests and charts at it
 
