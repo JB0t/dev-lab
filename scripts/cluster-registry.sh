@@ -293,8 +293,23 @@ cmd_build() {
     kn exec -i "$pod" -- sh -c 'cat > /work/cluster-build.sh' <"$file"
     say "Running $file in the cluster; push images as \$REG/<name>, pull them as localhost:$REG_NODE_PORT/<name>"
     kn exec "$pod" -- sh -c "cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' sh -e /work/cluster-build.sh" || die "the build failed"
-    say "Built. Images the build file tagged with \$REG/ are in the registry as:"
-    grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed "s|^\\\$REG/|localhost:$REG_NODE_PORT/|;s|^\\\${REG}/|localhost:$REG_NODE_PORT/|" | sort -u | sed 's/^/  /'
+    local names name repo tag found=0 missing=0
+    names="$(grep -o '\$REG/[^ "'"'"']*\|\${REG}/[^ "'"'"']*' "$file" | sed 's|^\$REG/||;s|^\${REG}/||' | sort -u)"
+    if [ -z "$names" ]; then
+        say "The build file exited 0 but tags nothing with \$REG/: whatever it built stays in the build pod's docker"
+        say "(kubectl -n $REG_NAMESPACE exec deploy/$REG_NAME-builder -- docker images). Tag images \$REG/<name>:<tag> and push them."
+        return 1
+    fi
+    say "Checking the registry for the images the build file tags with \$REG/:"
+    for name in $names; do
+        repo="${name%%:*}"; tag="${name#*:}"; [ "$tag" != "$name" ] || tag=latest
+        if kn exec "$pod" -- wget -qO- "http://$(registry_host)/v2/$repo/tags/list" 2>/dev/null | grep -q "\"$tag\""; then
+            say "  localhost:$REG_NODE_PORT/$repo:$tag"; found=$((found + 1))
+        else
+            say "  localhost:$REG_NODE_PORT/$repo:$tag  MISSING: not pushed (no --push, or --load, or a docker push that did not run?)"; missing=$((missing + 1))
+        fi
+    done
+    [ $missing -eq 0 ] || die "$missing of $((found + missing)) images are not in the registry"
 }
 
 cmd_builder_down() {
