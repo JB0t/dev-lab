@@ -52,6 +52,9 @@ REG_REGISTRY_NODE_SELECTOR="${REG_REGISTRY_NODE_SELECTOR:-{\}}"
 # and what the context tar leaves out (comma-separated tar patterns).
 REG_BUILD_IMAGE="${REG_BUILD_IMAGE:-docker:28.3-dind}"
 REG_BUILD_SIZE="${REG_BUILD_SIZE:-50Gi}"
+# StorageClass of the build cache (empty: REG_STORAGE_CLASS or the default; "none": emptyDir).
+# It must be a block disk (ext4/xfs): overlay2 cannot run on Azure Files, EFS or NFS.
+REG_BUILD_STORAGE_CLASS="${REG_BUILD_STORAGE_CLASS:-}"
 REG_BUILD_NODE_SELECTOR="${REG_BUILD_NODE_SELECTOR:-{\}}"
 REG_BUILD_TOLERATIONS="${REG_BUILD_TOLERATIONS:-$REG_TOLERATIONS}"
 REG_BUILD_EXCLUDE="${REG_BUILD_EXCLUDE:-.git}"
@@ -106,13 +109,16 @@ for item in json.load(sys.stdin).get("items", []):
         print(item["metadata"]["name"]); break'
 }
 
-# storage_class decides what the PVC uses: the variable, else the default, else none.
-storage_class() {
-    if [ "$REG_STORAGE_CLASS" = none ]; then
+# storage_class decides what the registry PVC uses: the variable, else the default, else none.
+storage_class() { pick_storage_class "$REG_STORAGE_CLASS"; }
+# build_storage_class is the same for the build cache, with its own variable first.
+build_storage_class() { pick_storage_class "${REG_BUILD_STORAGE_CLASS:-$REG_STORAGE_CLASS}"; }
+pick_storage_class() {
+    if [ "$1" = none ]; then
         echo ""
-    elif [ -n "$REG_STORAGE_CLASS" ]; then
-        kubectl get storageclass "$REG_STORAGE_CLASS" >/dev/null || die "StorageClass $REG_STORAGE_CLASS not found"
-        echo "$REG_STORAGE_CLASS"
+    elif [ -n "$1" ]; then
+        kubectl get storageclass "$1" >/dev/null || die "StorageClass $1 not found"
+        echo "$1"
     else
         default_storage_class
     fi
@@ -153,7 +159,12 @@ cmd_check() {
     say "Registry:  namespace $REG_NAMESPACE, name $REG_NAME, nodes pull localhost:$REG_NODE_PORT/<image>, push via localhost:$REG_LOCAL_PORT"
     say "Proxy tolerations: $(tolerations "$REG_TOLERATIONS")$([ "$REG_TOLERATIONS" = all ] || echo '  (tainted nodes without a matching toleration get no proxy and cannot pull)')"
     say "Registry pod: tolerations $(tolerations "$REG_REGISTRY_TOLERATIONS"), node selector $(registry_node_selector)"
-    say "Build pod: tolerations $(tolerations "$REG_BUILD_TOLERATIONS"), node selector $(build_node_selector), cache $REG_BUILD_SIZE"
+    local bsc
+    bsc="$(build_storage_class)"
+    say "Build pod: tolerations $(tolerations "$REG_BUILD_TOLERATIONS"), node selector $(build_node_selector), cache $REG_BUILD_SIZE on ${bsc:-emptyDir}"
+    if [ -n "$bsc" ] && kubectl get storageclass "$bsc" -o jsonpath='{.provisioner}' | grep -qiE 'file|nfs|efs|smb|cifs'; then
+        say "  $bsc looks like a file share: overlay2 cannot run on it. Set REG_BUILD_STORAGE_CLASS to a disk class (AKS managed-csi, EKS gp3) or none."
+    fi
     if kn get deployment "$REG_NAME" >/dev/null 2>&1; then
         say "Installed: yes ($(kn get pods -l app="$REG_NAME-proxy" --no-headers 2>/dev/null | grep -c Running) proxy pods running)"
     else
@@ -210,6 +221,8 @@ spec:
           image: $REG_BUILD_IMAGE
           args:
             - --insecure-registry=$(registry_host)
+            # Fail at once on a volume overlayfs cannot use, instead of probing every driver
+            - --storage-driver=overlay2
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""
@@ -250,12 +263,14 @@ builder_pod() {
     kn get service "$REG_NAME" >/dev/null || die "registry not installed: run $0 up"
     if ! kn get deployment "$REG_NAME-builder" >/dev/null 2>&1; then
         say "Creating the build pod (Docker-in-Docker) in $REG_NAMESPACE" >&2
-        builder_manifests "$(storage_class)" | kubectl apply -f - >&2
+        builder_manifests "$(build_storage_class)" | kubectl apply -f - >&2
     fi
     kn rollout status deployment "$REG_NAME-builder" --timeout=300s >&2 || {
         say "Build pod not ready (privileged pods refused? no node matches REG_BUILD_NODE_SELECTOR? the PVC?). Pod state:" >&2
         kn get pods -l app="$REG_NAME-builder" -o wide >&2
         kn describe pods -l app="$REG_NAME-builder" | grep -A3 '^Events' | tail -3 >&2
+        say "Last dockerd log lines ('error initializing graphdriver' = the cache volume's filesystem cannot hold overlay2: set REG_BUILD_STORAGE_CLASS):" >&2
+        kn logs -l app="$REG_NAME-builder" --tail=5 2>/dev/null | grep -v aufs >&2 || true
         exit 1
     }
     kn get pods -l app="$REG_NAME-builder" --field-selector status.phase=Running -o jsonpath='{.items[0].metadata.name}'
@@ -561,6 +576,6 @@ case "${1:-}" in
     forward) cmd_forward ;;
     builder-down) cmd_builder_down ;;
     down) shift; cmd_down "$@" ;;
-    manifests) manifests "$(storage_class)"; echo ---; builder_manifests "$(storage_class)" ;;
+    manifests) manifests "$(storage_class)"; echo ---; builder_manifests "$(build_storage_class)" ;;
     *) sed -n '2,15p' "$0"; exit 1 ;;
 esac

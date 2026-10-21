@@ -26,6 +26,7 @@ export REG_REGISTRY_TOLERATIONS=      # the registry pod's tolerations, same val
 export REG_REGISTRY_NODE_SELECTOR='{}' # node labels for the registry pod, e.g. '{"agentpool":"system"}'
 export REG_BUILD_IMAGE=docker:28.3-dind  # the in-cluster build pod (step 4b)
 export REG_BUILD_SIZE=50Gi               # its layer cache (PVC when there is a StorageClass)
+export REG_BUILD_STORAGE_CLASS=          # a disk class for the cache (empty: REG_STORAGE_CLASS/default; none: emptyDir)
 export REG_BUILD_NODE_SELECTOR='{}'      # where it runs, e.g. '{"devlab.io/gpu":"true"}' or '{"agentpool":"gpu"}'
 export REG_BUILD_TOLERATIONS=            # same values as REG_TOLERATIONS (empty: REG_TOLERATIONS)
 export REG_BUILD_EXCLUDE=.git            # comma-separated tar patterns left out of the build context
@@ -94,7 +95,7 @@ scripts/cluster-registry.sh build path/to/context path/to/build.sh    # or any f
 
 The build file is a shell script (`sh -e`) run in the context directory on the pod, with `docker` and `docker buildx` available and two variables set: `REG`, the registry's in-cluster address to push to (`registry.cluster-registry.svc.cluster.local:5000`), and `REG_PULL`, the name pods use (`localhost:5000`). Tag images as `$REG/<name>:<tag>` and push them (`--push`, or `docker push`); the script lists them afterwards by their `localhost:5000/...` names. Anything docker can do works: `--build-arg`, `-f`, `--target`, several builds, `docker run` for a smoke test.
 
-- The first `build` creates the pod (`<REG_NAME>-builder`, privileged, as dockerd needs; the namespace already allows it) and a PVC of `REG_BUILD_SIZE` for its layer cache, so rebuilds reuse layers. Without a StorageClass the cache is an emptyDir and goes with the pod.
+- The first `build` creates the pod (`<REG_NAME>-builder`, privileged, as dockerd needs; the namespace already allows it) and a PVC of `REG_BUILD_SIZE` for its layer cache, so rebuilds reuse layers. Without a StorageClass the cache is an emptyDir and goes with the pod. The cache must be on a block disk (ext4/xfs): dockerd's overlay2 cannot run on Azure Files, EFS or NFS, so where such a class is the default, set `REG_BUILD_STORAGE_CLASS` to a disk class (`managed-csi` on AKS, `gp3` on EKS) or `none`. `check` warns when the class looks like a file share.
 - `REG_BUILD_NODE_SELECTOR` and `REG_BUILD_TOLERATIONS` place it: on a GPU node, e.g. `'{"devlab.io/gpu":"true"}'`, or on whatever pool has the disk. Pulling a multi-GB base image happens on the node's network, not yours.
 - `RUN` steps in a Dockerfile do not see the node's GPU, with Docker-in-Docker as with any builder; `nvcc` compiles without one. A GPU node is useful for its resources and its CPU architecture, not for running CUDA at build time.
 - The context is sent as a tar each time (`REG_BUILD_EXCLUDE` leaves `.git` out; add build outputs there). A `.dockerignore` in the context still applies to the build itself.
@@ -150,5 +151,6 @@ To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, d
 | Pod keeps an old build of the same tag | `imagePullPolicy: Always` or a new tag |
 | Registry pod `Pending`, `node(s) had untolerated taint(s)` or `didn't match Pod's node affinity/selector` | Every node is tainted or none matches the selector: set `REG_REGISTRY_TOLERATIONS` (default `all` tolerates everything) or `REG_REGISTRY_NODE_SELECTOR`, run `up` again |
 | `build`: pod not ready, `privileged` refused | Pod Security or Gatekeeper forbids privileged pods even in this namespace: no Docker-in-Docker there; build elsewhere and `push` |
+| `build`: pod never ready, dockerd log ends in `error initializing graphdriver` (after `aufs is not supported` lines, which are harmless on their own) | The cache PVC is on a file share (Azure Files, EFS, NFS), where overlay2 cannot run: `builder-down`, set `REG_BUILD_STORAGE_CLASS` to a disk class or `none`, build again |
 | `build`: `failed to solve: ... connection refused` or `http: server gave HTTP response` on push | The registry Service is not reachable from the build pod (NetworkPolicy?), or the `--insecure-registry` flag was lost: `kubectl -n $REG_NAMESPACE get deployment $REG_NAME-builder -o yaml | grep insecure` |
 | Registry pod `Pending` with the PVC `Pending` | The StorageClass cannot provision (EKS without the EBS CSI add-on): `REG_STORAGE_CLASS=none` for an emptyDir, or install the driver |
