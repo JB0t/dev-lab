@@ -58,6 +58,12 @@ REG_BUILD_STORAGE_CLASS="${REG_BUILD_STORAGE_CLASS:-}"
 REG_BUILD_NODE_SELECTOR="${REG_BUILD_NODE_SELECTOR:-{\}}"
 REG_BUILD_TOLERATIONS="${REG_BUILD_TOLERATIONS:-$REG_TOLERATIONS}"
 REG_BUILD_EXCLUDE="${REG_BUILD_EXCLUDE:-.git}"
+# GPUs for the build pod (nvidia.com/gpu limit), for Dockerfiles whose RUN steps need one.
+# Needs the GPU builder image (config/cluster-registry/gpu-builder, pushed with "push") as
+# REG_BUILD_IMAGE and the legacy builder in the build file: DOCKER_BUILDKIT=0 docker build.
+# REG_BUILD_RUNTIME_CLASS is the pod's RuntimeClass where the GPU runtime is not the default.
+REG_BUILD_GPU="${REG_BUILD_GPU:-0}"
+REG_BUILD_RUNTIME_CLASS="${REG_BUILD_RUNTIME_CLASS:-}"
 
 # tolerations prints a tolerations setting (all, none or a JSON array) as a JSON array.
 tolerations() {
@@ -161,7 +167,7 @@ cmd_check() {
     say "Registry pod: tolerations $(tolerations "$REG_REGISTRY_TOLERATIONS"), node selector $(registry_node_selector)"
     local bsc
     bsc="$(build_storage_class)"
-    say "Build pod: tolerations $(tolerations "$REG_BUILD_TOLERATIONS"), node selector $(build_node_selector), cache $REG_BUILD_SIZE on ${bsc:-emptyDir}"
+    say "Build pod: tolerations $(tolerations "$REG_BUILD_TOLERATIONS"), node selector $(build_node_selector), cache $REG_BUILD_SIZE on ${bsc:-emptyDir}, GPUs $REG_BUILD_GPU"
     if [ -n "$bsc" ] && kubectl get storageclass "$bsc" -o jsonpath='{.provisioner}' | grep -qiE 'file|nfs|efs|smb|cifs'; then
         say "  $bsc looks like a file share: overlay2 cannot run on it. Set REG_BUILD_STORAGE_CLASS to a disk class (AKS managed-csi, EKS gp3) or none."
     fi
@@ -216,6 +222,7 @@ spec:
     spec:
       nodeSelector: $(build_node_selector)
       tolerations: $(tolerations "$REG_BUILD_TOLERATIONS")
+$([ -n "$REG_BUILD_RUNTIME_CLASS" ] && echo "      runtimeClassName: $REG_BUILD_RUNTIME_CLASS")
       containers:
         - name: docker
           image: $REG_BUILD_IMAGE
@@ -226,6 +233,8 @@ spec:
           env:
             - name: DOCKER_TLS_CERTDIR
               value: ""
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: all
           securityContext:
             privileged: true
           readinessProbe:
@@ -236,6 +245,7 @@ spec:
             requests:
               cpu: 500m
               memory: 1Gi
+$([ "$REG_BUILD_GPU" != 0 ] && printf '            limits:\n              nvidia.com/gpu: "%s"\n' "$REG_BUILD_GPU")
           volumeMounts:
             - name: cache
               mountPath: /var/lib/docker
@@ -304,7 +314,9 @@ cmd_build() {
     say "Running $file in the cluster with REG=$(registry_host) REG_PULL=localhost:$REG_NODE_PORT (each command is echoed with a +; full log in $log):"
     local started=$SECONDS tty=() progress="${BUILDKIT_PROGRESS:-plain}" status=0
     if [ -t 0 ] && [ -t 1 ]; then tty=(-it); progress="${BUILDKIT_PROGRESS:-auto}"; fi   # a terminal: buildx's live progress, as locally
-    kn exec "${tty[@]}" "$pod" -- sh -c "set -o pipefail; cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress sh -ex /work/cluster-build.sh 2>&1 | tee /work/build.log" \
+    local legacy=""
+    [ "$REG_BUILD_GPU" = 0 ] || legacy="DOCKER_BUILDKIT=0"   # docker build then uses the legacy builder, whose RUN steps get the GPU
+    kn exec "${tty[@]}" "$pod" -- sh -c "set -o pipefail; cd /work/context && REG='$(registry_host)' REG_PULL='localhost:$REG_NODE_PORT' BUILDKIT_PROGRESS=$progress $legacy sh -ex /work/cluster-build.sh 2>&1 | tee /work/build.log" \
         || status=$?
     kn exec "$pod" -- cat /work/build.log | tr -d '\r' >"$log"
     registry_snapshot "$pod" >"$log.after"

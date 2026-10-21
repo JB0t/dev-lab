@@ -119,6 +119,13 @@ def gpu_cluster_spec(
     idle_timeout: Optional[int] = None,
     scheduler_node_port: Optional[int] = None,
     dashboard_node_port: Optional[int] = None,
+    worker_node_selector: Optional[Dict[str, str]] = None,
+    worker_tolerations: Optional[List[dict]] = None,
+    scheduler_node_selector: Optional[Dict[str, str]] = None,
+    scheduler_tolerations: Optional[List[dict]] = None,
+    runtime_class: Optional[str] = "nvidia",
+    one_worker_per_node: bool = False,
+    worker_cpu: str = "500m",
 ) -> dict:
     """DaskCluster resource for GPU workers with ``gpu_memory_gib`` GiB of GPU memory each.
 
@@ -145,6 +152,16 @@ def gpu_cluster_spec(
     ``scheduler_node_port`` makes the scheduler Service a NodePort with this
     port for the scheduler (TCP 8786), reachable on every node, and
     ``dashboard_node_port`` the port for its dashboard (HTTP 8787).
+
+    Placement, for clusters other than the lab's: ``worker_node_selector``
+    (default ``devlab.io/gpu=true``) and ``worker_tolerations`` (default the
+    ``nvidia.com/gpu`` taint) for the GPU pool, ``scheduler_node_selector``
+    (default ``devlab.io/gpu=false``) and ``scheduler_tolerations`` for the
+    CPU pool; ``runtime_class`` is the pods' RuntimeClass (``nvidia`` from
+    the GPU Operator; None where the default runtime has the GPU hooks, as
+    on AKS). ``one_worker_per_node`` adds a required anti-affinity between
+    the cluster's workers, so each takes a node (one worker per GPU node);
+    ``worker_cpu`` is the worker's CPU request.
     """
     memory = worker_memory(gpu_memory_gib)
     if gpu_shares is None:
@@ -184,7 +201,7 @@ def gpu_cluster_spec(
         "args": worker_args,
         "ports": [{"name": "http-dashboard", "containerPort": WORKER_DASHBOARD_PORT, "protocol": "TCP"}],
         "resources": {
-            "requests": {"cpu": "500m", "memory": "2Gi"},
+            "requests": {"cpu": worker_cpu, "memory": "2Gi"},
             "limits": {
                 # The DaskCluster CRD only accepts quantities as strings
                 "nvidia.com/gpu": str(gpu_shares),
@@ -199,13 +216,25 @@ def gpu_cluster_spec(
     if worker_volume_mounts:
         worker_container["volumeMounts"] = list(worker_volume_mounts)
     worker_pod = {
-        "runtimeClassName": "nvidia",
-        "nodeSelector": {"devlab.io/gpu": "true"},
-        "tolerations": [GPU_TOLERATION],
+        "nodeSelector": dict(worker_node_selector) if worker_node_selector is not None else {"devlab.io/gpu": "true"},
+        "tolerations": list(worker_tolerations) if worker_tolerations is not None else [GPU_TOLERATION],
         "containers": [worker_container],
     }
+    if runtime_class:
+        worker_pod["runtimeClassName"] = runtime_class
+    if one_worker_per_node:
+        worker_pod["affinity"] = {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+            "labelSelector": {"matchLabels": {"dask.org/cluster-name": name, "dask.org/component": "worker"}},
+            "topologyKey": "kubernetes.io/hostname",
+        }]}}
     if worker_volumes:
         worker_pod["volumes"] = list(worker_volumes)
+    scheduler_pod = {
+        "nodeSelector": dict(scheduler_node_selector) if scheduler_node_selector is not None
+        else {"devlab.io/gpu": "false"},
+    }
+    if scheduler_tolerations:
+        scheduler_pod["tolerations"] = list(scheduler_tolerations)
 
     labels = {"dask.org/cluster-name": name, "dask.org/component": "scheduler"}
     spec = {
@@ -220,7 +249,7 @@ def gpu_cluster_spec(
             },
             "scheduler": {
                 "spec": {
-                    "nodeSelector": {"devlab.io/gpu": "false"},
+                    **scheduler_pod,
                     "containers": [{
                         "name": "scheduler",
                         "image": image,
@@ -377,6 +406,37 @@ def standing_cluster_manifests(
     return [cluster, autoscaler, ingress]
 
 
+def parse_selector(text: Optional[str]) -> Optional[Dict[str, str]]:
+    """``KEY=VALUE,KEY=VALUE`` as a node selector; None as None."""
+    if text is None:
+        return None
+    selector = {}
+    for item in text.split(","):
+        if item.strip():
+            key, _, value = item.partition("=")
+            selector[key.strip()] = value.strip()
+    return selector
+
+
+def parse_tolerations(items: Optional[List[str]]) -> Optional[List[dict]]:
+    """``KEY[=VALUE][:EFFECT]`` items as tolerations; ``["none"]`` as []; None as None."""
+    if items is None:
+        return None
+    tolerations = []
+    for item in items:
+        if item.strip().lower() == "none":
+            continue
+        key, _, effect = item.partition(":")
+        key, has_value, value = key.partition("=")
+        toleration = {"key": key.strip(), "operator": "Equal" if has_value else "Exists"}
+        if has_value:
+            toleration["value"] = value.strip()
+        if effect:
+            toleration["effect"] = effect.strip()
+        tolerations.append(toleration)
+    return tolerations
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Print the manifests of a standing GPU Dask cluster as a Kubernetes List (JSON)."""
     parser = argparse.ArgumentParser(
@@ -409,6 +469,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "published as port 8787 of the Docker host (http://<host IP>:8787/workers); "
                              "0 for a random one")
     parser.add_argument("--image", default=IMAGE)
+    placement = parser.add_argument_group("placement", "for clusters other than the lab's (e.g. AKS; see the runbook)")
+    placement.add_argument("--worker-node-selector", metavar="KEY=VALUE[,KEY=VALUE]", default=None,
+                           help="node labels for the GPU workers (default devlab.io/gpu=true)")
+    placement.add_argument("--worker-toleration", metavar="KEY[=VALUE][:EFFECT]", action="append", default=None,
+                           help="taint the workers tolerate, repeatable, e.g. sku=gpu:NoSchedule "
+                                "(default nvidia.com/gpu:NoSchedule); none for no tolerations")
+    placement.add_argument("--scheduler-node-selector", metavar="KEY=VALUE[,KEY=VALUE]", default=None,
+                           help="node labels for the scheduler (default devlab.io/gpu=false)")
+    placement.add_argument("--scheduler-toleration", metavar="KEY[=VALUE][:EFFECT]", action="append", default=None,
+                           help="taint the scheduler tolerates, repeatable (default none)")
+    placement.add_argument("--runtime-class", default="nvidia",
+                           help="RuntimeClass of the worker pods (default nvidia, from the GPU Operator); "
+                                "none where the default runtime has the GPU hooks, as on AKS")
+    placement.add_argument("--one-worker-per-node", action="store_true",
+                           help="required anti-affinity between the workers: one per node, for pools "
+                                "with one GPU per node")
+    placement.add_argument("--worker-cpu", default="500m", help="CPU request per worker (default 500m)")
     args = parser.parse_args(argv)
 
     worker_resources = {} if args.resources.strip().lower() in ("", "none") else dict(
@@ -420,6 +497,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         unknown_task_duration=args.task_duration, worker_resources=worker_resources,
         scheduler_node_port=args.node_port or None,
         dashboard_node_port=args.dashboard_node_port or None,
+        worker_node_selector=parse_selector(args.worker_node_selector),
+        worker_tolerations=parse_tolerations(args.worker_toleration),
+        scheduler_node_selector=parse_selector(args.scheduler_node_selector),
+        scheduler_tolerations=parse_tolerations(args.scheduler_toleration),
+        runtime_class=None if args.runtime_class.lower() == "none" else args.runtime_class,
+        one_worker_per_node=args.one_worker_per_node,
+        worker_cpu=args.worker_cpu,
     )
     json.dump({"apiVersion": "v1", "kind": "List", "items": items}, sys.stdout, indent=2)
     print()
