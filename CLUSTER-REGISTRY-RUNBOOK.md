@@ -21,6 +21,7 @@ export REG_STORAGE_CLASS=            # empty: the cluster's default; "none": emp
 export REG_IMAGE=registry:2.8.3
 export REG_PROXY_IMAGE=alpine/socat:1.8.0.0
 export REG_TEST_IMAGE=alpine:3.20    # a small public image "test" pushes and runs
+export REG_TOLERATIONS=all           # proxy DaemonSet and test pod tolerations: all (operator Exists), none, or a JSON array
 cd ~/gh/jbotstevens/dev-lab          # or wherever the repo is; the script is scripts/cluster-registry.sh
 ```
 
@@ -38,7 +39,7 @@ Prints the context, the platform (azure, aws, gcp or on-prem, from the nodes' pr
 |---|---|
 | Default StorageClass (AKS `default`/`managed-csi`, EKS `gp2`/`gp3` only with the EBS CSI add-on, on-prem maybe none) | The PVC uses the cluster's default StorageClass; with none, the registry uses an emptyDir and `check` says which class to set in `REG_STORAGE_CLASS` |
 | Pod Security Admission (on-prem clusters often enforce `baseline`, which forbids hostNetwork) | The namespace is created with the `privileged` PSA labels |
-| Node taints (AKS `CriticalAddonsOnly`, GPU, Spot) | The proxy DaemonSet tolerates every taint, so every node can pull |
+| Node taints (AKS `CriticalAddonsOnly`, GPU, Spot) | By default the proxy DaemonSet tolerates every taint (`operator: Exists`), so every node can pull. `REG_TOLERATIONS=none` tolerates nothing, and a JSON array is used as it is, e.g. `REG_TOLERATIONS='[{"key":"nvidia.com/gpu","operator":"Exists"}]'`. A tainted node without a proxy cannot pull from the registry |
 | Windows node pools | The proxy and the registry select `kubernetes.io/os: linux`; Windows nodes cannot pull from it |
 | EKS Fargate | Runs no DaemonSets; pods on Fargate cannot pull from it. `check` warns when Fargate nodes exist |
 | Container runtime | containerd (AKS, EKS, kubeadm, k3s, kind) needs nothing. CRI-O needs `localhost:5000` as an insecure registry in `/etc/containers/registries.conf` on each node; `check` warns |
@@ -59,7 +60,7 @@ Creates the namespace, the PVC (or not), the Deployment, the Service and the pro
 scripts/cluster-registry.sh test
 ```
 
-Pulls `REG_TEST_IMAGE` locally, pushes it through the port-forward, runs it in the cluster as `localhost:5000/alpine:3.20` with `imagePullPolicy: Always`, and prints `PASS` with the node that pulled it. On `ErrImagePull` it prints the pull error, the node and the proxy pod on that node. The pod tolerates every taint, so on a mixed cluster run it a few times to land on different pools, or pin it: `kubectl run` with `--overrides` and a `nodeSelector`.
+Pulls `REG_TEST_IMAGE` locally, pushes it through the port-forward, runs it in the cluster as `localhost:5000/alpine:3.20` with `imagePullPolicy: Always`, and prints `PASS` with the node that pulled it. On `ErrImagePull` it prints the pull error, the node and the proxy pod on that node. The pod has the `REG_TOLERATIONS` tolerations, so on a mixed cluster run it a few times to land on different pools, or pin it: `kubectl run` with `--overrides` and a `nodeSelector`.
 
 ## 4. Push your images
 
