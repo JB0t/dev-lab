@@ -177,7 +177,9 @@ Three things, once:
 
 ```bash
 # 1. The GPU builder image: Docker-in-Docker on Ubuntu with the NVIDIA Container Toolkit. No GPU needed to build it.
-docker build -t gpu-builder:1 config/cluster-registry/gpu-builder
+#    build.sh copies the trusted CA certificates from python/certs into the image first (TLS inspection:
+#    the downloads during the build, and the inner dockerd's image pulls, trust them)
+config/cluster-registry/gpu-builder/build.sh gpu-builder:1
 scripts/cluster-registry.sh push gpu-builder:1
 # 2. The build pod from it, with a GPU (the nvidia.com/gpu limit also lands it on a GPU node)
 scripts/cluster-registry.sh builder-down            # if a build pod exists already
@@ -254,6 +256,7 @@ To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, d
 | `build`: pod not ready, `privileged` refused | Pod Security or Gatekeeper forbids privileged pods even in this namespace: no Docker-in-Docker there; build elsewhere and `push` |
 | `build`: pod never ready, dockerd log ends in `error initializing graphdriver` (after `aufs is not supported` lines, which are harmless on their own) | The cache PVC is on a file share (Azure Files, EFS, NFS), where overlay2 cannot run: `builder-down`, set `REG_BUILD_STORAGE_CLASS` to a disk class or `none`, build again |
 | `build` with `REG_BUILD_GPU`: `RUN` step says `nvidia-smi: not found` or `libcuda.so.1` missing | The step ran under BuildKit: use `docker build` (the legacy builder; `DOCKER_BUILDKIT=0` is set) not `docker buildx build`, and `ENV NVIDIA_VISIBLE_DEVICES=all` before the step |
+| Building `gpu-builder`: `SSL certificate problem` from curl or apt | TLS inspection: put the proxy's CA as a `.crt` under `python/certs/` and build with `config/cluster-registry/gpu-builder/build.sh`, which installs it before the downloads. The default `docker:dind` build pod has no such certificates, so behind inspection use the GPU builder image for every build, with `REG_BUILD_GPU=0` when no GPU is needed |
 | `build` with `REG_BUILD_GPU`: pod `Pending`, `Insufficient nvidia.com/gpu` | No free GPU, or a Dask worker holds them all: scale the workers down, or `REG_BUILD_NODE_SELECTOR` onto another pool |
 | `build`: `failed to solve: ... connection refused` or `http: server gave HTTP response` on push | The registry Service is not reachable from the build pod (NetworkPolicy?), or the `--insecure-registry` flag was lost: `kubectl -n $REG_NAMESPACE get deployment $REG_NAME-builder -o yaml | grep insecure` |
 | Registry pod `Pending` with the PVC `Pending` | The StorageClass cannot provision (EKS without the EBS CSI add-on): `REG_STORAGE_CLASS=none` for an emptyDir, or install the driver |
