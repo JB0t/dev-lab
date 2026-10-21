@@ -22,6 +22,8 @@ export REG_IMAGE=registry:2.8.3
 export REG_PROXY_IMAGE=alpine/socat:1.8.0.0
 export REG_TEST_IMAGE=alpine:3.20    # a small public image "test" pushes and runs
 export REG_TOLERATIONS=all           # proxy DaemonSet and test pod tolerations: all (operator Exists), none, or a JSON array
+export REG_REGISTRY_TOLERATIONS=      # the registry pod's tolerations, same values (empty: REG_TOLERATIONS)
+export REG_REGISTRY_NODE_SELECTOR='{}' # node labels for the registry pod, e.g. '{"agentpool":"system"}'
 cd ~/gh/jbotstevens/dev-lab          # or wherever the repo is; the script is scripts/cluster-registry.sh
 ```
 
@@ -39,7 +41,7 @@ Prints the context, the platform (azure, aws, gcp or on-prem, from the nodes' pr
 |---|---|
 | Default StorageClass (AKS `default`/`managed-csi`, EKS `gp2`/`gp3` only with the EBS CSI add-on, on-prem maybe none) | The PVC uses the cluster's default StorageClass; with none, the registry uses an emptyDir and `check` says which class to set in `REG_STORAGE_CLASS` |
 | Pod Security Admission (on-prem clusters often enforce `baseline`, which forbids hostNetwork) | The namespace is created with the `privileged` PSA labels |
-| Node taints (AKS `CriticalAddonsOnly`, GPU, Spot) | By default the proxy DaemonSet tolerates every taint (`operator: Exists`), so every node can pull. `REG_TOLERATIONS=none` tolerates nothing, and a JSON array is used as it is, e.g. `REG_TOLERATIONS='[{"key":"nvidia.com/gpu","operator":"Exists"}]'`. A tainted node without a proxy cannot pull from the registry |
+| Node taints (AKS `CriticalAddonsOnly`, GPU, Spot) | By default the proxy DaemonSet tolerates every taint (`operator: Exists`), so every node can pull. `REG_TOLERATIONS=none` tolerates nothing, and a JSON array is used as it is, e.g. `REG_TOLERATIONS='[{"key":"nvidia.com/gpu","operator":"Exists"}]'`. A tainted node without a proxy cannot pull from the registry. The registry pod takes `REG_REGISTRY_TOLERATIONS` (default: the same) and `REG_REGISTRY_NODE_SELECTOR`: on a cluster where every node pool is tainted it stays `Pending` with `untolerated taint` otherwise, and the cluster autoscaler reports `NotTriggerScaleUp` for the same reason |
 | Windows node pools | The proxy and the registry select `kubernetes.io/os: linux`; Windows nodes cannot pull from it |
 | EKS Fargate | Runs no DaemonSets; pods on Fargate cannot pull from it. `check` warns when Fargate nodes exist |
 | Container runtime | containerd (AKS, EKS, kubeadm, k3s, kind) needs nothing. CRI-O needs `localhost:5000` as an insecure registry in `/etc/containers/registries.conf` on each node; `check` warns |
@@ -122,4 +124,5 @@ To keep the registry but reclaim space: `scripts/cluster-registry.sh forward`, d
 | `exec format error` when the pod starts | Image built for the wrong CPU architecture; `check` lists the nodes' |
 | `docker push` to `localhost:5050` refused | Port-forward failed, likely the port is in use: change `REG_LOCAL_PORT` |
 | Pod keeps an old build of the same tag | `imagePullPolicy: Always` or a new tag |
+| Registry pod `Pending`, `node(s) had untolerated taint(s)` or `didn't match Pod's node affinity/selector` | Every node is tainted or none matches the selector: set `REG_REGISTRY_TOLERATIONS` (default `all` tolerates everything) or `REG_REGISTRY_NODE_SELECTOR`, run `up` again |
 | Registry pod `Pending` with the PVC `Pending` | The StorageClass cannot provision (EKS without the EBS CSI add-on): `REG_STORAGE_CLASS=none` for an emptyDir, or install the driver |
