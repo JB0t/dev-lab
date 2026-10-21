@@ -72,33 +72,96 @@ Pulls `REG_TEST_IMAGE` locally, pushes it through the port-forward, runs it in t
 
 ## 4. Push your images
 
-```bash
-scripts/cluster-registry.sh push localhost:5000/devlab-dask-gpu:2026.1.1 myapp:dev
+One image, followed through. Start from what `docker image ls` shows on this machine:
+
+```
+REPOSITORY                  TAG    IMAGE ID
+myacr.azurecr.io/team/base  1.0    3f2a9c1b0d4e
 ```
 
-Each image is tagged for the port-forward, pushed, and its in-cluster name printed. The registry host of a local name is dropped, so `localhost:5000/devlab-dask-gpu:2026.1.1` from the kind registry becomes `localhost:5000/devlab-dask-gpu:2026.1.1` in the cluster, and `myapp:dev` becomes `localhost:5000/myapp:dev`. Layers already in the registry are skipped, so a rebuild pushes only what changed. The push goes through the API server, which is slower than a direct registry: minutes for a multi-GB image the first time.
+```bash
+image=myacr.azurecr.io/team/base:1.0          # exactly as docker image ls shows it, REPOSITORY:TAG
+scripts/cluster-registry.sh push "$image"
+# Pushed. In the cluster: localhost:5000/team/base:1.0
+```
 
-- An image that exists only in the kind registry (not in local Docker) needs `docker pull localhost:5000/<image>` first.
-- Docker Desktop (Mac/Windows) runs the daemon in a VM that cannot reach the port-forward on the host's `localhost`. Use `crane` instead: `scripts/cluster-registry.sh forward` in one terminal, `crane copy myapp:dev localhost:5050/myapp:dev` in another.
-- `scripts/cluster-registry.sh list` shows every repository and tag in the registry.
+The same image now has three names, and which one to use depends on where you are:
+
+| Where | Name | Why |
+|---|---|---|
+| This machine (`docker image ls`) | `myacr.azurecr.io/team/base:1.0` | The local name; `push` takes it as it is |
+| In the registry (`list`) | `team/base:1.0` | A registry stores the path only. `push` drops the registry host (`myacr.azurecr.io/`, `localhost:5000/`, anything with a dot or a port); a plain `base:1.0` stays `base:1.0` |
+| A pod in the cluster | `localhost:5000/team/base:1.0` | `REG_PULL`: the nodes' loopback, which the proxy forwards to the registry |
+| The build pod (step 4b) | `$REG/team/base:1.0` | `REG`: the registry's Service address, since a pod has no proxy on its own loopback |
+
+`list` prints the registry's names with the `localhost:5000/` prefix, ready to paste into a manifest. Layers already in the registry are skipped, so a rebuild pushes only what changed. The push goes through the API server, slower than a direct registry: minutes for a multi-GB image the first time.
+
+- `push` wants the image in the local Docker. One that exists only in a registry (the kind one at `localhost:5000`, or ACR) needs `docker pull "$image"` first; `push` says so.
+- Docker Desktop (Mac/Windows) runs the daemon in a VM that cannot reach the port-forward on the host's `localhost`. Use `crane` instead: `scripts/cluster-registry.sh forward` in one terminal, `crane copy "$image" localhost:5050/team/base:1.0` in another.
 
 ## 4b. Build in the cluster
 
-For an image you cannot build on this machine: another CPU architecture, a build that needs a GPU node's disk, cores or memory, or no local Docker at all. The build runs in a Docker-in-Docker pod in the registry's namespace; the context directory is shipped to it over `kubectl exec` and a file of docker commands is run there.
+For an image you cannot build on this machine: another CPU architecture, a build that needs a GPU node's disk, cores or memory, or no local Docker at all. The build runs in a Docker-in-Docker pod in the registry's namespace; the context directory is shipped to it over `kubectl exec` and a file of docker commands is run there, with two variables set:
 
-```bash
-# config/dask/image/cluster-build.sh:
-#   docker buildx build -t "$REG/devlab-dask-gpu:2026.1.1" --push .
-scripts/cluster-registry.sh build config/dask/image                   # runs DIR/cluster-build.sh
-scripts/cluster-registry.sh build path/to/context path/to/build.sh    # or any file
+| Variable | Value | Use it for |
+|---|---|---|
+| `REG` | `<REG_NAME>.<REG_NAMESPACE>.svc.cluster.local:5000` | Every image name in the build: the base image to pull, the tag to push |
+| `REG_PULL` | `localhost:<REG_NODE_PORT>` | Only for printing the name pods will use |
+
+Continuing the example: build `team/app:dev` on top of the `team/base:1.0` pushed in step 4. The context directory:
+
+```
+app/
+├── Dockerfile
+└── cluster-build.sh
 ```
 
-The build file is a shell script (`sh -e`) run in the context directory on the pod, with `docker` and `docker buildx` available and two variables set: `REG`, the registry's in-cluster address to push to (`<REG_NAME>.<REG_NAMESPACE>.svc.cluster.local:5000`), and `REG_PULL`, the name pods use (`localhost:<REG_NODE_PORT>`). Tag images as `$REG/<name>:<tag>` and push them (`--push`, or `docker push`). From a terminal the build shows buildx's live progress as a local build does (plain step output otherwise), every command in the file is echoed with a `+`, and afterwards each tag the file names is checked in the registry: `Pushed (new digest ...). In the cluster: localhost:5000/<name>:<tag>`, or `NOT PUSHED` with a non-zero exit when the registry does not have it. Anything docker can do works: `--build-arg`, `-f`, `--target`, several builds, `docker run` for a smoke test.
+```dockerfile
+# app/Dockerfile. ARG before FROM, or FROM cannot see it.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY . /app
+```
+
+```bash
+# app/cluster-build.sh: a shell script run by sh -e in the context directory on the build pod.
+# The base image is the registry name from step 4 behind $REG; --pull takes a re-pushed base
+# instead of the pod's cached copy; --push sends the result to the registry.
+docker buildx build --pull --build-arg BASE_IMAGE="$REG/team/base:1.0" -t "$REG/team/app:dev" --push .
+```
+
+```bash
+scripts/cluster-registry.sh build app          # runs app/cluster-build.sh
+scripts/cluster-registry.sh build app other.sh # or any file
+```
+
+What it prints, in order: the context and build file sizes as received in the pod; every command of the file echoed with a `+`; buildx's live progress (from a terminal, as a local build shows it; plain step output otherwise), including the `pushing layer` lines; and for each tag the file names as `$REG/...`, the result of looking it up in the registry:
+
+```
+Pushed (new digest 584ba587df32). In the cluster: localhost:5000/team/app:dev
+```
+
+or `NOT PUSHED: localhost:5000/team/app:dev is not in the registry` with a non-zero exit, for a build that had no `--push` (or `--load`, or a `docker push` that did not run). A build whose result is byte-identical to what was there says `Pushed (same digest ... as before the build)`. The image then goes into a manifest as `localhost:5000/team/app:dev` (step 5).
+
+The three ways a base image from the registry fails, and the fix:
+
+- `$REG/myacr.azurecr.io/team/base:1.0` or `$REG/localhost:5000/team/base:1.0`: the registry holds `team/base:1.0`, the name `list` prints without its `localhost:5000/` prefix. Use `$REG/team/base:1.0`.
+- `FROM $REG/team/base:1.0` in the Dockerfile: `REG` is a variable of the build file's shell, not of the Dockerfile. Pass it as a build arg, as above.
+- `ARG BASE_IMAGE` placed after `FROM`: a `FROM` sees only the `ARG`s declared before it.
+
+To test a name from inside the build pod, independent of any build file:
+
+```bash
+kubectl -n "$REG_NAMESPACE" exec deploy/"$REG_NAME"-builder -- docker pull "$REG_NAME.$REG_NAMESPACE.svc.cluster.local:5000/team/base:1.0"
+```
+
+Anything docker can do works in the build file: `-f`, `--target`, several builds, `docker run` for a smoke test.
 
 - The first `build` creates the pod (`<REG_NAME>-builder`, privileged, as dockerd needs; the namespace already allows it) and a PVC of `REG_BUILD_SIZE` for its layer cache, so rebuilds reuse layers. Without a StorageClass the cache is an emptyDir and goes with the pod. The cache must be on a block disk (ext4/xfs): dockerd's overlay2 cannot run on Azure Files, EFS or NFS, so where such a class is the default, set `REG_BUILD_STORAGE_CLASS` to a disk class (`managed-csi` on AKS, `gp3` on EKS) or `none`. `check` warns when the class looks like a file share.
 - `REG_BUILD_NODE_SELECTOR` and `REG_BUILD_TOLERATIONS` place it: on a GPU node, e.g. `'{"devlab.io/gpu":"true"}'`, or on whatever pool has the disk. Pulling a multi-GB base image happens on the node's network, not yours.
 - `RUN` steps in a Dockerfile do not see the node's GPU, with Docker-in-Docker as with any builder; `nvcc` compiles without one. A GPU node is useful for its resources and its CPU architecture, not for running CUDA at build time.
 - The context is sent as a tar each time (`REG_BUILD_EXCLUDE` leaves `.git` out; add build outputs there). A `.dockerignore` in the context still applies to the build itself.
+- The dev-lab image: `scripts/cluster-registry.sh build config/dask/image` runs `config/dask/image/cluster-build.sh`, one `docker buildx build -t "$REG/devlab-dask-gpu:2026.1.1" --push .`.
 - `scripts/cluster-registry.sh builder-down` removes the pod and its cache and keeps the registry; `down` removes both.
 
 ## 5. Point manifests and charts at it
