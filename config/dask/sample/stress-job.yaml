@@ -25,7 +25,8 @@ spec:
             - name: PYTHONPATH
               value: /devlab
             # Set to the standing cluster's scheduler to use it instead of
-            # creating a cluster (N_WORKERS at most its --workers)
+            # creating a cluster. N_WORKERS fits run at once there too, so the
+            # cluster scales to N_WORKERS workers (at most its --workers)
             # - name: SCHEDULER_ADDRESS
             #   value: tcp://gpu-scheduler.dask:8786
             - name: N_WORKERS
