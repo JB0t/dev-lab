@@ -549,3 +549,23 @@ class StressTestTests(unittest.TestCase):
         self.assertEqual(sorted(result["cached"] for result in results), [False, False, True, True])
         self.assertLessEqual(self.module.peak_concurrency(results), 2)
         self.assertEqual(self.module.report(results, 0.0, 4), 0)
+
+    @unittest.skipUnless(importlib.util.find_spec("distributed") and importlib.util.find_spec("xgboost"),
+                         "dask distributed and xgboost not installed")
+    def test_cache_lasts_one_run(self):
+        from distributed import Client, LocalCluster
+        with LocalCluster(n_workers=1, threads_per_worker=1, processes=False, dashboard_address=None) as cluster, \
+                Client(cluster) as client:
+            args = (1, 2000, 8, 3, 5, "xgboost", "cpu")
+            first = self.module.run(client, 2, *args, "run", "run-a")
+            second = self.module.run(client, 2, *args, "run", "run-b")
+            kept = self.module.run(client, 2, *args, "keep", None)
+            kept_again = self.module.run(client, 2, *args, "keep", None)
+            off = self.module.run(client, 2, *args, "off", None)
+        cached = lambda results: [r["cached"] for r in sorted(results, key=lambda r: r["fit"])]  # noqa: E731
+        # A new run builds its data even though the worker still holds the last run's
+        self.assertEqual(cached(first), [False, True])
+        self.assertEqual(cached(second), [False, True])
+        self.assertEqual(cached(kept), [False, True])
+        self.assertEqual(cached(kept_again), [True, True])
+        self.assertEqual(cached(off), [False, False])

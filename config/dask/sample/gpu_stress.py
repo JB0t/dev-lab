@@ -15,6 +15,11 @@ building it (the quantile sketch and the copy to the GPU: the "build" column)
 and uses the worker's GPU memory to hold data instead of leaving it idle.
 DATASETS=FITS gives every fit its own data, built every time.
 
+The cache lasts one run (CACHE=run): standing workers outlive a run, so each
+run gets its own id and starts by building its data, whatever ran before.
+CACHE=off builds the data for every fit; CACHE=keep reuses data left by an
+earlier run with the same settings (only for testing the cache itself).
+
 Time slicing: four workers share one worker's rounds/s. MPS: the total
 grows until the GPU is full. Watch the GPU on the host meanwhile with
 `nvidia-smi dmon -s um`.
@@ -29,6 +34,8 @@ Environment:
                      cluster's --workers
     FITS             models to fit (8); each worker fits FITS / N_WORKERS
     DATASETS         datasets the fits share (1); fit i uses dataset i % DATASETS
+    CACHE            run (default): reuse a dataset within this run only; off:
+                     build it for every fit; keep: also across runs
     ROWS, COLUMNS    training data per fit (2000000 x 64 float32, 512 MB)
     MAX_DEPTH        tree depth (10)
     ROUNDS           boosting rounds per fit (200)
@@ -47,6 +54,7 @@ Exit code is 0 when every fit completed, 1 otherwise.
 import os
 import sys
 import time
+import uuid
 
 TASK_NAME = "fit"
 
@@ -105,16 +113,26 @@ def cached_data(worker, key, make):
     return cache["data"], True
 
 
-def fit(index, datasets, rows, columns, max_depth, rounds, library="xgboost", device="cuda"):
-    """Train one model on this worker's GPU share and report how it went"""
+def fit(index, datasets, rows, columns, max_depth, rounds, library="xgboost", device="cuda",
+        cache="run", run_id=None):
+    """Train one model on this worker's GPU share and report how it went
+
+    cache: "run" reuses the worker's dataset only within the run run_id, "keep"
+    also across runs, "off" builds it every time.
+    """
     from distributed import get_worker
 
     worker = get_worker()
     grid = GRID[index % len(GRID)]
     dataset = index % datasets
     start = time.time()
-    (train, valid), cached = cached_data(worker, (library, device, dataset, rows, columns),
-                                         lambda: build(library, device, dataset, rows, columns))
+    make = lambda: build(library, device, dataset, rows, columns)  # noqa: E731
+    if cache == "off":
+        worker.__dict__.pop("gpu_stress_data", None)  # free what an earlier run left on the GPU
+        (train, valid), cached = make(), False
+    else:
+        key = (library, device, dataset, rows, columns) + ((run_id,) if cache == "run" else ())
+        (train, valid), cached = cached_data(worker, key, make)
     built = time.time()
     if library == "xgboost":
         import xgboost as xgb
@@ -209,14 +227,19 @@ def main():
     max_depth = int(os.environ.get("MAX_DEPTH", "10"))
     rounds = int(os.environ.get("ROUNDS", "200"))
     library = os.environ.get("LIBRARY", "xgboost")
+    cache = os.environ.get("CACHE", "run").lower()
+    if cache not in ("run", "off", "keep"):
+        print(f"CACHE must be run, off or keep, not {cache!r}", file=sys.stderr)
+        return 2
     device = os.environ.get("DEVICE", "cuda")
     gpu_memory_gib = int(os.environ.get("GPU_MEMORY_GIB", "5"))
     gpu_shares = int(os.environ["GPU_SHARES"]) if os.environ.get("GPU_SHARES") else None
     name = os.environ.get("CLUSTER_NAME", "gpu-stress")
     address = os.environ.get("SCHEDULER_ADDRESS")
-    task_args = (datasets, rows, columns, max_depth, rounds, library, device)
+    run_id = uuid.uuid4().hex[:8]
+    task_args = (datasets, rows, columns, max_depth, rounds, library, device, cache, run_id)
     print(f"{fits} {library} fits of {rounds} rounds, depth {max_depth}, on {datasets} dataset(s) of {rows} x {columns}; "
-          f"{n_workers} workers", flush=True)
+          f"{n_workers} workers; data cache: {cache} (run {run_id})", flush=True)
 
     if address:
         print(f"Connecting to {address}", flush=True)
