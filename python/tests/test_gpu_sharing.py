@@ -231,6 +231,7 @@ class DaskClusterSpecTests(unittest.TestCase):
         self.assertEqual(scheduler["nodeSelector"], {"agentpool": "system"})
         self.assertEqual(scheduler["tolerations"], [{"key": "CriticalAddonsOnly", "operator": "Exists", "effect": "NoSchedule"}])
         self.assertEqual(self.helper.parse_tolerations(["none"]), [])
+        self.assertEqual(self.helper.parse_tolerations(["all"]), [{"operator": "Exists"}])
         self.assertIsNone(self.helper.parse_selector(None))
 
     def test_worker_env_volumes_and_scheduler_settings_are_optional(self):
