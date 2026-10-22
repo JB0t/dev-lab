@@ -14,6 +14,8 @@ configMapGenerator:
   - name: devlab-dask
     files:
       - devlab_dask.py
+      # Worker metrics collector, run in the cluster by `gpu_metrics.py job`
+      - gpu_metrics.py
   # The Dagster code location (devlab addon enable dagster), mounted at /dagster
   - name: devlab-dagster
     files:
