@@ -455,6 +455,77 @@ kubectl -n dask delete job gpu-stress   # before a re-run
 
 Your own job is the same manifest with your script and image, and in the script `Client("tcp://gpu-scheduler.dask:8786")` then `client.submit`/`client.gather` ("Use It From Your Own Code" above). From your machine instead: `kubectl -n dask port-forward svc/gpu-scheduler 8786:8786 8787:8787`, then `SCHEDULER_ADDRESS=tcp://localhost:8786` with the cluster's dask/distributed versions, dashboard at http://localhost:8787/status. The first fit waits for a node to boot and pull the image (minutes); a worker Pending longer than that with `Insufficient nvidia.com/gpu` means the device plugin is not running on the GPU pool.
 
+**Faster node scaling (AKS).** The cluster autoscaler decides within seconds: it scans every 10s and asks for all the nodes the Pending pods need at once, up to the pool's max. The minutes are Azure's: creating the VM, installing the GPU driver, starting the device plugin, then pulling the image. Scale-down is slow on purpose, 10 minutes idle by default. A profile that shortens the waits it controls (cluster-wide, so the CPU pools scale down sooner too):
+
+```bash
+az aks update -g <rg> -n <aks> --cluster-autoscaler-profile \
+  scan-interval=10s new-pod-scale-up-delay=0s \
+  max-node-provision-time=10m scale-down-delay-after-failure=1m \
+  scale-down-delay-after-add=3m scale-down-unneeded-time=3m \
+  skip-nodes-with-local-storage=false expander=least-waste
+```
+
+| Setting | Effect |
+|---|---|
+| `max-node-provision-time=10m` | A node that is not Ready in 10 minutes counts as failed (default 15m), so the autoscaler tries again or another pool sooner |
+| `scale-down-delay-after-add=3m`, `scale-down-unneeded-time=3m` | Idle nodes go after 3 minutes instead of 10 to 20. Use the warm pool below to keep them through a session |
+| `skip-nodes-with-local-storage=false` | Nodes whose pods use emptyDir (Dask workers spill there) can still be removed |
+| `expander=least-waste` | With several GPU pools (zones, sizes), grows the one that fits best; a pool in backoff is skipped |
+
+The bigger gains are outside the profile:
+
+- **Deallocate instead of delete.** `--scale-down-mode Deallocate` stops idle VMs instead of deleting them. Scale-up then starts a stopped VM, with the driver installed and the image still in its cache: about a minute instead of 5 to 10. You pay for the stopped VMs' disks. It needs a managed OS disk (`--node-osdisk-type Managed`, fixed when the pool is created) and does not work with Spot. Check with `az aks nodepool show ... --query "{os:osDiskType, mode:scaleDownMode}"`; on an ephemeral pool, create a new one with both flags.
+- **A floor during working hours.** `az aks nodepool update ... --update-cluster-autoscaler --min-count 2 --max-count 4` in the morning and `--min-count 0` at night, from a scheduled pipeline.
+- **Artifact streaming** (ACR Premium): nodes start containers before the whole image has arrived. `az aks nodepool update ... --enable-artifact-streaming` plus `az acr artifact-streaming update -n <acr> --repository team/devlab-dask-gpu --enable-streaming true`; check its availability in your region first.
+- **Regular priority, several zones.** Spot and single-zone pools fail to provision more often, and each failure costs a backoff.
+
+**Warm the pool before a run.** A cold node costs a job minutes, and a job measured on a cold pool times all of that. `gpu_warm.py` scales the pool to N nodes, pulls the image on each, and keeps them there until you are done:
+
+```bash
+python3 config/dask/gpu_warm.py up --nodes 4 \
+  --node-selector agentpool=t4 --toleration sku=gpu:NoSchedule \
+  --image myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1 \
+  --dask-autoscaler gpu
+# Warming 4 nodes (agentpool=t4) with myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1
+# DaskAutoscaler gpu: minimum 4 (was 0; `down` restores it)
+#     0:00  nodes 1/4, images 1/4, GPUs 1/4, Dask workers 1/4
+#     4:12  aks-t4-12345678-vmss000002 (westeurope-2): image pulled in 1m38s, nvidia.com/gpu 1
+#     ...
+# Warm after 6:05: 4 nodes with the image and nvidia.com/gpu, 4 Dask workers ready.
+#   ... run the jobs ...
+python3 config/dask/gpu_warm.py status
+python3 config/dask/gpu_warm.py down    # restores the minimum; nodes go after scale-down-unneeded-time
+```
+
+It applies a Deployment `gpu-warm` of N tiny pods, one per node (required anti-affinity), each running the image, so the autoscaler adds nodes until there are N and each pulls the image. A node counts as warm when the image is pulled and the node advertises `nvidia.com/gpu`. The pods request 1m CPU and no GPU, so workers fit beside them, and the autoscaler cannot remove their nodes. `--dask-autoscaler gpu` also raises that DaskAutoscaler's minimum to N, so N workers start and connect before the job, and `up` waits for them too. Without it, workers start when a job arrives, from the cached image, in seconds. `--nodes` is the pool's max count (`az aks nodepool show ... --query maxCount`). On a timeout it prints why pods are Pending (`NotTriggerScaleUp`, quota, taints) and leaves the pods to keep trying. `--context` targets another cluster; `--image` repeats for several images.
+
+**Measure the workers.** `gpu_metrics.py` samples every worker pod every 5 seconds and writes a CSV, then compares runs. Run the same job at each worker count, each with its own label:
+
+```bash
+python3 config/dask/gpu_metrics.py collect --label workers=4 --out w4.csv --job gpu-stress
+#   0s  + gpu-default-worker-6f1c... on aks-t4-...-vmss000002
+#   5s  workers 4  GPU util  97% (min 93)  GPU mem  21% (max 22)  CPU 1.04 cores/worker
+#   ...
+# Stopped: job gpu-stress finished
+python3 config/dask/gpu_metrics.py summary w1.csv w2.csv w4.csv
+# run                    time  workers GPUs  util  busy  p95 busy% GPUmem  max  maxMiB   CPU  %req  RAM%  err
+# workers=1             ...
+```
+
+Each sample runs a small shell probe in the pod: CPU and memory from the container's cgroup (exact per interval, not the metrics-server's minute averages), GPU utilization and memory from `nvidia-smi`. The probe needs only `sh` in the container, and `nvidia-smi` for the GPU columns. It stops when `--job` has finished, when no worker has run for `--stop-after-idle` (60s), after `--duration`, or on Ctrl-C. `--selector` and `--container` point it at any pods, so the real workload is measured the same way. GPU numbers are per GPU: pods sharing a GPU report the same one, and the summary counts it once.
+
+It runs from your machine through `kubectl` (`--context` for another cluster). To run it in the cluster on the CPU pool instead, `job` prints a Job with its own ServiceAccount and Role (pods list, `pods/exec`). It runs the script from the `devlab-dask` ConfigMap, so re-apply `kubectl apply -k config/dask` first. The Job's log is the CSV:
+
+```bash
+python3 config/dask/gpu_metrics.py job --label workers=4 --job gpu-stress \
+  --node-selector agentpool=<general> --toleration all \
+  --image myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1 | kubectl apply -f -
+kubectl -n dask wait --for=condition=complete job/gpu-metrics --timeout=2h
+kubectl -n dask logs job/gpu-metrics > w4.csv && kubectl -n dask delete job gpu-metrics
+```
+
+The Dask dashboard shows the same GPU figures live (http://localhost:8787/individual-gpu-utilization and `/individual-gpu-memory` through the port-forward); the worker's Prometheus endpoint has no GPU metrics. With `--rmm-pool` the GPU memory column shows the whole pool from the start, used or not.
+
 ## Sizing
 
 Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each worker also needs about 0.5 GiB for its CUDA context, which comes out of its own shares.
