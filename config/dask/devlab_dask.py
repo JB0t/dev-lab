@@ -421,12 +421,16 @@ def parse_selector(text: Optional[str]) -> Optional[Dict[str, str]]:
 
 
 def parse_tolerations(items: Optional[List[str]]) -> Optional[List[dict]]:
-    """``KEY[=VALUE][:EFFECT]`` items as tolerations; ``["none"]`` as []; None as None."""
+    """``KEY[=VALUE][:EFFECT]`` items as tolerations; ``all`` tolerates every taint
+    (``operator: Exists`` alone); ``["none"]`` as []; None as None."""
     if items is None:
         return None
     tolerations = []
     for item in items:
         if item.strip().lower() == "none":
+            continue
+        if item.strip().lower() == "all":
+            tolerations.append({"operator": "Exists"})
             continue
         key, _, effect = item.partition(":")
         key, has_value, value = key.partition("=")
@@ -476,11 +480,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                            help="node labels for the GPU workers (default devlab.io/gpu=true)")
     placement.add_argument("--worker-toleration", metavar="KEY[=VALUE][:EFFECT]", action="append", default=None,
                            help="taint the workers tolerate, repeatable, e.g. sku=gpu:NoSchedule "
-                                "(default nvidia.com/gpu:NoSchedule); none for no tolerations")
+                                "(default nvidia.com/gpu:NoSchedule); all for every taint; none for no tolerations")
     placement.add_argument("--scheduler-node-selector", metavar="KEY=VALUE[,KEY=VALUE]", default=None,
                            help="node labels for the scheduler (default devlab.io/gpu=false)")
     placement.add_argument("--scheduler-toleration", metavar="KEY[=VALUE][:EFFECT]", action="append", default=None,
-                           help="taint the scheduler tolerates, repeatable (default none)")
+                           help="taint the scheduler tolerates, repeatable; all for every taint (default none)")
     placement.add_argument("--runtime-class", default="nvidia",
                            help="RuntimeClass of the worker pods (default nvidia, from the GPU Operator); "
                                 "none where the default runtime has the GPU hooks, as on AKS")
