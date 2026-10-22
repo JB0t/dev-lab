@@ -397,6 +397,64 @@ The same options exist on `gpu_cluster_spec`/`gpu_cluster` (`worker_node_selecto
 - GPU drivers and the device plugin: AKS installs the driver on GPU pools; install the NVIDIA device plugin DaemonSet (or the GPU Operator with the driver disabled) so `nvidia.com/gpu` is allocatable. EKS GPU AMIs include both.
 - 4 vCPUs is the limit for the CPU side (data loading, the DMatrix build), which is why `--worker-cpu 3` and one worker. Bigger data per fit wants `NC8as_T4_v3` (8 vCPUs, 56 GB, same T4).
 
+**Post a job.** The scheduler stands; a job is a client that connects to `tcp://gpu-scheduler.dask:8786` and submits tasks, like `gpu_stress.py` with `SCHEDULER_ADDRESS` set. Run it as a Job on the general pool (the ConfigMap holds the script; `kubectl apply -k config/dask/sample` would also apply the lab's `job.yaml`, which cannot schedule here):
+
+```bash
+kubectl -n dask create configmap gpu-concurrency-script --from-file=config/dask/sample/gpu_stress.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-stress
+  namespace: dask
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: dask-client
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: <general>              # the CPU pool
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: client
+          image: myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1
+          command: ["python", "/scripts/gpu_stress.py"]
+          env:
+            - name: PYTHONPATH
+              value: /devlab
+            - name: SCHEDULER_ADDRESS
+              value: tcp://gpu-scheduler.dask:8786
+            - name: N_WORKERS
+              value: "8"                  # at most the cluster's --workers
+            - name: FITS
+              value: "16"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: devlab-dask
+              mountPath: /devlab
+      volumes:
+        - name: script
+          configMap:
+            name: gpu-concurrency-script
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask
+```
+
+```bash
+kubectl apply -f stress-job.yaml && kubectl -n dask logs -f job/gpu-stress
+kubectl -n dask get pods -w             # workers as the DaskAutoscaler asks, nodes as the pool scales from 0
+kubectl -n dask delete job gpu-stress   # before a re-run
+```
+
+Your own job is the same manifest with your script and image, and in the script `Client("tcp://gpu-scheduler.dask:8786")` then `client.submit`/`client.gather` ("Use It From Your Own Code" above). From your machine instead: `kubectl -n dask port-forward svc/gpu-scheduler 8786:8786 8787:8787`, then `SCHEDULER_ADDRESS=tcp://localhost:8786` with the cluster's dask/distributed versions, dashboard at http://localhost:8787/status. The first fit waits for a node to boot and pull the image (minutes); a worker Pending longer than that with `Insufficient nvidia.com/gpu` means the device plugin is not running on the GPU pool.
+
 ## Sizing
 
 Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each worker also needs about 0.5 GiB for its CUDA context, which comes out of its own shares.
