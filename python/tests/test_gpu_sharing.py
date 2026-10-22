@@ -552,6 +552,19 @@ class StressTestTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("distributed") and importlib.util.find_spec("xgboost"),
                          "dask distributed and xgboost not installed")
+    def test_in_flight_limits_fits_at_once(self):
+        from distributed import Client, LocalCluster
+        with LocalCluster(n_workers=3, threads_per_worker=1, processes=False, dashboard_address=None) as cluster, \
+                Client(cluster) as client:
+            one = self.module.run(client, 4, 1, 2000, 8, 3, 20, "xgboost", "cpu", in_flight=1)
+            two = self.module.run(client, 6, 1, 2000, 8, 3, 20, "xgboost", "cpu", in_flight=2)
+        self.assertEqual(sorted(r["fit"] for r in one), [0, 1, 2, 3])
+        self.assertEqual(self.module.peak_concurrency(one), 1)
+        self.assertEqual(sorted(r["fit"] for r in two), list(range(6)))
+        self.assertLessEqual(self.module.peak_concurrency(two), 2)
+
+    @unittest.skipUnless(importlib.util.find_spec("distributed") and importlib.util.find_spec("xgboost"),
+                         "dask distributed and xgboost not installed")
     def test_cache_lasts_one_run(self):
         from distributed import Client, LocalCluster
         with LocalCluster(n_workers=1, threads_per_worker=1, processes=False, dashboard_address=None) as cluster, \

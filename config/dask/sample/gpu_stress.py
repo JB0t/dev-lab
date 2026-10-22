@@ -30,8 +30,10 @@ Without it, a cluster is created with devlab_dask.gpu_cluster.
 
 Environment:
     SCHEDULER_ADDRESS  existing scheduler to use instead of creating a cluster
-    N_WORKERS        workers to use (4); with SCHEDULER_ADDRESS at most the
-                     cluster's --workers
+    N_WORKERS        fits running at once, so workers used (4): the client
+                     submits N_WORKERS fits and the next as one finishes, so
+                     a standing cluster scales to N_WORKERS, not its maximum
+                     (at most its --workers)
     FITS             models to fit (8); each worker fits FITS / N_WORKERS
     DATASETS         datasets the fits share (1); fit i uses dataset i % DATASETS
     CACHE            run (default): reuse a dataset within this run only; off:
@@ -206,14 +208,28 @@ def peak_concurrency(results):
     return peak
 
 
-def run(client, fits, *task_args):
+def run(client, fits, *task_args, in_flight=None):
     """Submit the fits; each worker takes one at a time (--nthreads 1)
+
+    in_flight: at most this many fits submitted at once, the next one as one
+    finishes. The scheduler asks its autoscaler for about one worker per
+    submitted task, so this is what holds a standing cluster to N_WORKERS;
+    submitting all FITS at once would scale it to its maximum.
 
     Fits are not grouped by dataset: a worker builds a dataset again when a fit on
     another one came between, as a plain grid search over several datasets would.
     """
-    futures = [client.submit(fit, index, *task_args, pure=False) for index in range(fits)]
-    return client.gather(futures)
+    from distributed import as_completed
+
+    limit = fits if not in_flight else min(in_flight, fits)
+    futures = as_completed([client.submit(fit, index, *task_args, pure=False) for index in range(limit)])
+    results, next_index = [], limit
+    for future in futures:
+        results.append(future.result())
+        if next_index < fits:
+            futures.add(client.submit(fit, next_index, *task_args, pure=False))
+            next_index += 1
+    return results
 
 
 def main():
@@ -244,8 +260,12 @@ def main():
     if address:
         print(f"Connecting to {address}", flush=True)
         with Client(address) as client:
+            running = len(client.scheduler_info()["workers"])
+            if running > n_workers:
+                print(f"Note: {running} workers are connected; {n_workers} run fits, the rest stay idle "
+                      f"(e.g. a DaskAutoscaler minimum, gpu_warm.py --dask-autoscaler)", flush=True)
             submitted = time.time()
-            results = run(client, fits, *task_args)
+            results = run(client, fits, *task_args, in_flight=n_workers)
         return report(results, submitted, fits)
 
     from devlab_dask import gpu_cluster
@@ -257,7 +277,7 @@ def main():
                      # XGBoost and LightGBM allocate GPU memory themselves, not through RMM
                      rmm_pool=False) as cluster, Client(cluster) as client:
         submitted = time.time()
-        results = run(client, fits, *task_args)
+        results = run(client, fits, *task_args, in_flight=n_workers)
     return report(results, submitted, fits)
 
 
