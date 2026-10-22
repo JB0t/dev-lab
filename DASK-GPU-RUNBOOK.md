@@ -526,6 +526,89 @@ kubectl -n dask logs job/gpu-metrics > w4.csv && kubectl -n dask delete job gpu-
 
 The Dask dashboard shows the same GPU figures live (http://localhost:8787/individual-gpu-utilization and `/individual-gpu-memory` through the port-forward); the worker's Prometheus endpoint has no GPU metrics. With `--rmm-pool` the GPU memory column shows the whole pool from the start, used or not.
 
+**Compare worker counts.** To see how a job scales, keep the fit size fixed (`ROWS`, `COLUMNS`, `MAX_DEPTH`, `ROUNDS`) and the total work fixed (`FITS`, divisible by every worker count, e.g. 8 for 1, 2, 4 and 8 workers), and change only the number of workers. No new cluster is needed: the fit code travels from the client with each task, and each run's data cache is its own (`CACHE=run`). Refresh the script the Job mounts after pulling changes:
+
+```bash
+kubectl -n dask create configmap gpu-concurrency-script --from-file=config/dask/sample/gpu_stress.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+`stress-sweep.yaml` is the Job from "Post a job" with `__N__` as the worker count:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-stress
+  namespace: dask
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: dask-client
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: <general>
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: client
+          image: myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1
+          command: ["python", "/scripts/gpu_stress.py"]
+          env:
+            - name: PYTHONPATH
+              value: /devlab
+            - name: SCHEDULER_ADDRESS
+              value: tcp://gpu-scheduler.dask:8786
+            - name: N_WORKERS
+              value: "__N__"
+            - name: FITS
+              value: "8"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: devlab-dask
+              mountPath: /devlab
+      volumes:
+        - name: script
+          configMap:
+            name: gpu-concurrency-script
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask
+```
+
+The sweep holds the nodes warm (without `--dask-autoscaler`, so no extra workers), then for each count pins the DaskAutoscaler to exactly N workers, waits until N are ready, and runs the job with the collector:
+
+```bash
+python3 config/dask/gpu_warm.py up --nodes 8 --node-selector agentpool=t4 \
+  --toleration sku=gpu:NoSchedule --image myacr.azurecr.io/team/devlab-dask-gpu:2026.1.1
+
+for n in 1 2 4 8; do
+  kubectl -n dask patch daskautoscaler gpu --type merge -p "{\"spec\":{\"minimum\":$n,\"maximum\":$n}}"
+  # Ready and not Terminating (kubectl prints Terminating in the STATUS column)
+  until [ "$(kubectl -n dask get pods -l dask.org/cluster-name=gpu,dask.org/component=worker --no-headers \
+      | awk '$2 == "1/1" && $3 == "Running"' | wc -l)" -eq "$n" ]; do sleep 5; done
+  kubectl -n dask delete job gpu-stress --ignore-not-found --wait
+  sed "s/__N__/$n/" stress-sweep.yaml | kubectl apply -f -
+  python3 config/dask/gpu_metrics.py collect --label "workers=$n" --out "w$n.csv" --job gpu-stress
+  kubectl -n dask logs job/gpu-stress | tail -4 > "w$n.txt"
+done
+
+python3 config/dask/gpu_metrics.py summary w1.csv w2.csv w4.csv w8.csv
+tail -n +1 w*.txt     # Data / Workers / Throughput / PASS lines of each run
+kubectl -n dask patch daskautoscaler gpu --type merge -p '{"spec":{"minimum":0,"maximum":8}}'   # back to --workers
+python3 config/dask/gpu_warm.py down
+```
+
+Ascending order means each step only adds workers on warm nodes. Compare:
+
+- **Wall time and rounds/s** from each run's `Throughput` line; **speedup** is the 1-worker wall time over the N-worker one, **efficiency** the speedup over N. With one T4 per node, expect close to linear; the gap is data builds (`Data: built N times`), scheduling, and the last fit of the slowest worker.
+- **Workers: X, at most Y fits at once** must show Y = N; a higher Y means the run did not use the script you meant.
+- **GPU util** in the summary: near 100% busy per GPU means the GPUs were the limit; lower means the workers waited on data, CPU (`CPU`, `%req`) or the client.
+
+`CACHE=off` makes every fit pay the data build, if the real workload has no data to reuse between fits.
+
 ## Sizing
 
 Shares per GPU = GPU memory in whole GiB (`devlab status`, GPUs column). Each worker also needs about 0.5 GiB for its CUDA context, which comes out of its own shares.
