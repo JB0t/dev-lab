@@ -382,7 +382,7 @@ python3 config/dask/devlab_dask.py gpu --workers 8 \
 | `--host-memory 20Gi --worker-cpu 3` | Most of the node: 28 GB and 4 vCPUs, with room for the kubelet and the device plugin |
 | `--runtime-class none` | AKS and EKS GPU nodes run the NVIDIA runtime by default; the `nvidia` RuntimeClass exists only with the GPU Operator |
 | `--worker-node-selector`, `--worker-toleration` | The pool's label (AKS: `agentpool=<name>`; EKS: `eks.amazonaws.com/nodegroup=<name>`) and its taint (set when creating the pool, e.g. `sku=gpu:NoSchedule`); a Spot pool adds `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` |
-| `--scheduler-node-selector`, `--scheduler-toleration` | The scheduler on the system or a CPU pool |
+| `--scheduler-node-selector`, `--scheduler-toleration` | The scheduler on the system or a CPU pool. `kubectl get nodes -L agentpool` names the pools; `kubectl get nodes -l agentpool=<pool> -o jsonpath='{.items[0].spec.taints}'` shows the taints to tolerate, one flag each (`KEY[=VALUE]:EFFECT`), or `--scheduler-toleration all` for every taint, like the operator chart above. `--worker-toleration all` likewise |
 | `--node-port 0` | No NodePort: clients in the cluster use `gpu-scheduler.dask:8786`, from outside use `kubectl port-forward` |
 | `--ingress-class none` | No dashboard Ingress (the lab's is for Traefik); `kubectl -n dask port-forward svc/gpu-scheduler 8787:8787` shows it. Or the cluster's class, e.g. `nginx` or `webapprouting.kubernetes.azure.com`, with the host in `standing_cluster_manifests(dashboard_host=...)` |
 | `--rmm-pool` | On for RAPIDS/cuDF work; off for XGBoost, which allocates its own memory (the default) |
