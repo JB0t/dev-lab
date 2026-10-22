@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-stress
+  namespace: dask
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: dask-client
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: generalz1
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: client
+          image: localhost:5000/dask_modelling/dask-modelling:1.0.390.0-local
+          command: ["python", "/scripts/gpu_stress.py"]
+          env:
+            - name: PYTHONPATH
+              value: /devlab
+            - name: SCHEDULER_ADDRESS
+              value: tcp://gpu-scheduler.dask:8786
+            - name: N_WORKERS
+              value: "4"
+            - name: FITS
+              value: "16"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: devlab-dask
+              mountPath: /devlab
+      volumes:
+        - name: script
+          configMap:
+            name: gpu-concurrency-script
+        - name: devlab-dask
+          configMap:
+            name: devlab-dask

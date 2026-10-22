@@ -4,19 +4,21 @@ let v:this_session=expand("<sfile>:p")
 doautoall SessionLoadPre
 silent only
 silent tabonly
-cd ~/gh/jbotstevens/dev-lab
+cd ~/git/JB0t/dev-lab
 if expand('%') == '' && !&modified && line('$') <= 1 && getline(1) == ''
   let s:wipebuf = bufnr('%')
 endif
 let s:shortmess_save = &shortmess
 set shortmess+=aoO
-badd +1 ~/gh/jbotstevens/dev-lab
-badd +0 TODO.md
+badd +1 ~/git/JB0t/dev-lab
+badd +370 DASK-GPU-RUNBOOK.md
+badd +0 CLUSTER-REGISTRY-RUNBOOK.md
 argglobal
 %argdel
-$argadd ~/gh/jbotstevens/dev-lab
-edit TODO.md
+$argadd ~/git/JB0t/dev-lab
+edit CLUSTER-REGISTRY-RUNBOOK.md
 argglobal
+balt DASK-GPU-RUNBOOK.md
 setlocal foldmethod=manual
 setlocal foldexpr=0
 setlocal foldmarker={{{,}}}
@@ -27,13 +29,13 @@ setlocal foldnestmax=20
 setlocal foldenable
 silent! normal! zE
 let &fdl = &fdl
-let s:l = 1 - ((0 * winheight(0) + 17) / 35)
+let s:l = 1 - ((0 * winheight(0) + 22) / 45)
 if s:l < 1 | let s:l = 1 | endif
 keepjumps exe s:l
 normal! zt
 keepjumps 1
 normal! 0
-lcd ~/gh/jbotstevens/dev-lab
+lcd ~/git/JB0t/dev-lab
 tabnext 1
 if exists('s:wipebuf') && len(win_findbuf(s:wipebuf)) == 0 && getbufvar(s:wipebuf, '&buftype') isnot# 'terminal'
   silent exe 'bwipe ' . s:wipebuf
@@ -46,7 +48,6 @@ if filereadable(s:sx)
   exe "source " . fnameescape(s:sx)
 endif
 let &g:so = s:so_save | let &g:siso = s:siso_save
-nohlsearch
 let g:this_session = v:this_session
 let g:this_obsession = v:this_session
 doautoall SessionLoadPost
