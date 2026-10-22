@@ -35,6 +35,10 @@ spec:
             # Per fit: ROWS x COLUMNS float32, MAX_DEPTH, ROUNDS (see gpu_stress.py)
             - name: ROWS
               value: "2000000"
+            # Data cache: run (default, within this run only), off, or keep
+            # (also across runs on the same standing workers)
+            # - name: CACHE
+            #   value: "off"
             - name: GPU_MEMORY_GIB
               value: "5"
             # With MPS (GPU.md) a worker takes 1 share, a fixed slice of the GPU
